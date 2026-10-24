@@ -5,6 +5,8 @@ import { CustomersService } from './app/modules/customers/customers.service';
 import { PackagesService } from './app/modules/packages/packages.service';
 import { InvoicesService } from './app/modules/invoices/invoices.service';
 import { JwtAuthGuard } from './app/modules/auth/auth.guard';
+import { RolesGuard } from './app/modules/auth/roles.guard';
+import { Roles } from './app/modules/auth/roles.decorator';
 
 @Controller()
 export class AppController {
@@ -25,9 +27,12 @@ export class AppController {
   }
 
   @Get('dashboard')
-  @UseGuards(JwtAuthGuard)
-  getDashboard() {
-    const customers = this.customersService.findAll();
+  // Dashboard menampilkan agregat seluruh pelanggan & pendapatan.
+  // Resseler tidak berhak melihat data gabungan itu.
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin', 'operator')
+  async getDashboard() {
+    const customers = await this.customersService.findAll();
     const packages = this.packagesService.findAll();
     const invoices = this.invoicesService.findAll();
 

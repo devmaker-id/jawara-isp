@@ -9,6 +9,7 @@ import Packages from './pages/Packages';
 import Invoices from './pages/Invoices';
 import Settings from './pages/Settings';
 import Profile from './pages/Profile';
+import NotFound from './pages/NotFound';
 
 const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading } = useAuth();
@@ -18,6 +19,17 @@ const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => 
     </div>;
   }
   return user ? <>{children}</> : <Navigate to="/login" replace />;
+};
+
+// Dashboard menampilkan agregat seluruh pelanggan → ditolak backend untuk
+// reseller. Arahkan mereka ke halaman yang memang boleh diakses agar tidak
+// berakhir di layar error.
+const HomeRoute: React.FC = () => {
+  const { user } = useAuth();
+  if (user?.role === 'resseler') {
+    return <Navigate to="/packages" replace />;
+  }
+  return <Dashboard />;
 };
 
 const AppContent: React.FC = () => {
@@ -30,7 +42,7 @@ const AppContent: React.FC = () => {
             path="/"
             element={
               <PrivateRoute>
-                <Dashboard />
+                <HomeRoute />
               </PrivateRoute>
             }
           />
@@ -74,6 +86,7 @@ const AppContent: React.FC = () => {
               </PrivateRoute>
             }
           />
+          <Route path="*" element={<NotFound />} />
         </Route>
       </Routes>
     </BrowserRouter>

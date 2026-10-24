@@ -2,10 +2,12 @@ import {
   Injectable,
   CanActivate,
   UnauthorizedException,
+  ForbiddenException,
   ExecutionContext,
 } from '@nestjs/common';
 import { Request } from 'express';
 import { AuthService } from './auth.service';
+import { isKnownRole } from './roles.decorator';
 
 export interface JwtPayload {
   sub: number;
@@ -48,6 +50,12 @@ export class JwtAuthGuard implements CanActivate {
 
     if (this.authService.isTokenRevoked(token)) {
       throw new UnauthorizedException('Sesi telah diakhiri (token dicabut)');
+    }
+
+    // Token bertanda tangan sah tapi membawa role di luar daftar yang dikenal
+    // berarti identitasnya tidak dapat dipercaya. Tolak sebelum masuk controller.
+    if (!isKnownRole(req.user?.role)) {
+      throw new ForbiddenException('Role pada token tidak dikenali');
     }
 
     return true;

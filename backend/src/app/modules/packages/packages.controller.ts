@@ -1,10 +1,27 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, HttpCode, HttpStatus, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { CreatePackageDto, UpdatePackageDto } from './dto/package.dto';
 import { PackagesService } from './packages.service';
 import { JwtAuthGuard } from '../auth/auth.guard';
+import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from '../auth/roles.decorator';
 
+// Katalog paket boleh dibaca semua role terautentikasi (dibutuhkan untuk
+// menawarkan layanan). Perubahan harga/paket adalah keputusan komersial →
+// admin saja.
 @Controller('packages')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class PackagesController {
   constructor(private packagesService: PackagesService) {}
 
@@ -14,23 +31,26 @@ export class PackagesController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.packagesService.findOne(parseInt(id, 10));
+  findOne(@Param('id', ParseIntPipe) id: number) {
+    return this.packagesService.findOne(id);
   }
 
   @Post()
+  @Roles('admin')
   @HttpCode(HttpStatus.CREATED)
   create(@Body() createDto: CreatePackageDto) {
     return this.packagesService.create(createDto);
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateDto: UpdatePackageDto) {
-    return this.packagesService.update(parseInt(id, 10), updateDto);
+  @Roles('admin')
+  update(@Param('id', ParseIntPipe) id: number, @Body() updateDto: UpdatePackageDto) {
+    return this.packagesService.update(id, updateDto);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.packagesService.remove(parseInt(id, 10));
+  @Roles('admin')
+  remove(@Param('id', ParseIntPipe) id: number) {
+    return this.packagesService.remove(id);
   }
 }

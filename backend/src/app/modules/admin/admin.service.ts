@@ -1,5 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { Role, RoleValues } from '../../config/config.service';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { Role } from '../../config/config.service';
+import { PasswordService } from '../auth/password.service';
 import { CreateUserDto, UpdateUserDto } from './dto/user.dto';
 
 export interface User {
@@ -15,15 +16,20 @@ export interface User {
   updated_at: Date;
 }
 
+export type PublicUser = Omit<User, 'password_hash'>;
+
 @Injectable()
 export class AdminService {
   private users: User[] = [];
 
-  findAll() {
-    return this.users;
+  constructor(private readonly passwords: PasswordService) {}
+
+  private toPublicUser(user: User): PublicUser {
+    const { password_hash: _passwordHash, ...publicUser } = user;
+    return publicUser;
   }
 
-  findOne(id: number) {
+  private findInternal(id: number): User {
     const user = this.users.find((u) => u.id === id);
     if (!user) {
       throw new NotFoundException(`Pengguna dengan ID ${id} tidak ditemukan`);
@@ -31,21 +37,31 @@ export class AdminService {
     return user;
   }
 
+  findAll(): PublicUser[] {
+    return this.users.map((user) => this.toPublicUser(user));
+  }
+
+  findOne(id: number): PublicUser {
+    return this.toPublicUser(this.findInternal(id));
+  }
+
   findByEmail(email: string) {
     return this.users.find((u) => u.email === email);
   }
 
-  create(createDto: CreateUserDto) {
+  async create(createDto: CreateUserDto): Promise<PublicUser> {
     const now = new Date();
     const exists = this.findByEmail(createDto.email);
     if (exists) {
-      throw new Error('Email sudah terdaftar');
+      throw new ConflictException('Email sudah terdaftar');
     }
     const user: User = {
       id: this.users.length + 1,
       name: createDto.name,
       email: createDto.email,
-      password_hash: process.env.ADMIN_DEFAULT_PASSWORD || 'change-me',
+      // Sebelumnya nilai mentah ADMIN_DEFAULT_PASSWORD ditulis ke kolom hash.
+      // Sekarang selalu bcrypt dari password yang dikirim admin.
+      password_hash: await this.passwords.hash(createDto.password),
       role: createDto.role,
       phone: createDto.phone,
       address: createDto.address || '',
@@ -54,20 +70,25 @@ export class AdminService {
       updated_at: now,
     };
     this.users.push(user);
-    return user;
+    return this.toPublicUser(user);
   }
 
-  update(id: number, updateDto: UpdateUserDto) {
-    const user = this.findOne(id);
+  async update(id: number, updateDto: UpdateUserDto): Promise<PublicUser> {
+    const user = this.findInternal(id);
     if (updateDto.email && updateDto.email !== user.email) {
       const exists = this.findByEmail(updateDto.email);
       if (exists) {
-        throw new Error('Email sudah terdaftar');
+        throw new ConflictException('Email sudah terdaftar');
       }
     }
-    Object.assign(user, updateDto);
+
+    const { password, ...rest } = updateDto;
+    Object.assign(user, rest);
+    if (password) {
+      user.password_hash = await this.passwords.hash(password);
+    }
     user.updated_at = new Date();
-    return user;
+    return this.toPublicUser(user);
   }
 
   remove(id: number) {

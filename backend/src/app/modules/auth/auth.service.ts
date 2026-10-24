@@ -11,10 +11,13 @@ export interface User {
   role: 'admin' | 'operator' | 'resseler';
   phone?: string;
   address?: string;
+  avatar?: string;
   is_active: boolean;
   created_at: Date;
   updated_at: Date;
 }
+
+export type PublicUser = Omit<User, 'password_hash'>;
 
 const users: User[] = [
   {
@@ -40,6 +43,11 @@ export class AuthService {
     private jwtService: JwtService,
   ) {}
 
+  private toPublicUser(user: User): PublicUser {
+    const { password_hash: _passwordHash, ...publicUser } = user;
+    return publicUser;
+  }
+
   validateUser(email: string, password: string): Promise<User | null> {
     const user = users.find((u) => u.email === email);
     if (!user) {
@@ -64,9 +72,11 @@ export class AuthService {
     return {
       token: this.jwtService.sign(payload, {
         secret: this.configService.jwtSecret,
-        expiresIn: '7d',
+        // 8 jam: cukup untuk satu shift kerja panel admin, memperkecil jendela
+        // token yang masih hidup setelah role berubah atau akun dinonaktifkan.
+        expiresIn: '8h',
       }),
-      user,
+      user: this.toPublicUser(user),
     };
   }
 
@@ -88,17 +98,25 @@ export class AuthService {
     this.revokedTokens.add(token);
   }
 
-  getCurrentUser(email: string): User | null {
-    return users.find((u) => u.email === email) ?? null;
+  getCurrentUser(email: string): PublicUser | null {
+    const user = users.find((u) => u.email === email);
+    return user ? this.toPublicUser(user) : null;
   }
 
-  updateProfile(email: string, data: { name?: string; phone?: string; address?: string }): User | null {
+  updateProfile(email: string, data: { name?: string; phone?: string; address?: string }): PublicUser | null {
     const user = users.find((u) => u.email === email);
     if (!user) return null;
     if (data.name !== undefined) user.name = data.name;
     if (data.phone !== undefined) user.phone = data.phone;
     if (data.address !== undefined) user.address = data.address;
-    return { ...user };
+    return this.toPublicUser(user);
+  }
+
+  updateAvatar(email: string, avatar: string): PublicUser | null {
+    const user = users.find((u) => u.email === email);
+    if (!user) return null;
+    user.avatar = avatar;
+    return this.toPublicUser(user);
   }
 
   updatePassword(email: string, currentPassword: string, newPassword: string): boolean {

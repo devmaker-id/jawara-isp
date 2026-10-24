@@ -9,6 +9,8 @@ import { PackagesModule } from './app/modules/packages/packages.module';
 import { InvoicesModule } from './app/modules/invoices/invoices.module';
 import { AdminModule } from './app/modules/admin/admin.module';
 import { ServicesModule } from './app/services/services.module';
+import { DatabaseModule } from './app/database/database.module';
+import { UsersModule } from './app/modules/users/users.module';
 
 @Module({
   imports: [
@@ -16,6 +18,8 @@ import { ServicesModule } from './app/services/services.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
+    DatabaseModule,
+    UsersModule,
     AuthModule,
     CustomersModule,
     PackagesModule,

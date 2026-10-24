@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink, useLocation, Outlet } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { menuItems, MenuItemConfig } from '../config/menu';
 
@@ -48,10 +48,17 @@ const MenuItem: React.FC<{ item: MenuItemConfig; onNavigate: () => void }> = ({ 
   );
 };
 
-const Layout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
+// Layout route React Router v6: child route dirender lewat <Outlet />,
+// bukan lewat prop `children` (prop itu tidak pernah dikirim router).
+const Layout: React.FC = () => {
   const [open, setOpen] = useState(false);
   const location = useLocation();
   const { user, logout } = useAuth();
+
+  // Filter kosmetik berbasis role. Penegakan akses tetap di RolesGuard backend.
+  const visibleMenu = menuItems.filter(
+    (item) => !item.roles || (user?.role && item.roles.includes(user.role as never)),
+  );
 
   useEffect(() => {
     setOpen(false);
@@ -66,7 +73,9 @@ const Layout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   }, []);
 
   return (
-    <div className="flex min-h-screen flex-col bg-slate-900 text-slate-100 overflow-hidden">
+    // h-screen + min-h-0 pada baris konten: header & sidebar tetap diam,
+    // hanya panel konten yang scroll. Tanpa ini sidebar ikut tergulir.
+    <div className="flex h-screen flex-col bg-slate-900 text-slate-100 overflow-hidden">
       {/* Header kiri, hamburger resmi kiri atas (hanya mobile) */}
       <header className="flex h-16 shrink-0 items-center justify-between px-4 border-b border-slate-700/50 bg-slate-900/90 md:px-6">
         <div className="flex items-center gap-3">
@@ -88,13 +97,6 @@ const Layout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
               <p className="text-sm font-bold leading-tight text-white">jawara-billing</p>
               <p className="text-xs text-slate-500 leading-tight">BibitNet ISP</p>
             </div>
-            <button
-              onClick={() => setOpen(false)}
-              className="p-2 rounded-lg text-slate-400 hover:bg-slate-700/50 hover:text-white transition md:hidden"
-              aria-label="Tutup menu"
-            >
-              <CloseIcon />
-            </button>
           </div>
         </div>
         <div className="flex items-center gap-2.5">
@@ -111,7 +113,7 @@ const Layout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
       </header>
 
       {/* Main content area: sidebar and page content */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 min-h-0 overflow-hidden">
         {/* Sidebar kiri: desktop selalu tampil, mobile drawer dari kiri */}
         <aside
           className={`fixed inset-y-0 left-0 z-40 flex flex-col flex-shrink-0 border-r border-slate-700/50 bg-slate-800 text-slate-100 transition-transform duration-300 ease-in-out ${open ? 'translate-x-0' : '-translate-x-full'} md:static md:inset-auto md:left-auto md:z-auto md:translate-x-0`}
@@ -144,7 +146,7 @@ const Layout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
                 )}
                 <button
                   onClick={() => setOpen(false)}
-                  className="p-2 rounded-lg text-slate-400 hover:bg-slate-700/50 hover:text-white transition"
+                  className="p-2 rounded-lg text-slate-400 hover:bg-slate-700/50 hover:text-white transition md:hidden"
                   aria-label="Tutup menu"
                 >
                   <CloseIcon />
@@ -154,7 +156,7 @@ const Layout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
 
             {/* Drawer nav */}
             <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
-              {menuItems.map((item) => (
+              {visibleMenu.map((item) => (
                 <MenuItem key={item.path} item={item} onNavigate={() => setOpen(false)} />
               ))}
             </nav>
@@ -186,8 +188,8 @@ const Layout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
         </aside>
 
         {/* Konten utama: menggunakan layout bersama, tanpa margin kiri */}
-        <div className="page-container flex-1">
-          {children}
+        <div className="page-container flex-1 overflow-y-auto">
+          <Outlet />
         </div>
       </div>
 

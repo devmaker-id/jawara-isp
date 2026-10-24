@@ -1,15 +1,19 @@
 import { Injectable } from '@nestjs/common';
-import type { RowDataPacket } from 'mysql2/promise';
-import * as mysql from 'mysql2/promise';
+import { DatabaseService } from '../database/database.service';
 
 export type Role = 'admin' | 'operator' | 'resseler';
 
-export const Role = Object.freeze
-export const RoleValues = Object.freeze({
+// Nilai runtime untuk @IsEnum() dan validasi. Sebelumnya baris ini
+// `Object.freeze` tanpa argumen, sehingga `Role` berisi referensi fungsi
+// dan @IsEnum(Role) menolak SEMUA role yang valid.
+export const Role = Object.freeze({
   ADMIN: 'admin',
   OPERATOR: 'operator',
   RESSELER: 'resseler',
 } as const);
+
+// Alias lama, dipertahankan agar import yang sudah ada tidak putus.
+export const RoleValues = Role;
 
 export interface DatabaseConfig {
   host: string;
@@ -51,7 +55,6 @@ const REQUIRED_ENV = [
 
 @Injectable()
 export class ConfigService {
-  private dbPool: mysql.Pool | null = null;
   private mikrotikCache?: MikrotikConfig;
 
   private readonly env: { [key: string]: string | undefined } = {
@@ -67,7 +70,7 @@ export class ConfigService {
     JWT_SECRET: process.env.JWT_SECRET,
   };
 
-  constructor() {
+  constructor(private readonly db: DatabaseService) {
     for (const key of REQUIRED_ENV) {
       if (!this.env[key]) {
         console.warn(`Config warning: ${key} is not set`);
@@ -75,30 +78,15 @@ export class ConfigService {
     }
   }
 
-  private getDbPool(): mysql.Pool {
-    if (!this.dbPool) {
-      this.dbPool = mysql.createPool({
-        host: this.get('DB_HOST', '127.0.0.1'),
-        port: this.getInt('DB_PORT', 3306),
-        user: this.get('DB_USER', 'isp_billing'),
-        password: this.get('DB_PASSWORD', ''),
-        database: this.get('DB_NAME', 'isp_billing'),
-        waitForConnections: true,
-        connectionLimit: 10,
-      });
-    }
-    return this.dbPool;
-  }
-
   // Baca dari tabel `config` (database), jatuh ke env/.default kalau kosong.
   private async getConfigValue(key: string): Promise<string> {
     try {
-      const [rows] = await this.getDbPool().query<RowDataPacket[]>(
+      const row = await this.db.queryOne<{ config_value: string }>(
         'SELECT config_value FROM config WHERE config_key = ?',
         [key],
       );
-      if (rows && rows.length > 0 && rows[0].config_value != null) {
-        return String(rows[0].config_value);
+      if (row && row.config_value != null) {
+        return String(row.config_value);
       }
     } catch (error) {
       // database belum siap / tidak reachable: pakai env/default
@@ -180,6 +168,22 @@ export class ConfigService {
     password: this.get('MIKROTIK_PASSWORD', ''),
   };
 
-  public readonly secretKey = this.get('SECRET_KEY', 'dev-only-secret-key-change-me');
-  public readonly jwtSecret = this.get('JWT_SECRET', 'dev-jwt-secret-change-me');
+  // Tanpa fallback: secret yang tertulis di source membuat token bisa dipalsukan.
+  // Nilai kosong akan menggagalkan boot (lihat assertRequiredSecrets).
+  public readonly secretKey = this.get('SECRET_KEY', '');
+  public readonly jwtSecret = this.get('JWT_SECRET', '');
+
+  // Dipanggil saat boot; lebih baik gagal jelas daripada berjalan dengan
+  // secret default yang bisa ditebak.
+  public assertRequiredSecrets(): void {
+    const missing = (['JWT_SECRET', 'SECRET_KEY'] as const).filter(
+      (key) => !this.env[key] || this.env[key]!.trim().length === 0,
+    );
+    if (missing.length > 0) {
+      throw new Error(
+        `Secret wajib belum diisi pada backend/.env: ${missing.join(', ')}. ` +
+          'Aplikasi tidak dijalankan agar token tidak ditandatangani dengan nilai default.',
+      );
+    }
+  }
 }

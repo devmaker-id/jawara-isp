@@ -87,5 +87,4 @@ INSERT IGNORE INTO config (config_key, config_value) VALUES
 ('mikrotik_host','192.168.100.254'),
 ('mikrotik_port','1998'),
 ('mikrotik_user','hermes'),
-('mikrotik_password',''),
-);
+('mikrotik_password','');

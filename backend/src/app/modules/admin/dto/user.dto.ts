@@ -1,5 +1,9 @@
-import { IsString, IsEmail, IsEnum, IsBoolean, IsOptional } from 'class-validator';
-import { Role, RoleValues } from '../../../config/config.service';
+import { IsString, IsEmail, IsEnum, IsBoolean, IsOptional, MinLength } from 'class-validator';
+import { Role } from '../../../config/config.service';
+
+// Panjang minimum untuk akun baru. Password lama (di luar alur ini) tidak
+// terpengaruh karena hanya divalidasi saat dibuat/diubah lewat endpoint ini.
+const MIN_PASSWORD_LENGTH = 8;
 
 export class CreateUserDto {
   @IsString()
@@ -9,6 +13,7 @@ export class CreateUserDto {
   email: string;
 
   @IsString()
+  @MinLength(MIN_PASSWORD_LENGTH, { message: `password minimal ${MIN_PASSWORD_LENGTH} karakter` })
   password: string;
 
   @IsEnum(Role)
@@ -38,6 +43,7 @@ export class UpdateUserDto {
 
   @IsString()
   @IsOptional()
+  @MinLength(MIN_PASSWORD_LENGTH, { message: `password minimal ${MIN_PASSWORD_LENGTH} karakter` })
   password?: string;
 
   @IsEnum(Role)

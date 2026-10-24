@@ -14,3 +14,8 @@ frontend/.env
 .idea/
 *.log
 .DS_Store
+
+# Artefak lokal: file uji upload dan skrip uji yang mungkin memuat kredensial
+backend/uploads/
+backend/src/uploads/
+test_profile.sh

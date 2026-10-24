@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import api from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 
 interface DashboardData {
   total_customers: number;
@@ -11,6 +12,7 @@ interface DashboardData {
 }
 
 const Dashboard: React.FC = () => {
+  const { user } = useAuth();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -58,7 +60,7 @@ const Dashboard: React.FC = () => {
         <div className="flex gap-2">
           <div className="bg-slate-700/50 rounded-lg px-4 py-2.5 text-sm text-slate-300">
             <span className="font-medium text-slate-400">Role:</span>
-            <span className="ml-1 text-white">admin</span>
+            <span className="ml-1 text-white">{user?.role ?? '-'}</span>
           </div>
         </div>
       </div>

@@ -23,6 +23,12 @@ const Profile: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  // Photo upload state
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [photoLoading, setPhotoLoading] = useState(false);
+  const [photoStatus, setPhotoStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
   const [passForm, setPassForm] = useState({
     currentPassword: '',
     newPassword: '',
@@ -38,6 +44,8 @@ const Profile: React.FC = () => {
       phone: user?.phone || '',
       address: user?.address || '',
     });
+    setPhotoFile(null);
+    setPhotoPreview(null);
     setStatus(null);
   };
 
@@ -58,6 +66,58 @@ const Profile: React.FC = () => {
     setLoading(false);
   };
 
+  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validasi tipe file (hanya gambar)
+    const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    if (!validTypes.includes(file.type)) {
+      setPhotoStatus({ type: 'error', text: 'Format file tidak didukung. Gunakan JPG, PNG, WEBP, atau GIF.' });
+      return;
+    }
+
+    // Validasi ukuran file (maks 2MB)
+    const maxSize = 2 * 1024 * 1024;
+    if (file.size > maxSize) {
+      setPhotoStatus({ type: 'error', text: 'Ukuran file maksimal 2 MB.' });
+      return;
+    }
+
+    setPhotoFile(file);
+    // Preview
+    const reader = new FileReader();
+    reader.onload = () => {
+      setPhotoPreview(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+    setPhotoStatus(null);
+  };
+
+  const handlePhotoSave = async () => {
+    if (!photoFile || !user) return;
+    setPhotoLoading(true);
+    setPhotoStatus(null);
+    try {
+      const formData = new FormData();
+      formData.append('avatar', photoFile);
+
+      const res = await api.post('/api/auth/avatar', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      if (!res.data.ok) {
+        setPhotoStatus({ type: 'error', text: res.data.error || 'Gagal upload foto' });
+        return;
+      }
+      setPhotoStatus({ type: 'success', text: 'Foto profil berhasil diperbarui' });
+      setPhotoFile(null);
+      setPhotoPreview(null);
+    } catch {
+      setPhotoStatus({ type: 'error', text: 'Gagal menghubungi server' });
+    }
+    setPhotoLoading(false);
+  };
+
   const handlePasswordSave = async () => {
     if (passForm.newPassword !== passForm.confirmPassword) {
       setPassStatus({ type: 'error', text: 'Password baru dan konfirmasi tidak cocok' });
@@ -72,7 +132,6 @@ const Profile: React.FC = () => {
     setPassStatus(null);
     try {
       const res = await api.post('/api/auth/password', {
-        email: user.email,
         currentPassword: passForm.currentPassword,
         newPassword: passForm.newPassword,
       });
@@ -97,7 +156,6 @@ const Profile: React.FC = () => {
     );
   }
 
-  // Build a quick "menu" of pages to show in the page header area.
   const menu = menuItems ?? [];
 
   return (
@@ -123,6 +181,62 @@ const Profile: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Profile photo section */}
+      <section className="bg-slate-800/40 rounded-xl border border-slate-700/50 p-5 space-y-4">
+        <div className="flex items-center gap-4">
+          <div className="w-24 h-24 rounded-full overflow-hidden border-2 border-slate-600 bg-slate-700 flex-shrink-0">
+            {photoPreview ? (
+              <img src={photoPreview} alt="Profil" className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-slate-500">
+                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+              </div>
+            )}
+          </div>
+          <div className="flex-1">
+            <label className="block text-sm font-medium text-slate-300 mb-1">Foto Profil</label>
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              onChange={handlePhotoChange}
+              className="w-full px-4 py-3 rounded-lg bg-slate-700/50 border border-slate-600 text-slate-100 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-cyan-500/20 file:text-cyan-300 hover:file:bg-cyan-500/30 transition"
+            />
+            {photoFile && (
+              <p className="text-xs text-slate-400 mt-1">
+                File: {photoFile.name} ({Math.round(photoFile.size / 1024)} KB)
+              </p>
+            )}
+          </div>
+        </div>
+        {photoPreview && (
+          <button
+            type="button"
+            onClick={() => {
+              setPhotoFile(null);
+              setPhotoPreview(null);
+            }}
+            className="text-xs text-slate-500 hover:text-slate-300 transition"
+          >
+            Hapus foto
+          </button>
+        )}
+        {photoStatus && (
+          <p className={`text-sm ${photoStatus.type === 'success' ? 'text-cyan-400' : 'text-red-400'}`}>{photoStatus.text}</p>
+        )}
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={handlePhotoSave}
+            disabled={!photoFile || photoLoading}
+            className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 transition"
+          >
+            {photoLoading ? 'Menyimpan...' : 'Simpan Foto'}
+          </button>
+        </div>
+      </section>
 
       {/* Profile info section */}
       <section className="bg-slate-800/40 rounded-xl border border-slate-700/50 p-5 space-y-5">
@@ -163,7 +277,7 @@ const Profile: React.FC = () => {
             <label className="block text-sm font-medium text-slate-300 mb-1">No. Telepon</label>
             <input
               type="tel"
-              value={form.phone}
+              value={form.phone || ''}
               onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
               className="w-full px-4 py-3 rounded-lg bg-slate-700/50 border border-slate-600 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 outline-none transition text-slate-100"
               placeholder="08xx"
@@ -173,7 +287,7 @@ const Profile: React.FC = () => {
         <div>
           <label className="block text-sm font-medium text-slate-300 mb-1">Alamat</label>
           <textarea
-            value={form.address}
+            value={form.address || ''}
             onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))}
             rows={4}
             className="w-full px-4 py-3 rounded-lg bg-slate-700/50 border border-slate-600 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 outline-none transition text-slate-100 resize-y"

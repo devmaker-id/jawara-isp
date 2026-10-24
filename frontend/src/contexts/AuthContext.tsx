@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import api from '../services/api';
+import api, { classifySessionFailure } from '../services/api';
 
 interface User {
   id: number;
@@ -41,7 +41,19 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         // ignore
       }
     }
-    setLoading(false);
+    // Verifikasi token ke backend. Hanya 401 yang berarti sesi benar-benar
+    // tidak sah. 403, 5xx/503, timeout, dan gangguan jaringan TIDAK menghapus
+    // sesi — pengguna tetap masuk dan diminta mencoba lagi, agar gangguan
+    // server tidak mengeluarkan seluruh staf dari panel.
+    api.get('/api/auth/me')
+      .catch((error) => {
+        if (classifySessionFailure(error) !== 'unauthenticated') return;
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        setUser(null);
+        setToken(null);
+      })
+      .finally(() => { setLoading(false); });
   }, []);
 
   const login = async (email: string, password: string) => {
@@ -71,31 +83,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     setToken(null);
     window.location.href = '/login';
   };
-
-  // Verifikasi token di backend setiap halaman dimuat ulang
-  useEffect(() => {
-    const storedToken = localStorage.getItem('token');
-    const storedUser = localStorage.getItem('user');
-    if (storedToken && storedUser) {
-      try {
-        setToken(storedToken);
-        setUser(JSON.parse(storedUser));
-      } catch {
-        // ignore
-      }
-      // Cek token ke server; kalau tidak valid, hapus dan arahkan login
-      api.get('/api/auth/me')
-        .catch(() => {
-          localStorage.removeItem('token');
-          localStorage.removeItem('user');
-          setUser(null);
-          setToken(null);
-        })
-        .finally(() => { setLoading(false); });
-    } else {
-      setLoading(false);
-    }
-  }, []);
 
   return (
     <AuthContext.Provider value={{ user, token, login, logout, loading }}>

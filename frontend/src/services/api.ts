@@ -26,11 +26,28 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Response interceptor - handle 401
+// Klasifikasi kegagalan sesi. Hanya 401 yang berarti "kredensial tidak sah".
+// 403 = terautentikasi tapi tidak berhak; sesi tetap sah, token TIDAK dihapus.
+// 5xx/503/timeout/offline = masalah server atau jaringan; sesi dipertahankan
+// agar pengguna tidak ter-logout karena gangguan sementara.
+export type SessionFailureKind = 'unauthenticated' | 'forbidden' | 'server' | 'network' | 'other';
+
+export function classifySessionFailure(error: unknown): SessionFailureKind {
+  const status = (error as { response?: { status?: number } })?.response?.status;
+
+  if (status === 401) return 'unauthenticated';
+  if (status === 403) return 'forbidden';
+  if (typeof status === 'number' && status >= 500) return 'server';
+  // Tanpa status: request tidak pernah sampai (offline, timeout, DNS).
+  if (status === undefined) return 'network';
+  return 'other';
+}
+
+// Response interceptor - hanya menangani sesi yang benar-benar tidak sah
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    if (classifySessionFailure(error) === 'unauthenticated') {
       const isLoginAttempt = error.config?.url?.includes('/auth/login');
       if (!isLoginAttempt) {
         localStorage.removeItem('token');
