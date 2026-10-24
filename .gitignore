@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Build output
+frontend/dist/
+backend/dist/
+
+# Environment files (berisi secret)
+backend/.env
+frontend/.env
+
+# IDE / OS artifacts
+.vscode/
+.idea/
+*.log
+.DS_Store
