@@ -1,84 +1,127 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { CreateInvoiceDto, UpdateInvoiceDto, PayInvoiceDto, InvoiceStatus } from './dto/invoice.dto';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import { CreateInvoiceDto, PayInvoiceDto, UpdateInvoiceDto } from './dto/invoice.dto';
+import { Invoice, InvoiceError, InvoiceSummary, InvoicesRepository } from './invoices.repository';
 
-export interface Invoice {
-  id: number;
-  invoice_number: string;
-  customer_id: number;
-  customer_name: string;
-  amount: number;
-  status: InvoiceStatus;
-  due_date: Date;
-  paid_date?: Date;
-  description: string;
-  created_at: Date;
+export type { Invoice };
+
+const DB_UNAVAILABLE = [
+  'ECONNREFUSED',
+  'ETIMEDOUT',
+  'PROTOCOL_CONNECTION_LOST',
+  'ER_ACCESS_DENIED_ERROR',
+  'ER_NO_SUCH_TABLE',
+  'ENOTFOUND',
+];
+
+function errorCode(error: unknown): string | undefined {
+  return (error as { code?: string })?.code;
+}
+
+function todayIso(): string {
+  const now = new Date();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${now.getFullYear()}-${m}-${d}`;
+}
+
+function rupiah(value: number): string {
+  return `Rp ${value.toLocaleString('id-ID')}`;
 }
 
 @Injectable()
 export class InvoicesService {
-  private invoices: Invoice[] = [];
-  private counter = 1;
+  constructor(private readonly repository: InvoicesRepository) {}
 
-  findAll() {
-    return this.invoices;
+  private rethrow(error: unknown): never {
+    if (error instanceof InvoiceError) {
+      switch (error.code) {
+        case 'NOT_FOUND':
+        case 'CUSTOMER_NOT_FOUND':
+          throw new NotFoundException(error.message);
+        case 'ALREADY_PAID':
+          throw new ConflictException('Tagihan sudah lunas');
+        case 'PAID_INVOICE_LOCKED':
+          throw new ConflictException(
+            'Tagihan sudah lunas: nominal dan jatuh tempo tidak dapat diubah',
+          );
+        case 'INVALID_STATUS':
+          throw new BadRequestException(
+            'Status lunas hanya dapat diatur melalui endpoint pembayaran',
+          );
+        case 'OVERPAY':
+          throw new BadRequestException(
+            `Nominal pembayaran melebihi sisa tagihan (sisa ${rupiah(error.remaining ?? 0)})`,
+          );
+        case 'PARTIAL_UNSUPPORTED':
+          throw new ConflictException(
+            'Pembayaran parsial belum dapat dicatat karena skema database belum memiliki ' +
+              'tabel payments atau kolom nominal terbayar. ' +
+              `Sisa tagihan ${rupiah(error.remaining ?? 0)}. Catat pembayaran penuh, ` +
+              'atau setujui penambahan tabel payments lebih dulu.',
+          );
+      }
+    }
+
+    const code = errorCode(error);
+    if (code === 'ER_DUP_ENTRY') {
+      throw new ConflictException('Nomor tagihan bentrok, ulangi penyimpanan');
+    }
+    if (code === 'ER_NO_REFERENCED_ROW_2' || code === 'ER_NO_REFERENCED_ROW') {
+      throw new NotFoundException('Pelanggan tidak ditemukan');
+    }
+    if (code && DB_UNAVAILABLE.includes(code)) {
+      throw new ServiceUnavailableException('Database tidak tersedia, coba lagi nanti');
+    }
+    throw error;
   }
 
-  findOne(id: number) {
-    const inv = this.invoices.find((i) => i.id === id);
-    if (!inv) {
+  findAll(): Promise<Invoice[]> {
+    return this.repository.findAll().catch((error) => this.rethrow(error));
+  }
+
+  async findOne(id: number): Promise<Invoice> {
+    const invoice = await this.repository.findById(id).catch((error) => this.rethrow(error));
+    if (!invoice) {
       throw new NotFoundException(`Tagihan dengan ID ${id} tidak ditemukan`);
     }
-    return inv;
+    return invoice;
   }
 
-  findByCustomer(customerId: number) {
-    return this.invoices.filter((i) => i.customer_id === customerId);
+  findByCustomer(customerId: number): Promise<Invoice[]> {
+    return this.repository.findByCustomer(customerId).catch((error) => this.rethrow(error));
   }
 
-  create(createDto: CreateInvoiceDto) {
-    const now = new Date();
-    const inv: Invoice = {
-      id: this.counter++,
-      invoice_number: `INV-2026-${(this.counter + 1000).toString().padStart(4, '0')}`,
-      customer_id: createDto.customer_id,
-      customer_name: `Pelanggan #${createDto.customer_id}`,
-      amount: createDto.amount,
-      status: createDto.status || InvoiceStatus.UNPAID,
-      due_date: new Date(createDto.due_date),
-      description: createDto.description || '',
-      created_at: now,
-    };
-    this.invoices.push(inv);
-    return inv;
+  getSummary(): Promise<InvoiceSummary> {
+    return this.repository.summary().catch((error) => this.rethrow(error));
   }
 
-  pay(invoiceId: number, payDto: PayInvoiceDto) {
-    const inv = this.findOne(invoiceId);
-    inv.amount = payDto.amount;
-    inv.status = InvoiceStatus.PAID;
-    inv.paid_date = new Date();
-    return inv;
+  create(dto: CreateInvoiceDto): Promise<Invoice> {
+    return this.repository.create(dto).catch((error) => this.rethrow(error));
   }
 
-  update(id: number, updateDto: UpdateInvoiceDto) {
-    const inv = this.findOne(id);
-    Object.assign(inv, updateDto);
-    return inv;
+  update(id: number, dto: UpdateInvoiceDto): Promise<Invoice> {
+    return this.repository.update(id, dto).catch((error) => this.rethrow(error));
   }
 
-  remove(id: number) {
-    const index = this.invoices.findIndex((i) => i.id === id);
-    if (index === -1) {
+  async remove(id: number): Promise<{ ok: true }> {
+    const deleted = await this.repository.remove(id).catch((error) => this.rethrow(error));
+    if (!deleted) {
       throw new NotFoundException(`Tagihan dengan ID ${id} tidak ditemukan`);
     }
-    this.invoices.splice(index, 1);
     return { ok: true };
   }
 
-  getSummary() {
-    const total = this.invoices.reduce((sum, inv) => sum + inv.amount, 0);
-    const paid = this.invoices.filter((i) => i.status === InvoiceStatus.PAID).length;
-    const overdue = this.invoices.filter((i) => i.status === InvoiceStatus.OVERDUE).length;
-    return { total, paid, overdue };
+  async pay(id: number, dto: PayInvoiceDto): Promise<Invoice> {
+    // Tanggal pembayaran tidak boleh di masa depan (kolom DATE, tanpa jam).
+    if (dto.paid_date && dto.paid_date > todayIso()) {
+      throw new BadRequestException('Tanggal pembayaran tidak boleh melebihi hari ini');
+    }
+    return this.repository.pay(id, dto).catch((error) => this.rethrow(error));
   }
 }

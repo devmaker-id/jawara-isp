@@ -3,11 +3,12 @@ import { AuthModule } from '../auth/auth.module';
 import { JwtModule } from '@nestjs/jwt';
 import { PackagesController } from './packages.controller';
 import { PackagesService } from './packages.service';
+import { PackagesRepository } from './packages.repository';
 
 @Module({
   imports: [AuthModule, JwtModule],
   controllers: [PackagesController],
-  providers: [PackagesService],
+  providers: [PackagesService, PackagesRepository],
   exports: [PackagesService],
 })
 export class PackagesModule {}

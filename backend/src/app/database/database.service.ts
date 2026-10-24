@@ -1,5 +1,5 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
-import type { ResultSetHeader } from 'mysql2/promise';
+import type { PoolConnection, ResultSetHeader } from 'mysql2/promise';
 import * as mysql from 'mysql2/promise';
 
 // Satu pool untuk seluruh aplikasi. Sebelumnya setiap module membuat pool
@@ -39,6 +39,23 @@ export class DatabaseService implements OnModuleDestroy {
   async execute(sql: string, params: unknown[] = []): Promise<ResultSetHeader> {
     const [result] = await this.getPool().query<ResultSetHeader>(sql, params);
     return result;
+  }
+
+  // Read-modify-write yang harus konsisten (mis. pencatatan pembayaran dan
+  // penomoran tagihan) dijalankan dalam satu transaksi memakai connection sama.
+  async withTransaction<T>(work: (conn: PoolConnection) => Promise<T>): Promise<T> {
+    const conn = await this.getPool().getConnection();
+    try {
+      await conn.beginTransaction();
+      const result = await work(conn);
+      await conn.commit();
+      return result;
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      conn.release();
+    }
   }
 
   async onModuleDestroy(): Promise<void> {

@@ -10,6 +10,8 @@ import {
   Patch,
   Post,
   UseGuards,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
 import { CreateInvoiceDto, UpdateInvoiceDto, PayInvoiceDto } from './dto/invoice.dto';
 import { InvoicesService } from './invoices.service';
@@ -20,8 +22,15 @@ import { Roles } from '../auth/roles.decorator';
 // Tagihan berisi data finansial seluruh pelanggan. Resseler belum punya
 // relasi kepemilikan, jadi tidak diberi akses. Penghapusan tagihan
 // (menghapus riwayat pembayaran) dibatasi ke admin.
+const invoiceValidation = new ValidationPipe({
+  whitelist: true,
+  forbidNonWhitelisted: true,
+  transform: true,
+});
+
 @Controller('invoices')
 @UseGuards(JwtAuthGuard, RolesGuard)
+@UsePipes(invoiceValidation)
 export class InvoicesController {
   constructor(private invoicesService: InvoicesService) {}
 

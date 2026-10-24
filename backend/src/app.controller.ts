@@ -33,8 +33,8 @@ export class AppController {
   @Roles('admin', 'operator')
   async getDashboard() {
     const customers = await this.customersService.findAll();
-    const packages = this.packagesService.findAll();
-    const invoices = this.invoicesService.findAll();
+    const packages = await this.packagesService.findAll();
+    const invoices = await this.invoicesService.findAll();
 
     const totalCustomers = customers.length;
     const totalInvoices = invoices.length;

@@ -10,6 +10,8 @@ import {
   Patch,
   Post,
   UseGuards,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
 import { CreatePackageDto, UpdatePackageDto } from './dto/package.dto';
 import { PackagesService } from './packages.service';
@@ -20,8 +22,15 @@ import { Roles } from '../auth/roles.decorator';
 // Katalog paket boleh dibaca semua role terautentikasi (dibutuhkan untuk
 // menawarkan layanan). Perubahan harga/paket adalah keputusan komersial →
 // admin saja.
+const packageValidation = new ValidationPipe({
+  whitelist: true,
+  forbidNonWhitelisted: true,
+  transform: true,
+});
+
 @Controller('packages')
 @UseGuards(JwtAuthGuard, RolesGuard)
+@UsePipes(packageValidation)
 export class PackagesController {
   constructor(private packagesService: PackagesService) {}
 
