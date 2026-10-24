@@ -1,30 +1,40 @@
 import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { JwtService } from '@nestjs/jwt';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { App } from 'supertest/types.js';
 import { AppModule } from './../src/app.module.js';
+import { ConfigService } from './../src/app/config/config.service.js';
+import { UsersRepository } from './../src/app/modules/users/users.repository.js';
+import { createFakeUsers, FakeUsers } from './helpers/fake-users.js';
 
-// Uji integrasi nyata: route, guard JWT, dan query MySQL.
-// Tidak membuat/menghapus data pelanggan agar database tidak tercemar.
+// Uji integrasi nyata: route, guard JWT, dan query MySQL pada tabel customers.
+// UsersRepository diganti versi in-memory agar test tidak menulis ke tabel users.
 describe('Customers (e2e)', () => {
   let app: INestApplication<App>;
+  let fake: FakeUsers;
   let token: string;
 
   beforeAll(async () => {
+    fake = await createFakeUsers();
+
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(UsersRepository)
+      .useValue(fake.repo)
+      .compile();
 
     app = moduleFixture.createNestApplication();
     app.setGlobalPrefix('api');
     await app.init();
 
-    const login = await request(app.getHttpServer())
-      .post('/api/auth/login')
-      .send({ email: 'admin@jawara-billing.com', password: 'password123' });
-
-    token = login.body.token;
+    const admin = [...fake.accounts.values()].find((u) => u.role === 'admin')!;
+    token = new JwtService().sign(
+      { sub: admin.id, email: admin.email, role: admin.role },
+      { secret: app.get(ConfigService).jwtSecret, expiresIn: '1h' },
+    );
   });
 
   afterAll(async () => {

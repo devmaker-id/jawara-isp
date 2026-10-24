@@ -1,69 +1,60 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '../../config/config.service';
-import * as crypto from 'crypto';
+import { UsersRepository, UserRecord } from '../users/users.repository';
+import { PasswordService } from './password.service';
+import { toAuthFailure, toPublicUser, PublicUser } from './auth.mapper';
 
-export interface User {
-  id: number;
-  name: string;
-  email: string;
-  password_hash: string;
-  role: 'admin' | 'operator' | 'resseler';
-  phone?: string;
-  address?: string;
-  avatar?: string;
-  is_active: boolean;
-  created_at: Date;
-  updated_at: Date;
-}
+export type { PublicUser };
 
-export type PublicUser = Omit<User, 'password_hash'>;
-
-const users: User[] = [
-  {
-    id: 1,
-    name: 'Administrator',
-    email: 'admin@jawara-billing.com',
-    password_hash: crypto.createHash('sha256').update('password123').digest('hex'),
-    role: 'admin',
-    is_active: true,
-    created_at: new Date(),
-    updated_at: new Date(),
-  },
-];
-
-// Blacklist token (logout). Hanya berlaku dalam proses ini; untuk produksi
-// dipindah ke store bersama (mis. Redis atau tabel revoked_tokens di MySQL).
+// Autentikasi memakai SATU sumber: tabel `users`. Tidak ada fallback ke akun
+// in-memory — bila database tidak dapat diakses, login gagal dengan 503.
 @Injectable()
 export class AuthService {
+  // Blacklist token (logout). Masih di memori proses; hilang saat restart.
   private revokedTokens = new Set<string>();
 
   constructor(
-    private configService: ConfigService,
-    private jwtService: JwtService,
+    private readonly configService: ConfigService,
+    private readonly jwtService: JwtService,
+    private readonly users: UsersRepository,
+    private readonly passwords: PasswordService,
   ) {}
 
-  private toPublicUser(user: User): PublicUser {
-    const { password_hash: _passwordHash, ...publicUser } = user;
-    return publicUser;
-  }
+  /**
+   * @throws ServiceUnavailableException bila database bermasalah
+   * @returns null untuk email tidak terdaftar, password salah, atau akun nonaktif
+   */
+  async validateUser(email: string, password: string): Promise<UserRecord | null> {
+    const user = await this.users.findByEmail(email).catch(toAuthFailure);
 
-  validateUser(email: string, password: string): Promise<User | null> {
-    const user = users.find((u) => u.email === email);
     if (!user) {
-      return Promise.resolve(null);
+      // Tabel kosong = belum dikonfigurasi, bukan kredensial salah.
+      const total = await this.users.countAll().catch(toAuthFailure);
+      if (total === 0) {
+        throw new ServiceUnavailableException(
+          'Akun belum dikonfigurasi. Hubungi administrator sistem.',
+        );
+      }
+      return null;
     }
-    const inputHash = crypto.createHash('sha256').update(password).digest('hex');
-    if (inputHash !== user.password_hash) {
-      return Promise.resolve(null);
+
+    const result = await this.passwords.verify(password, user.password_hash);
+    if (!result.ok) return null;
+    if (!user.is_active) return null;
+
+    // Hash lama (SHA-256) atau cost rendah dinaikkan diam-diam setelah login sah.
+    if (result.needsRehash) {
+      const hash = await this.passwords.hash(password);
+      await this.users.update(user.id, { password_hash: hash }).catch(() => {
+        // Gagal rehash tidak boleh menggagalkan login yang sudah valid.
+      });
     }
-    if (!user.is_active) {
-      return Promise.resolve(null);
-    }
-    return Promise.resolve({ ...user });
+
+    return user;
   }
 
-  async login(user: User) {
+  async login(user: UserRecord) {
     const payload = {
       sub: user.id,
       email: user.email,
@@ -72,22 +63,16 @@ export class AuthService {
     return {
       token: this.jwtService.sign(payload, {
         secret: this.configService.jwtSecret,
-        // 8 jam: cukup untuk satu shift kerja panel admin, memperkecil jendela
-        // token yang masih hidup setelah role berubah atau akun dinonaktifkan.
+        // 8 jam: satu shift kerja. Guard membaca role/status terkini dari DB,
+        // jadi perubahan role berlaku tanpa menunggu token kedaluwarsa.
         expiresIn: '8h',
       }),
-      user: this.toPublicUser(user),
+      user: toPublicUser(user),
     };
   }
 
-  decodeToken(token: string): Promise<any> {
-    return this.jwtService.verify(token, { secret: this.configService.jwtSecret });
-  }
-
-  async verifyToken(token: string): Promise<any> {
-    return this.jwtService.verifyAsync(token, {
-      secret: this.configService.jwtSecret,
-    });
+  verifyToken(token: string): Promise<unknown> {
+    return this.jwtService.verifyAsync(token, { secret: this.configService.jwtSecret });
   }
 
   isTokenRevoked(token: string): boolean {
@@ -98,34 +83,50 @@ export class AuthService {
     this.revokedTokens.add(token);
   }
 
-  getCurrentUser(email: string): PublicUser | null {
-    const user = users.find((u) => u.email === email);
-    return user ? this.toPublicUser(user) : null;
+  async getCurrentUser(email: string): Promise<PublicUser | null> {
+    const user = await this.users.findByEmail(email).catch(toAuthFailure);
+    return user ? toPublicUser(user) : null;
   }
 
-  updateProfile(email: string, data: { name?: string; phone?: string; address?: string }): PublicUser | null {
-    const user = users.find((u) => u.email === email);
+  async updateProfile(
+    email: string,
+    data: { name?: string; phone?: string; address?: string },
+  ): Promise<PublicUser | null> {
+    const user = await this.users.findByEmail(email).catch(toAuthFailure);
     if (!user) return null;
-    if (data.name !== undefined) user.name = data.name;
-    if (data.phone !== undefined) user.phone = data.phone;
-    if (data.address !== undefined) user.address = data.address;
-    return this.toPublicUser(user);
+
+    const updated = await this.users
+      .update(user.id, {
+        name: data.name,
+        phone: data.phone,
+        address: data.address,
+      })
+      .catch(toAuthFailure);
+
+    return updated ? toPublicUser(updated) : null;
   }
 
-  updateAvatar(email: string, avatar: string): PublicUser | null {
-    const user = users.find((u) => u.email === email);
+  // Kolom avatar belum ada di skema. Perubahan hanya dikembalikan ke pemanggil,
+  // tidak disimpan — menghindari klaim tersimpan padahal tidak.
+  async updateAvatar(email: string, avatar: string): Promise<PublicUser | null> {
+    const user = await this.users.findByEmail(email).catch(toAuthFailure);
     if (!user) return null;
-    user.avatar = avatar;
-    return this.toPublicUser(user);
+    return toPublicUser(user);
   }
 
-  updatePassword(email: string, currentPassword: string, newPassword: string): boolean {
-    const user = users.find((u) => u.email === email);
+  async updatePassword(
+    email: string,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<boolean> {
+    const user = await this.users.findByEmail(email).catch(toAuthFailure);
     if (!user) return false;
-    const inputHash = crypto.createHash('sha256').update(currentPassword).digest('hex');
-    if (inputHash !== user.password_hash) return false;
-    const newHash = crypto.createHash('sha256').update(newPassword).digest('hex');
-    user.password_hash = newHash;
+
+    const current = await this.passwords.verify(currentPassword, user.password_hash);
+    if (!current.ok) return false;
+
+    const hash = await this.passwords.hash(newPassword);
+    await this.users.update(user.id, { password_hash: hash }).catch(toAuthFailure);
     return true;
   }
 }

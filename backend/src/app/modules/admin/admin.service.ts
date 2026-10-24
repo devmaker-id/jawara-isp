@@ -1,102 +1,110 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Role } from '../../config/config.service';
 import { PasswordService } from '../auth/password.service';
+import { toPublicUser, PublicUser } from '../auth/auth.mapper';
+import {
+  CreateUserRecord,
+  UpdateUserRecord,
+  UsersRepository,
+  UserRecord,
+} from '../users/users.repository';
 import { CreateUserDto, UpdateUserDto } from './dto/user.dto';
 
-export interface User {
-  id: number;
-  name: string;
-  email: string;
-  password_hash: string;
-  role: Role;
-  phone?: string;
-  address?: string;
-  is_active: boolean;
-  created_at: Date;
-  updated_at: Date;
-}
+export type { PublicUser };
 
-export type PublicUser = Omit<User, 'password_hash'>;
-
+// Manajemen akun memakai repository yang SAMA dengan AuthService, sehingga
+// user yang dibuat di sini langsung dapat login.
 @Injectable()
 export class AdminService {
-  private users: User[] = [];
+  constructor(
+    private readonly passwords: PasswordService,
+    private readonly users: UsersRepository,
+  ) {}
 
-  constructor(private readonly passwords: PasswordService) {}
-
-  private toPublicUser(user: User): PublicUser {
-    const { password_hash: _passwordHash, ...publicUser } = user;
-    return publicUser;
+  async findAll(): Promise<PublicUser[]> {
+    const users = await this.users.findAll();
+    return users.map(toPublicUser);
   }
 
-  private findInternal(id: number): User {
-    const user = this.users.find((u) => u.id === id);
+  async findOne(id: number): Promise<PublicUser> {
+    const user = await this.users.findById(id);
     if (!user) {
       throw new NotFoundException(`Pengguna dengan ID ${id} tidak ditemukan`);
     }
-    return user;
+    return toPublicUser(user);
   }
 
-  findAll(): PublicUser[] {
-    return this.users.map((user) => this.toPublicUser(user));
-  }
-
-  findOne(id: number): PublicUser {
-    return this.toPublicUser(this.findInternal(id));
-  }
-
-  findByEmail(email: string) {
-    return this.users.find((u) => u.email === email);
+  findByEmail(email: string): Promise<UserRecord | null> {
+    return this.users.findByEmail(email);
   }
 
   async create(createDto: CreateUserDto): Promise<PublicUser> {
-    const now = new Date();
-    const exists = this.findByEmail(createDto.email);
+    const exists = await this.users.existsByEmail(createDto.email);
     if (exists) {
       throw new ConflictException('Email sudah terdaftar');
     }
-    const user: User = {
-      id: this.users.length + 1,
+
+    const data: CreateUserRecord = {
       name: createDto.name,
-      email: createDto.email,
-      // Sebelumnya nilai mentah ADMIN_DEFAULT_PASSWORD ditulis ke kolom hash.
-      // Sekarang selalu bcrypt dari password yang dikirim admin.
+      email: createDto.email.trim(),
+      // Password selalu di-hash di sini; tidak pernah ditulis mentah.
       password_hash: await this.passwords.hash(createDto.password),
       role: createDto.role,
-      phone: createDto.phone,
-      address: createDto.address || '',
+      phone: createDto.phone ?? null,
+      address: createDto.address ?? null,
       is_active: createDto.is_active !== false,
-      created_at: now,
-      updated_at: now,
     };
-    this.users.push(user);
-    return this.toPublicUser(user);
+
+    try {
+      const created = await this.users.create(data);
+      return toPublicUser(created);
+    } catch (error) {
+      if ((error as { code?: string })?.code === 'ER_DUP_ENTRY') {
+        throw new ConflictException('Email sudah terdaftar');
+      }
+      throw error;
+    }
   }
 
   async update(id: number, updateDto: UpdateUserDto): Promise<PublicUser> {
-    const user = this.findInternal(id);
-    if (updateDto.email && updateDto.email !== user.email) {
-      const exists = this.findByEmail(updateDto.email);
+    const user = await this.users.findById(id);
+    if (!user) {
+      throw new NotFoundException(`Pengguna dengan ID ${id} tidak ditemukan`);
+    }
+
+    if (updateDto.email && updateDto.email.toLowerCase() !== user.email.toLowerCase()) {
+      const exists = await this.users.existsByEmail(updateDto.email);
       if (exists) {
         throw new ConflictException('Email sudah terdaftar');
       }
     }
 
     const { password, ...rest } = updateDto;
-    Object.assign(user, rest);
-    if (password) {
-      user.password_hash = await this.passwords.hash(password);
+    const data: UpdateUserRecord = {
+      ...rest,
+      email: rest.email?.trim(),
+      // Password hanya dikirim ke repository dalam bentuk hash.
+      password_hash: password ? await this.passwords.hash(password) : undefined,
+    };
+
+    try {
+      const updated = await this.users.update(id, data);
+      if (!updated) {
+        throw new NotFoundException(`Pengguna dengan ID ${id} tidak ditemukan`);
+      }
+      return toPublicUser(updated);
+    } catch (error) {
+      if ((error as { code?: string })?.code === 'ER_DUP_ENTRY') {
+        throw new ConflictException('Email sudah terdaftar');
+      }
+      throw error;
     }
-    user.updated_at = new Date();
-    return this.toPublicUser(user);
   }
 
-  remove(id: number) {
-    const index = this.users.findIndex((u) => u.id === id);
-    if (index === -1) {
+  async remove(id: number): Promise<{ ok: true }> {
+    const deleted = await this.users.remove(id);
+    if (!deleted) {
       throw new NotFoundException(`Pengguna dengan ID ${id} tidak ditemukan`);
     }
-    this.users.splice(index, 1);
     return { ok: true };
   }
 }

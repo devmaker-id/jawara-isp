@@ -68,10 +68,6 @@ const Login: React.FC = () => {
             {loading ? 'Memproses...' : 'Masuk'}
           </button>
         </form>
-
-        <div className="text-xs text-slate-500 text-center">
-          Demo: admin@jawara-billing.com / password123
-        </div>
       </div>
     </div>
   );

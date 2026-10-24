@@ -15,7 +15,8 @@ import { Request } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { LoginDto } from './dto/login.dto';
 import { AuthService } from './auth.service';
-import { JwtAuthGuard } from './auth.guard';
+import { JwtAuthGuard, AuthenticatedRequest } from './auth.guard';
+import { toPublicUser } from './auth.mapper';
 import { LoginRateLimitService } from './login-rate-limit.service';
 import * as crypto from 'crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
@@ -64,6 +65,9 @@ export class AuthController {
     // Diperiksa sebelum kredensial agar percobaan ke-6 tidak menyentuh hashing.
     this.rateLimit.assertAllowed(ip, email);
 
+    // validateUser melempar ServiceUnavailableException bila database bermasalah.
+    // Exception itu sengaja tidak ditangkap: kegagalan infrastruktur bukan
+    // percobaan kredensial, jadi tidak boleh menambah hitungan rate limit.
     const user = await this.authService.validateUser(email, password);
     if (!user) {
       this.rateLimit.recordFailure(ip, email);
@@ -85,20 +89,14 @@ export class AuthController {
   }
 
   @Get('me')
-  async me(@Req() req: Request) {
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token) {
-      throw new UnauthorizedException('Tidak ada token autentikasi');
+  @UseGuards(JwtAuthGuard)
+  me(@Req() req: Request) {
+    // Guard sudah memverifikasi token DAN membaca akun terkini dari database.
+    const account = (req as AuthenticatedRequest).account;
+    if (!account) {
+      throw new UnauthorizedException('Sesi tidak valid');
     }
-    try {
-      const payload = await this.authService.decodeToken(token);
-      if (this.authService.isTokenRevoked(token)) {
-        throw new UnauthorizedException('Token telah dicabut. Silakan login kembali.');
-      }
-      return this.authService.getCurrentUser(payload.email);
-    } catch {
-      throw new UnauthorizedException('Token tidak valid');
-    }
+    return toPublicUser(account);
   }
 
   @Post('profile')
@@ -116,7 +114,7 @@ export class AuthController {
     if (!authenticatedEmail) {
       return { error: 'Tidak dapat mengakses profil' };
     }
-    const user = this.authService.updateProfile(authenticatedEmail, {
+    const user = await this.authService.updateProfile(authenticatedEmail, {
       name: body.name,
       phone: body.phone,
       address: body.address,
@@ -153,7 +151,7 @@ export class AuthController {
     if (newPassword.length < 6) {
       return { error: 'Password minimal 6 karakter' };
     }
-    const success = this.authService.updatePassword(
+    const success = await this.authService.updatePassword(
       authenticatedEmail,
       currentPassword,
       newPassword,
@@ -201,11 +199,16 @@ export class AuthController {
     writeFileSync(filePath, file.buffer);
 
     // Update user avatar URL
-    const user = this.authService.updateAvatar(authenticatedEmail, `/uploads/${filename}`);
+    const user = await this.authService.updateAvatar(authenticatedEmail, `/uploads/${filename}`);
     if (!user) {
       return { error: 'Pengguna tidak ditemukan' };
     }
 
-    return { ok: true, avatar: user.avatar };
+    // Kolom avatar belum ada di skema, jadi file tersimpan tetapi tidak dapat
+    // direferensikan ulang. Laporkan apa adanya, jangan mengaku berhasil.
+    return {
+      ok: false,
+      error: 'Penyimpanan foto profil belum aktif. Fitur ini menunggu migrasi kolom avatar.',
+    };
   }
 }

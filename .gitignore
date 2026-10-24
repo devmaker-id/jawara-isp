@@ -19,3 +19,6 @@ frontend/.env
 backend/uploads/
 backend/src/uploads/
 test_profile.sh
+
+# Password awal admin hasil seed lokal (jangan pernah di-commit)
+backend/.admin-initial-password

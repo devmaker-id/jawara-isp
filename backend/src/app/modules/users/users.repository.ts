@@ -75,6 +75,20 @@ export class UsersRepository {
     return rows.map(toRecord);
   }
 
+  // Dipakai autentikasi untuk membedakan "akun belum dikonfigurasi" (tabel
+  // kosong) dari "kredensial salah" — dua kondisi yang butuh respons berbeda.
+  async countAll(): Promise<number> {
+    const row = await this.db.queryOne<{ total: number }>('SELECT COUNT(*) AS total FROM users');
+    return row ? Number(row.total) : 0;
+  }
+
+  async countAdmins(): Promise<number> {
+    const row = await this.db.queryOne<{ total: number }>(
+      "SELECT COUNT(*) AS total FROM users WHERE role = 'admin' AND is_active = 1",
+    );
+    return row ? Number(row.total) : 0;
+  }
+
   async findById(id: number): Promise<UserRecord | null> {
     const row = await this.db.queryOne<UserRow>(`SELECT ${COLUMNS} FROM users WHERE id = ?`, [id]);
     return row ? toRecord(row) : null;
