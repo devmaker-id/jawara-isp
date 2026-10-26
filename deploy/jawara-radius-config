@@ -1,0 +1,781 @@
+#!/usr/bin/python3
+# ============================================================================
+# jawara-radius-config — pengelola konfigurasi FreeRADIUS untuk panel Jawara ISP
+#
+# ATURAN FILE INI:
+#   * Hanya dijalankan sebagai root, lewat sudo sempit (deploy/sudoers-jawara-radius).
+#   * Hanya menerima SATU argumen perintah dari daftar tetap di VERBS.
+#     Tidak ada shell, tidak ada eval, tidak ada path/nilai bebas dari web.
+#   * Nilai konfigurasi masuk lewat stdin sebagai JSON dan divalidasi dengan
+#     batas tipe + rentang sebelum ditulis. Kunci tak dikenal = ditolak.
+#   * Setiap perubahan dibackup, divalidasi dengan `freeradius -CX`, dan
+#     dipulihkan otomatis bila validasi gagal.
+#   * Password MySQL FreeRADIUS dibuat di sini dan disimpan root:freerad 0640.
+#     Panel tidak pernah menerima nilainya; hanya status "dikelola server".
+#
+# Perintah:
+#   probe            status baca-saja (tanpa mengubah apa pun)
+#   read             pengaturan terkelola dalam JSON (password disamarkan)
+#   apply            terapkan pengaturan dari stdin (JSON)
+#   start|stop|restart|reload
+# ============================================================================
+import json
+import os
+import re
+import secrets
+import shutil
+import subprocess
+import sys
+import time
+
+RADDB = "/etc/freeradius/3.0"
+MODS_AVAILABLE = f"{RADDB}/mods-available"
+MODS_ENABLED = f"{RADDB}/mods-enabled"
+MODS_CONFIG = f"{RADDB}/mods-config"
+# queries.conf milik paket tidak boleh disunting (dimiliki root:freerad dan
+# ditimpa saat paket diperbarui), jadi kita membuat salinan terkelola.
+QUERIES_SRC = f"{MODS_CONFIG}/sql/main/mysql/queries.conf"
+QUERIES_MANAGED = f"{MODS_CONFIG}/sql/jawara/queries.conf"
+SITES_AVAILABLE = f"{RADDB}/sites-available"
+SITES_ENABLED = f"{RADDB}/sites-enabled"
+SECRET_FILE = f"{RADDB}/.jawara-db"
+CLIENTS_FILE = f"{RADDB}/clients.conf"
+ZONE_RE = r"[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+){0,2}"
+SITE_NAME = "jawara"
+DB_USER = "radius"
+RADIUS_TABLES = [
+    "nas", "radcheck", "radreply", "radgroupcheck", "radgroupreply",
+    "radusergroup", "radacct", "radpostauth",
+]
+
+VERBS = {"probe", "read", "apply", "start", "stop", "restart", "reload", "validate", "debug"}
+
+# ---------------------------------------------------------------------------
+# Utilitas
+# ---------------------------------------------------------------------------
+def out(payload, code=0):
+    json.dump(payload, sys.stdout)
+    sys.stdout.write("\n")
+    sys.exit(code)
+
+
+def fail(message, code=1, **extra):
+    payload = {"ok": False, "error": message}
+    payload.update(extra)
+    out(payload, code)
+
+
+def run(cmd, timeout=60, stdin_text=None, env=None):
+    """Menjalankan perintah tanpa shell. Saat timeout, output parsial tetap
+    dikembalikan supaya diagnostik tidak kosong (khususnya `freeradius -X`).
+    """
+    proc = None
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
+            text=True,
+            env=env,
+        )
+        output, _ = proc.communicate(input=stdin_text, timeout=timeout)
+        return proc.returncode, output or ""
+    except FileNotFoundError:
+        return 127, f"perintah tidak ditemukan: {cmd[0]}"
+    except subprocess.TimeoutExpired:
+        if proc is not None:
+            proc.kill()
+            output, _ = proc.communicate()
+            return 124, output or ""
+        return 124, f"perintah melewati batas waktu: {' '.join(cmd)}"
+
+
+def service_state():
+    code, text = run(["systemctl", "is-active", "freeradius"], timeout=10)
+    state = (text or "").strip().splitlines()
+    return state[0] if state else "unknown"
+
+
+def host_timezone():
+    """Zona waktu host yang benar-benar aktif.
+
+    timedatectl mengubah /etc/localtime (symlink ke /usr/share/zoneinfo) dan
+    tidak selalu memperbarui /etc/timezone, jadi symlink itulah sumber utama.
+    """
+    prefix = "/usr/share/zoneinfo/"
+    target = os.path.realpath("/etc/localtime")
+    if target.startswith(prefix):
+        name = target[len(prefix):]
+        if re.fullmatch(ZONE_RE, name) and zone_exists(name):
+            return name
+    try:
+        with open("/etc/timezone", encoding="utf-8") as handle:
+            value = handle.read().strip()
+    except OSError:
+        return "UTC"
+    return value if re.fullmatch(ZONE_RE, value) and zone_exists(value) else "UTC"
+
+
+def zone_exists(name):
+    return os.path.exists(f"/usr/share/zoneinfo/{name}")
+
+
+def server_clock():
+    now = time.time()
+    return {
+        "epoch": int(now),
+        "local": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
+        "utc": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(now)),
+    }
+
+
+def database_clock(settings):
+    """Jam dan zona waktu sesi MySQL yang dipakai FreeRADIUS.
+
+    acctstarttime diisi MariaDB lewat FROM_UNIXTIME(Event-Timestamp), jadi zona
+    waktu sesi inilah yang menentukan jam pada tabel radacct — bukan TZ proses
+    freeradius. Nilai ini ditampilkan agar selisih jam langsung terlihat.
+    """
+    if not os.path.exists(SECRET_FILE):
+        return None
+    try:
+        with open(SECRET_FILE, encoding="utf-8") as handle:
+            password = handle.read().strip()
+    except OSError:
+        return None
+    code, text = run(
+        [
+            "mysql",
+            f"-h{settings['db_host']}",
+            f"-P{settings['db_port']}",
+            f"-u{settings['db_user']}",
+            "-N",
+            "-B",
+            "-e",
+            "SELECT @@session.time_zone, NOW(), UTC_TIMESTAMP()",
+        ],
+        timeout=10,
+        env={
+            "MYSQL_PWD": password,
+            "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "LANG": "C",
+        },
+    )
+    lines = [line for line in (text or "").splitlines() if line.strip()]
+    if code != 0 or not lines:
+        return {"ok": False, "error": lines[-1] if lines else f"mysql keluar dengan kode {code}"}
+    parts = lines[-1].split("\t")
+    if len(parts) < 3:
+        return {"ok": False, "error": "balasan mysql tidak dikenali"}
+    return {"ok": True, "timezone": parts[0], "now": parts[1], "utc": parts[2]}
+
+
+# ---------------------------------------------------------------------------
+# probe — baca-saja
+# ---------------------------------------------------------------------------
+def cmd_probe():
+    installed = os.path.exists("/usr/sbin/freeradius")
+    managed = os.path.exists(f"{MODS_AVAILABLE}/sql") and os.path.exists(
+        f"{SITES_ENABLED}/{SITE_NAME}"
+    )
+    # Konfigurasi terkelola dianggap aktif bila site kita yang dipakai,
+    # bukan site `default` bawaan paket.
+    default_active = os.path.exists(f"{SITES_ENABLED}/default")
+    out({
+        "ok": True,
+        "installed": installed,
+        "service": service_state(),
+        "managed": bool(managed),
+        "using_default_site": bool(default_active),
+        "config_dir": RADDB,
+        "site_enabled": os.path.exists(f"{SITES_ENABLED}/{SITE_NAME}"),
+        "sql_module_enabled": os.path.exists(f"{MODS_ENABLED}/sql"),
+        "db_secret_present": os.path.exists(SECRET_FILE),
+    })
+
+
+# ---------------------------------------------------------------------------
+# read — pengaturan terkelola
+# ---------------------------------------------------------------------------
+def read_settings():
+    """Membaca kembali nilai yang kita tulis sendiri (bukan parser umum)."""
+    settings = {
+        "listen_address": "*",
+        "auth_port": 1812,
+        "acct_port": 1813,
+        "db_host": "127.0.0.1",
+        "db_port": 3306,
+        "db_name": "isp_billing",
+        "db_user": DB_USER,
+        "read_clients": True,
+        "coa_enabled": True,
+        "coa_port": 3799,
+        "message_authenticator": True,
+        "timezone": host_timezone(),
+    }
+
+    site = f"{SITES_ENABLED}/{SITE_NAME}"
+    if os.path.exists(site):
+        try:
+            with open(site, encoding="utf-8") as handle:
+                body = handle.read()
+            auth = re.search(r"type\s*=\s*auth\s*\n\s*ipaddr\s*=\s*(\S+)\s*\n\s*port\s*=\s*(\d+)", body)
+            acct = re.search(r"type\s*=\s*acct\s*\n\s*ipaddr\s*=\s*(\S+)\s*\n\s*port\s*=\s*(\d+)", body)
+            if auth:
+                settings["listen_address"] = auth.group(1)
+                settings["auth_port"] = int(auth.group(2))
+            if acct:
+                settings["acct_port"] = int(acct.group(2))
+            coa = re.search(r"type\s*=\s*coa\s*\n\s*ipaddr\s*=\s*\S+\s*\n\s*port\s*=\s*(\d+)", body)
+            settings["coa_enabled"] = bool(coa)
+            if coa:
+                settings["coa_port"] = int(coa.group(1))
+            settings["message_authenticator"] = "Message-Authenticator" in body
+        except OSError:
+            pass
+
+    sql = f"{MODS_ENABLED}/sql"
+    if os.path.exists(sql):
+        try:
+            with open(os.path.realpath(sql), encoding="utf-8") as handle:
+                body = handle.read()
+            for key, pattern, cast in (
+                ("db_host", r'^\s*server\s*=\s*"([^"]+)"', str),
+                ("db_port", r'^\s*port\s*=\s*(\d+)', int),
+                ("db_name", r'^\s*radius_db\s*=\s*"([^"]+)"', str),
+                ("db_user", r'^\s*login\s*=\s*"([^"]+)"', str),
+            ):
+                found = re.search(pattern, body, re.M)
+                if found:
+                    settings[key] = cast(found.group(1))
+            settings["read_clients"] = bool(
+                re.search(r"^\s*read_clients\s*=\s*yes", body, re.M)
+            )
+        except OSError:
+            pass
+
+    return settings
+
+
+def cmd_read():
+    out({
+        "ok": True,
+        "settings": read_settings(),
+        # Nilai password tidak pernah dikirim; cukup statusnya.
+        "db_password": "managed" if os.path.exists(SECRET_FILE) else "missing",
+        "server_time": server_clock(),
+        "database_time": database_clock(read_settings()),
+        "probe": {
+            "installed": os.path.exists("/usr/sbin/freeradius"),
+            "service": service_state(),
+            "site_enabled": os.path.exists(f"{SITES_ENABLED}/{SITE_NAME}"),
+            "sql_module_enabled": os.path.exists(f"{MODS_ENABLED}/sql"),
+        },
+    })
+
+
+# ---------------------------------------------------------------------------
+# apply — validasi lalu tulis
+# ---------------------------------------------------------------------------
+def parse_spec(raw):
+    try:
+        spec = json.loads(raw)
+    except json.JSONDecodeError as error:
+        fail(f"JSON tidak valid: {error.msg}")
+    if not isinstance(spec, dict):
+        fail("Isi permintaan harus objek JSON.")
+
+    allowed = {
+        "listen_address", "auth_port", "acct_port", "db_host", "db_port",
+        "db_name", "db_user", "read_clients",
+        "coa_enabled", "coa_port", "message_authenticator", "timezone",
+    }
+    extra = set(spec) - allowed
+    if extra:
+        fail(f"Kunci tidak dikenal: {', '.join(sorted(extra))}")
+
+    def text(key, default, pattern, label):
+        value = spec.get(key, default)
+        if not isinstance(value, str) or not re.fullmatch(pattern, value):
+            fail(f"Nilai {label} tidak valid.")
+        return value
+
+    def port(key, default):
+        value = spec.get(key, default)
+        if isinstance(value, bool) or not isinstance(value, int):
+            fail(f"Port {key} harus angka.")
+        if not 1 <= value <= 65535:
+            fail(f"Port {key} harus di antara 1 dan 65535.")
+        return value
+
+    spec = {
+        "listen_address": text("listen_address", "*", r"[0-9a-fA-F:.*]{1,45}", "alamat listen"),
+        "auth_port": port("auth_port", 1812),
+        "acct_port": port("acct_port", 1813),
+        "db_host": text("db_host", "127.0.0.1", r"[A-Za-z0-9_.:-]{1,255}", "host database"),
+        "db_port": port("db_port", 3306),
+        "db_name": text("db_name", "isp_billing", r"[A-Za-z0-9_]{1,64}", "nama database"),
+        "db_user": text("db_user", DB_USER, r"[A-Za-z0-9_]{1,32}", "user database"),
+        "read_clients": spec.get("read_clients", True),
+        "coa_enabled": spec.get("coa_enabled", True),
+        "coa_port": port("coa_port", 3799),
+        "message_authenticator": spec.get("message_authenticator", True),
+        "timezone": text("timezone", host_timezone(), ZONE_RE, "zona waktu"),
+    }
+    if not isinstance(spec["read_clients"], bool):
+        fail("read_clients harus benar/salah.")
+    if not isinstance(spec["coa_enabled"], bool):
+        fail("coa_enabled harus benar/salah.")
+    if not isinstance(spec["message_authenticator"], bool):
+        fail("message_authenticator harus benar/salah.")
+    if spec["auth_port"] == spec["acct_port"]:
+        fail("Port auth dan acct tidak boleh sama.")
+    if not zone_exists(spec["timezone"]):
+        fail(f"Zona waktu \"{spec['timezone']}\" tidak dikenal sistem.")
+    return spec
+
+
+def ensure_db_password():
+    """Password MySQL FreeRADIUS: dibuat sekali, tidak pernah keluar dari server."""
+    if os.path.exists(SECRET_FILE):
+        with open(SECRET_FILE, encoding="utf-8") as handle:
+            value = handle.read().strip()
+        if value:
+            return value
+    value = secrets.token_urlsafe(32)
+    fd = os.open(SECRET_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o640)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(value + "\n")
+    shutil.chown(SECRET_FILE, "root", "freerad")
+    os.chmod(SECRET_FILE, 0o640)
+    return value
+
+
+def ensure_db_user(user, password, database):
+    """Membuat/menyegarkan user MySQL terbatas untuk FreeRADIUS.
+
+    Memakai socket root (auth_socket) yang hanya tersedia bagi root.
+    Hak akses dibatasi ke DML pada database panel (tanpa DDL), dan dibuat untuk
+    host localhost maupun 127.0.0.1 karena FreeRADIUS menyambung via TCP.
+    """
+    sql = []
+    for host in ("localhost", "127.0.0.1"):
+        sql.append(f"CREATE USER IF NOT EXISTS '{user}'@'{host}' IDENTIFIED BY '{password}'")
+        sql.append(f"ALTER USER '{user}'@'{host}' IDENTIFIED BY '{password}'")
+        sql.append(
+            f"GRANT SELECT, INSERT, UPDATE, DELETE ON `{database}`.* TO '{user}'@'{host}'"
+        )
+    sql.append("FLUSH PRIVILEGES")
+    joined = ";\n".join(sql) + ";"
+    code, text = run(["mysql", "-N", "-B"], timeout=30, stdin_text=joined)
+    if code != 0:
+        return False, text.strip()[:400]
+    return True, ""
+
+
+def sql_module(password, spec):
+    clients = "yes" if spec["read_clients"] else "no"
+    return f"""\
+# Dikelola otomatis oleh jawara-radius-config. Jangan disunting manual:
+# perubahan akan tertimpa saat panel menerapkan pengaturan berikutnya.
+sql {{
+\tdialect = "mysql"
+\tdriver = "rlm_sql_${{dialect}}"
+
+\tserver = "{spec['db_host']}"
+\tport = {spec['db_port']}
+\tlogin = "{spec['db_user']}"
+\tpassword = "{password}"
+\tradius_db = "{spec['db_name']}"
+
+\tacct_table1 = "radacct"
+\tacct_table2 = "radacct"
+\tpostauth_table = "radpostauth"
+\tauthcheck_table = "radcheck"
+\tgroupcheck_table = "radgroupcheck"
+\tauthreply_table = "radreply"
+\tgroupreply_table = "radgroupreply"
+\tusergroup_table = "radusergroup"
+
+\tgroup_attribute = "SQL-Group"
+\tdelete_stale_sessions = yes
+
+\t# NAS dibaca dari tabel `nas` (dikelola dari panel), bukan clients.conf.
+\tread_clients = {clients}
+\tclient_table = "nas"
+
+\tpool {{
+\t\tstart = 2
+\t\tmin = 2
+\t\tmax = 16
+\t\tspare = 3
+\t\tidle_timeout = 60
+\t\tretry_delay = 5
+\t\tlifetime = 0
+\t}}
+
+\t# Salinan queries.conf terkelola: query post-auth di dalamnya mengisi kolom
+\t# log autentikasi (IP NAS, MAC, interface, station).
+\t$INCLUDE ${{modconfdir}}/sql/jawara/queries.conf
+}}
+"""
+
+
+def site_file(spec):
+    coa_block = ""
+    if spec["coa_enabled"]:
+        coa_block = f"""\
+\tlisten {{
+\t\ttype = coa
+\t\tipaddr = {spec['listen_address']}
+\t\tport = {spec['coa_port']}
+\t}}
+"""
+    # RouterOS 7 (dan 6.49.x) memakai require-message-auth=yes-for-request-resp,
+    # artinya Access-Accept/Reject WAJIB membawa Message-Authenticator. Di unlang
+    # atribut harus diset di dalam blok `update reply`; server mengisi HMAC yang
+    # benar tepat sebelum paket dikirim.
+    ma_block = (
+        "\t\tupdate reply {\n\t\t\tMessage-Authenticator = 0x00\n\t\t}\n"
+        if spec["message_authenticator"]
+        else ""
+    )
+    return f"""\
+# Dikelola otomatis oleh jawara-radius-config. Jangan disunting manual.
+#
+# Situs ini menggantikan `default` bawaan paket: hanya melayani autentikasi
+# dan akuntansi berbasis database (hotspot & PPPoE), tanpa user contoh `files`.
+server {SITE_NAME} {{
+\tlisten {{
+\t\ttype = auth
+\t\tipaddr = {spec['listen_address']}
+\t\tport = {spec['auth_port']}
+\t}}
+
+\tlisten {{
+\t\ttype = acct
+\t\tipaddr = {spec['listen_address']}
+\t\tport = {spec['acct_port']}
+\t}}
+
+{coa_block}
+\tauthorize {{
+\t\tpreprocess
+\t\t# chap/mschap menetapkan Auth-Type untuk kredensial CHAP.
+\t\tchap
+\t\tmschap
+\t\tsql
+\t\t# pap WAJIB paling akhir: ia memakai Cleartext-Password yang baru
+\t\t# diisi sql di atas. Bila diletakkan sebelum sql, tidak ada yang
+\t\t# bisa dibandingkan dan server menolak tanpa Auth-Type.
+\t\tpap
+\t}}
+
+\tauthenticate {{
+\t\tAuth-Type PAP {{
+\t\t\tpap
+\t\t}}
+\t\tAuth-Type CHAP {{
+\t\t\tchap
+\t\t}}
+\t\tAuth-Type MS-CHAP {{
+\t\t\tmschap
+\t\t}}
+\t}}
+
+\tpreacct {{
+\t\tpreprocess
+\t\tacct_unique
+\t}}
+
+\taccounting {{
+\t\tsql
+\t}}
+
+\tsession {{
+\t\tsql
+\t}}
+
+\tpost-auth {{
+{ma_block}\t\tsql
+\t\tPost-Auth-Type REJECT {{
+\t\t\tsql
+\t\t}}
+\t}}
+}}
+"""
+
+
+def clients_file(spec):
+    # Klien RADIUS sepenuhnya dari tabel `nas` (read_clients = yes). Berkas ini
+    # sengaja dikosongkan agar tidak ada daftar client kedua yang bisa
+    # menyimpang dari database atau memakai secret lama.
+    if spec["read_clients"]:
+        return """\
+# Dikelola otomatis oleh jawara-radius-config. Jangan disunting manual.
+#
+# Klien RADIUS dibaca dari tabel `nas` (read_clients = yes pada modul sql),
+# sehingga pendaftaran NAS dilakukan dari panel. Berkas ini sengaja kosong.
+"""
+    return """\
+# Dikelola otomatis oleh jawara-radius-config. Jangan disunting manual.
+#
+# read_clients dimatikan: klien RADIUS harus didaftarkan di berkas ini.
+# client mikrotik {
+#\tipaddr = 192.168.100.254
+#\tsecret = ubah-secret-ini
+#\trequire_message_authenticator = yes
+# }
+"""
+
+
+def write_file(path, body, mode=0o640):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.jawara-tmp"
+    with open(tmp, "w", encoding="utf-8") as handle:
+        handle.write(body)
+    shutil.chown(tmp, "root", "freerad")
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+def link(target, path):
+    if os.path.islink(path) or os.path.exists(path):
+        os.unlink(path)
+    os.symlink(target, path)
+
+
+def managed_queries():
+    """Tulis salinan queries.conf dengan query post-auth yang mengisi kolom
+    log autentikasi (IP NAS, MAC, interface, station).
+
+    Blok `post-auth` milik paket diganti utuh; sisa berkas disalin apa adanya
+    supaya query authorize/accounting tetap sama dengan versi terpasang.
+    """
+    try:
+        with open(QUERIES_SRC, encoding="utf-8") as handle:
+            body = handle.read()
+    except OSError as error:
+        fail(f"queries.conf paket tidak terbaca: {error}")
+
+    marker = "\npost-auth {"
+    start = body.find(marker)
+    if start < 0:
+        fail("Blok post-auth level atas tidak ditemukan di queries.conf paket.")
+    start += 1  # lewati newline, mulai tepat di 'post-auth {'
+
+    depth = 0
+    end = -1
+    for index in range(start, len(body)):
+        char = body[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                end = index + 1
+                break
+    if end < 0:
+        fail("Blok post-auth di queries.conf tidak tertutup.")
+
+    block = """post-auth {
+\tquery = "\\
+\t\tINSERT INTO ${..postauth_table} \\
+\t\t\t(username, pass, reply, calledstationid, callingstationid, nasipaddress, nasportid, nasporttype, framedipaddress, authdate) \\
+\t\tVALUES ( \\
+\t\t\t'%{User-Name}', \\
+\t\t\t'%{%{User-Password}:-%{Chap-Password}}', \\
+\t\t\t'%{reply:Packet-Type}', \\
+\t\t\t'%{Called-Station-Id}', \\
+\t\t\t'%{Calling-Station-Id}', \\
+\t\t\t'%{NAS-IP-Address}', \\
+\t\t\t'%{NAS-Port-Id}', \\
+\t\t\t'%{NAS-Port-Type}', \\
+\t\t\t'%{Framed-IP-Address}', \\
+\t\t\t'%S' \\
+\t\t\t)"
+}"""
+
+    write_file(QUERIES_MANAGED, body[:start] + block + body[end:])
+
+
+def cmd_apply():
+    spec = parse_spec(sys.stdin.read())
+    if not os.path.isdir(RADDB):
+        fail(f"Direktori konfigurasi tidak ada: {RADDB}. Pasang FreeRADIUS lebih dulu.")
+
+    # Zona waktu disetel sebelum menulis konfigurasi: bila timedatectl menolak,
+    # tidak ada perubahan RADIUS yang tertinggal.
+    if spec["timezone"] != host_timezone():
+        code, text = run(["timedatectl", "set-timezone", spec["timezone"]], timeout=30)
+        if code != 0:
+            detail = (text or "").strip() or "timedatectl menolak permintaan"
+            fail(f"Gagal menyetel zona waktu ke {spec['timezone']}: {detail}")
+        # Python menyimpan cache zona waktu sejak proses mulai.
+        time.tzset()
+
+    # Salinan queries.conf harus siap sebelum modul sql meng-include-nya.
+    managed_queries()
+
+    password = ensure_db_password()
+    db_ok, db_error = ensure_db_user(spec["db_user"], password, spec["db_name"])
+
+    targets = [f"{MODS_AVAILABLE}/sql", f"{SITES_AVAILABLE}/{SITE_NAME}", CLIENTS_FILE]
+    backups = {}
+    for path in targets:
+        if os.path.exists(path):
+            backups[path] = f"{path}.jawara-bak"
+            shutil.copy2(path, backups[path])
+
+    # Simpan kondisi symlink supaya bisa dipulihkan bila validasi gagal.
+    links_state = {}
+    for name, directory in (("sql", MODS_ENABLED), (SITE_NAME, SITES_ENABLED), ("default", SITES_ENABLED)):
+        path = f"{directory}/{name}"
+        links_state[path] = os.readlink(path) if os.path.islink(path) else None
+    # Modul eap butuh 'Auth-Type EAP' di dalam server yang mengaktifkannya.
+    # Site kita hanya melayani PAP/CHAP/MS-CHAP (hotspot & PPPoE), jadi modul
+    # eap dinonaktifkan agar validasi konfigurasi konsisten.
+    eap_path = f"{MODS_ENABLED}/eap"
+    links_state[eap_path] = os.readlink(eap_path) if os.path.islink(eap_path) else None
+
+    try:
+        write_file(f"{MODS_AVAILABLE}/sql", sql_module(password, spec))
+        write_file(f"{SITES_AVAILABLE}/{SITE_NAME}", site_file(spec))
+        if spec["read_clients"]:
+            write_file(CLIENTS_FILE, clients_file(spec))
+        link(f"../mods-available/sql", f"{MODS_ENABLED}/sql")
+        link(f"../sites-available/{SITE_NAME}", f"{SITES_ENABLED}/{SITE_NAME}")
+        # Site bawaan dinonaktifkan agar tidak ada jalur autentikasi kedua.
+        for name in ("default", "inner-tunnel"):
+            path = f"{SITES_ENABLED}/{name}"
+            if os.path.islink(path) or os.path.exists(path):
+                os.unlink(path)
+        if os.path.islink(eap_path) or os.path.exists(eap_path):
+            os.unlink(eap_path)
+
+        code, text = run(["freeradius", "-CX", "-d", RADDB], timeout=90)
+        valid = code == 0
+    except OSError as error:
+        valid = False
+        code, text = 1, f"gagal menulis konfigurasi: {error}"
+
+    if not valid:
+        # Rollback: kembalikan file dan symlink ke kondisi sebelumnya.
+        for path, backup in backups.items():
+            shutil.copy2(backup, path)
+        for path, target in links_state.items():
+            if target is None:
+                if os.path.islink(path) or os.path.exists(path):
+                    os.unlink(path)
+            else:
+                link(target, path)
+        detail = [line for line in text.splitlines() if line.strip()][-12:]
+        fail(
+            "Konfigurasi ditolak FreeRADIUS; perubahan dibatalkan dan konfigurasi "
+            "sebelumnya dipulihkan.",
+            validation=detail,
+            db_user_ready=db_ok,
+            db_error=db_error or None,
+        )
+
+    # Reload bila service sedang berjalan; jangan menyalakan yang sengaja berhenti.
+    reloaded = False
+    if service_state() == "active":
+        code, _ = run(["systemctl", "reload", "freeradius"], timeout=60)
+        reloaded = code == 0
+
+    out({
+        "ok": True,
+        "settings": read_settings(),
+        "db_password": "managed",
+        "db_user_ready": db_ok,
+        "db_error": db_error or None,
+        "reloaded": reloaded,
+        "service": service_state(),
+        "server_time": server_clock(),
+        "validation": [line for line in text.splitlines() if line.strip()][-3:],
+    })
+
+
+# ---------------------------------------------------------------------------
+def cmd_service(action):
+    if action == "stop":
+        run(["systemctl", "stop", "freeradius"], timeout=60)
+    elif action == "start":
+        run(["systemctl", "start", "freeradius"], timeout=60)
+    elif action == "restart":
+        run(["systemctl", "restart", "freeradius"], timeout=90)
+    else:
+        run(["systemctl", "reload", "freeradius"], timeout=60)
+
+    state = service_state()
+    if action in ("start", "restart") and state != "active":
+        code, text = run(["journalctl", "-u", "freeradius", "-n", "8", "--no-pager"], timeout=20)
+        fail(f"freeradius gagal {action} (status {state}).", journal=text.strip().splitlines()[-6:])
+    out({"ok": True, "service": state, "action": action})
+
+
+# ---------------------------------------------------------------------------
+# validate & debug — diagnostik tanpa mengubah konfigurasi
+# ---------------------------------------------------------------------------
+def cmd_validate():
+    code, text = run(["freeradius", "-CX", "-d", RADDB], timeout=90)
+    lines = [line for line in text.splitlines() if line.strip()]
+    out({
+        "ok": code == 0,
+        "valid": code == 0,
+        "error": None if code == 0 else "Konfigurasi ditolak FreeRADIUS.",
+        "output": lines[-20:],
+    })
+
+
+def cmd_debug():
+    """Menjalankan freeradius -X selama 10 detik untuk melihat request masuk.
+
+    Service dihentikan sementara karena port tidak bisa dipakai bersamaan,
+    lalu dinyalakan kembali. Tanpa argumen: tanpanya tidak ada nilai yang bisa
+    disisipkan dari web.
+    """
+    was_active = service_state() == "active"
+    if was_active:
+        run(["systemctl", "stop", "freeradius"], timeout=60)
+    try:
+        code, text = run(["freeradius", "-X", "-d", RADDB], timeout=10)
+    finally:
+        if was_active:
+            run(["systemctl", "start", "freeradius"], timeout=60)
+
+    lines = [line for line in text.splitlines() if line.strip()]
+    out({
+        "ok": True,
+        "service": service_state(),
+        "output": lines[-40:],
+        "truncated": len(lines) > 40,
+    })
+
+
+def main():
+    if os.geteuid() != 0:
+        fail("harus dijalankan sebagai root lewat sudo -n /usr/local/sbin/jawara-radius-config")
+
+    if len(sys.argv) < 2 or sys.argv[1] not in VERBS:
+        fail(f"perintah tidak dikenal. Pilihan: {', '.join(sorted(VERBS))}")
+
+    verb = sys.argv[1]
+    if verb == "probe":
+        cmd_probe()
+    elif verb == "read":
+        cmd_read()
+    elif verb == "apply":
+        cmd_apply()
+    elif verb == "validate":
+        cmd_validate()
+    elif verb == "debug":
+        cmd_debug()
+    else:
+        cmd_service(verb)
+
+
+if __name__ == "__main__":
+    main()

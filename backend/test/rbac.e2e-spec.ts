@@ -7,6 +7,7 @@ import { App } from 'supertest/types.js';
 import { AppModule } from './../src/app.module.js';
 import { ConfigService } from './../src/app/config/config.service.js';
 import { UsersRepository } from './../src/app/modules/users/users.repository.js';
+import { DashboardService } from './../src/app/modules/dashboard/dashboard.service.js';
 import { createFakeUsers, FakeUsers } from './helpers/fake-users.js';
 
 // Otorisasi diuji dengan UsersRepository in-memory: guard membaca status akun
@@ -21,6 +22,9 @@ describe('RBAC (e2e)', () => {
   const sign = (sub: number, role: string, email: string) =>
     new JwtService().sign({ sub, email, role }, { secret, expiresIn: '1h' });
 
+  // id reseller pada helper fake-users; dipakai untuk memeriksa filter SQL.
+  const resellerId = 3;
+
   beforeAll(async () => {
     fake = await createFakeUsers();
 
@@ -29,6 +33,10 @@ describe('RBAC (e2e)', () => {
     })
       .overrideProvider(UsersRepository)
       .useValue(fake.repo)
+      // Dashboard membaca metrik host + perangkat; diuji terpisah, jadi di sini
+      // diganti stub agar suite tetap lari tanpa menyentuh MySQL/MikroTik.
+      .overrideProvider(DashboardService)
+      .useValue({ summary: async () => ({ total_customers: 0 }) })
       .compile();
 
     app = moduleFixture.createNestApplication();
@@ -109,8 +117,18 @@ describe('RBAC (e2e)', () => {
       await call('get', '/api/customers', tokens.operator).expect(200);
     });
 
-    it('reseller → 403 (belum ada relasi kepemilikan)', async () => {
-      await call('get', '/api/customers', tokens.resseler).expect(403);
+    // Cakupan reseller difilter di SQL (ownerFilter). Setelah migrasi 003
+    // dijalankan, jawabannya 200 berisi HANYA pelanggan miliknya — bukan
+    // seluruh pelanggan, dan bukan 503.
+    it('reseller hanya menerima pelanggan miliknya', async () => {
+      const own = await call('get', '/api/customers', tokens.admin).expect(200);
+      const res = await call('get', '/api/customers', tokens.resseler).expect(200);
+      expect(Array.isArray(res.body)).toBe(true);
+      // Tidak boleh membocorkan pelanggan yang bukan miliknya.
+      expect(res.body.length).toBeLessThanOrEqual(own.body.length);
+      for (const customer of res.body) {
+        expect(customer.reseller_id).toBe(resellerId);
+      }
     });
 
     it('operator tidak boleh menghapus pelanggan', async () => {
@@ -149,8 +167,15 @@ describe('RBAC (e2e)', () => {
       await call('get', '/api/invoices', tokens.operator).expect(200);
     });
 
-    it('reseller ditolak 403', async () => {
-      await call('get', '/api/invoices', tokens.resseler).expect(403);
+    // Setelah migrasi 003, tagihan reseller difilter lewat kepemilikan
+    // pelanggan: 200 dengan HANYA tagihan pelanggan miliknya.
+    it('reseller hanya menerima tagihan pelanggan miliknya', async () => {
+      const res = await call('get', '/api/invoices', tokens.resseler).expect(200);
+      expect(Array.isArray(res.body)).toBe(true);
+      // Tidak ada pelanggan milik reseller uji → daftar harus kosong,
+      // bukan seluruh tagihan milik admin.
+      const all = await call('get', '/api/invoices', tokens.admin).expect(200);
+      expect(res.body.length).toBeLessThanOrEqual(all.body.length);
     });
 
     it('operator tidak boleh menghapus tagihan', async () => {

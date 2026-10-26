@@ -7,13 +7,15 @@ import {
   HttpStatus,
   Param,
   ParseIntPipe,
+  Query,
+  Req,
   Patch,
   Post,
   UseGuards,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
-import { CreateUserDto, UpdateUserDto } from './dto/user.dto';
+import { CreateUserDto, ListUsersQueryDto, UpdateUserDto } from './dto/user.dto';
 import { AdminService } from './admin.service';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -38,9 +40,16 @@ const adminValidation = new ValidationPipe({
 export class AdminController {
   constructor(private adminService: AdminService) {}
 
+  // Tanpa `page`: array (kompatibel). Dengan `page`: { rows, total, page, limit }.
   @Get()
-  findAll() {
-    return this.adminService.findAll();
+  findAll(@Query() query: ListUsersQueryDto) {
+    return this.adminService.list({
+      search: query.search,
+      role: query.role,
+      isActive: query.status === undefined ? undefined : query.status === 'active',
+      page: query.page,
+      limit: query.limit,
+    });
   }
 
   @Get(':id')
@@ -55,12 +64,16 @@ export class AdminController {
   }
 
   @Patch(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() updateDto: UpdateUserDto) {
-    return this.adminService.update(id, updateDto);
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() updateDto: UpdateUserDto,
+    @Req() req: { user?: { sub?: number } },
+  ) {
+    return this.adminService.update(id, updateDto, req.user?.sub);
   }
 
   @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.adminService.remove(id);
+  remove(@Param('id', ParseIntPipe) id: number, @Req() req: { user?: { sub?: number } }) {
+    return this.adminService.remove(id, req.user?.sub);
   }
 }

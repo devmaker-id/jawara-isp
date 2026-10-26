@@ -5,8 +5,15 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { CreateInvoiceDto, PayInvoiceDto, UpdateInvoiceDto } from './dto/invoice.dto';
-import { Invoice, InvoiceError, InvoiceSummary, InvoicesRepository } from './invoices.repository';
+import { CreateInvoiceDto, UpdateInvoiceDto } from './dto/invoice.dto';
+import { isMissingOwnerColumn, RequestScope, SYSTEM_SCOPE } from '../auth/request-scope';
+import {
+  Invoice,
+  InvoiceError,
+  InvoiceQuery,
+  InvoiceSummary,
+  InvoicesRepository,
+} from './invoices.repository';
 
 export type { Invoice };
 
@@ -23,47 +30,29 @@ function errorCode(error: unknown): string | undefined {
   return (error as { code?: string })?.code;
 }
 
-function todayIso(): string {
-  const now = new Date();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  return `${now.getFullYear()}-${m}-${d}`;
-}
-
-function rupiah(value: number): string {
-  return `Rp ${value.toLocaleString('id-ID')}`;
-}
-
 @Injectable()
 export class InvoicesService {
   constructor(private readonly repository: InvoicesRepository) {}
 
   private rethrow(error: unknown): never {
+    if (isMissingOwnerColumn(error)) {
+      throw new ServiceUnavailableException(
+        'Data tagihan reseller belum dapat difilter: kolom customers.reseller_id belum ada ' +
+          '(migrasi 003_customer_reseller_ownership.sql belum dijalankan).',
+      );
+    }
     if (error instanceof InvoiceError) {
       switch (error.code) {
         case 'NOT_FOUND':
         case 'CUSTOMER_NOT_FOUND':
           throw new NotFoundException(error.message);
-        case 'ALREADY_PAID':
-          throw new ConflictException('Tagihan sudah lunas');
         case 'PAID_INVOICE_LOCKED':
           throw new ConflictException(
             'Tagihan sudah lunas: nominal dan jatuh tempo tidak dapat diubah',
           );
         case 'INVALID_STATUS':
           throw new BadRequestException(
-            'Status lunas hanya dapat diatur melalui endpoint pembayaran',
-          );
-        case 'OVERPAY':
-          throw new BadRequestException(
-            `Nominal pembayaran melebihi sisa tagihan (sisa ${rupiah(error.remaining ?? 0)})`,
-          );
-        case 'PARTIAL_UNSUPPORTED':
-          throw new ConflictException(
-            'Pembayaran parsial belum dapat dicatat karena skema database belum memiliki ' +
-              'tabel payments atau kolom nominal terbayar. ' +
-              `Sisa tagihan ${rupiah(error.remaining ?? 0)}. Catat pembayaran penuh, ` +
-              'atau setujui penambahan tabel payments lebih dulu.',
+            'Status lunas/parsial hanya dapat diatur melalui endpoint pembayaran',
           );
       }
     }
@@ -75,30 +64,63 @@ export class InvoicesService {
     if (code === 'ER_NO_REFERENCED_ROW_2' || code === 'ER_NO_REFERENCED_ROW') {
       throw new NotFoundException('Pelanggan tidak ditemukan');
     }
+    // FK payments.invoice_id ON DELETE RESTRICT: tagihan yang punya riwayat
+    // pembayaran (termasuk yang sudah di-void) tidak boleh dihapus.
+    if (code === 'ER_ROW_IS_REFERENCED_2') {
+      throw new ConflictException(
+        'Tagihan punya riwayat pembayaran sehingga tidak dapat dihapus. ' +
+          'Void pembayarannya lebih dulu bila memang salah catat.',
+      );
+    }
     if (code && DB_UNAVAILABLE.includes(code)) {
       throw new ServiceUnavailableException('Database tidak tersedia, coba lagi nanti');
     }
     throw error;
   }
 
-  findAll(): Promise<Invoice[]> {
-    return this.repository.findAll().catch((error) => this.rethrow(error));
+  findAll(scope: RequestScope = SYSTEM_SCOPE): Promise<Invoice[]> {
+    return this.repository.findAll(scope).catch((error) => this.rethrow(error));
   }
 
-  async findOne(id: number): Promise<Invoice> {
-    const invoice = await this.repository.findById(id).catch((error) => this.rethrow(error));
+  // Tanpa `page` → array (kompatibel). Dengan `page` → { rows, total, page, limit }.
+  async list(
+    query: InvoiceQuery,
+    scope: RequestScope = SYSTEM_SCOPE,
+  ): Promise<Invoice[] | { rows: Invoice[]; total: number; page: number; limit: number }> {
+    if (query.page === undefined) {
+      const rows = await this.repository.findAll(scope).catch((error) => this.rethrow(error));
+      const needle = query.search?.trim().toLowerCase();
+      return rows.filter((invoice) => {
+        if (query.status && invoice.status !== query.status) return false;
+        if (!needle) return true;
+        return `${invoice.invoice_number} ${invoice.customer_name}`.toLowerCase().includes(needle);
+      });
+    }
+
+    const limit = Math.max(1, Math.min(200, query.limit ?? 20));
+    const page = Math.max(1, query.page);
+    const { rows, total } = await this.repository
+      .findPage({ ...query, page, limit }, scope)
+      .catch((error) => this.rethrow(error));
+    return { rows, total, page, limit };
+  }
+
+  async findOne(id: number, scope: RequestScope = SYSTEM_SCOPE): Promise<Invoice> {
+    const invoice = await this.repository
+      .findById(id, scope)
+      .catch((error) => this.rethrow(error));
     if (!invoice) {
       throw new NotFoundException(`Tagihan dengan ID ${id} tidak ditemukan`);
     }
     return invoice;
   }
 
-  findByCustomer(customerId: number): Promise<Invoice[]> {
-    return this.repository.findByCustomer(customerId).catch((error) => this.rethrow(error));
+  findByCustomer(customerId: number, scope: RequestScope = SYSTEM_SCOPE): Promise<Invoice[]> {
+    return this.repository.findByCustomer(customerId, scope).catch((error) => this.rethrow(error));
   }
 
-  getSummary(): Promise<InvoiceSummary> {
-    return this.repository.summary().catch((error) => this.rethrow(error));
+  getSummary(scope: RequestScope = SYSTEM_SCOPE): Promise<InvoiceSummary> {
+    return this.repository.summary(scope).catch((error) => this.rethrow(error));
   }
 
   create(dto: CreateInvoiceDto): Promise<Invoice> {
@@ -115,13 +137,5 @@ export class InvoicesService {
       throw new NotFoundException(`Tagihan dengan ID ${id} tidak ditemukan`);
     }
     return { ok: true };
-  }
-
-  async pay(id: number, dto: PayInvoiceDto): Promise<Invoice> {
-    // Tanggal pembayaran tidak boleh di masa depan (kolom DATE, tanpa jam).
-    if (dto.paid_date && dto.paid_date > todayIso()) {
-      throw new BadRequestException('Tanggal pembayaran tidak boleh melebihi hari ini');
-    }
-    return this.repository.pay(id, dto).catch((error) => this.rethrow(error));
   }
 }

@@ -1,4 +1,17 @@
-import { IsString, IsEmail, IsEnum, IsBoolean, IsOptional, MinLength } from 'class-validator';
+import {
+  IsString,
+  IsEmail,
+  IsEnum,
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsOptional,
+  Max,
+  MaxLength,
+  Min,
+  MinLength,
+} from 'class-validator';
+import { Type } from 'class-transformer';
 import { Role } from '../../../config/config.service';
 
 // Panjang minimum untuk akun baru. Password lama (di luar alur ini) tidak
@@ -61,4 +74,34 @@ export class UpdateUserDto {
   @IsBoolean()
   @IsOptional()
   is_active?: boolean;
+}
+
+// Query daftar pengguna. `status` sengaja berupa kata (active/inactive) agar
+// frontend tidak perlu mengirim boolean dalam query string.
+export class ListUsersQueryDto {
+  @IsString()
+  @IsOptional()
+  @MaxLength(100)
+  search?: string;
+
+  @IsEnum(Role)
+  @IsOptional()
+  role?: Role;
+
+  @IsIn(['active', 'inactive'])
+  @IsOptional()
+  status?: 'active' | 'inactive';
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @IsOptional()
+  page?: number;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  @IsOptional()
+  limit?: number;
 }

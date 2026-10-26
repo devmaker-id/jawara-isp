@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  BadRequestException,
   ConflictException,
   NotFoundException,
   ServiceUnavailableException,
@@ -56,49 +55,6 @@ describe('InvoicesService', () => {
       findById: vi.fn().mockRejectedValue(new InvoiceError('NOT_FOUND', 'Tagihan tidak ditemukan')),
     });
     await expect(service.findOne(9)).rejects.toBeInstanceOf(NotFoundException);
-  });
-
-  it('menerjemahkan OVERPAY menjadi 400 dengan nilai sisa', async () => {
-    const { service } = makeService({
-      pay: vi.fn().mockRejectedValue(new InvoiceError('OVERPAY', 'melebihi', 1000)),
-    });
-    await expect(service.pay(1, { amount: 2000 })).rejects.toThrow(/melebihi sisa tagihan/);
-    await expect(service.pay(1, { amount: 2000 })).rejects.toBeInstanceOf(BadRequestException);
-  });
-
-  it('menerjemahkan PARTIAL_UNSUPPORTED menjadi 409 dengan alasan skema', async () => {
-    const { service } = makeService({
-      pay: vi.fn().mockRejectedValue(new InvoiceError('PARTIAL_UNSUPPORTED', 'parsial', 1000)),
-    });
-    const error = await service.pay(1, { amount: 500 }).catch((e) => e);
-    expect(error).toBeInstanceOf(ConflictException);
-    expect(error.message).toMatch(/tabel payments/);
-  });
-
-  it('menolak pembayaran ganda (ALREADY_PAID) dengan 409', async () => {
-    const { service } = makeService({
-      pay: vi.fn().mockRejectedValue(new InvoiceError('ALREADY_PAID', 'lunas')),
-    });
-    await expect(service.pay(1, { amount: 1000 })).rejects.toBeInstanceOf(ConflictException);
-  });
-
-  it('menolak tanggal pembayaran di masa depan sebelum menyentuh repository', async () => {
-    const { service, raw } = makeService();
-    const future = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
-    await expect(service.pay(1, { amount: 1000, paid_date: future })).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
-    expect(raw.pay).not.toHaveBeenCalled();
-  });
-
-  it('meneruskan tanggal pembayaran hari ini ke repository', async () => {
-    const { service, raw } = makeService();
-    const today = new Date();
-    const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(
-      today.getDate(),
-    ).padStart(2, '0')}`;
-    await service.pay(1, { amount: 49500.5, paid_date: iso });
-    expect(raw.pay).toHaveBeenCalledWith(1, { amount: 49500.5, paid_date: iso });
   });
 
   it('menerjemahkan galat koneksi database menjadi 503', async () => {

@@ -48,6 +48,84 @@ const MenuItem: React.FC<{ item: MenuItemConfig; onNavigate: () => void }> = ({ 
   );
 };
 
+// Grup menu dengan sub-menu. Induk hanya membuka/menutup daftar anak, atau
+// berpindah ke halaman ringkasan bila judul induk diklik dua kali dari grup
+// yang sudah terbuka. Status buka mengikuti halaman aktif agar pengguna
+// selalu melihat di mana posisinya setelah refresh.
+const MenuGroup: React.FC<{ item: MenuItemConfig; onNavigate: () => void }> = ({ item, onNavigate }) => {
+  const location = useLocation();
+  const children = item.children ?? [];
+  const isChildActive = children.some((child) => child.path === location.pathname);
+  const [open, setOpen] = useState(isChildActive);
+
+  useEffect(() => {
+    if (isChildActive) setOpen(true);
+  }, [isChildActive, location.pathname]);
+
+  if (!item.available) {
+    return (
+      <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-500 cursor-not-allowed select-none">
+        <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
+        </svg>
+        <span className="truncate">{item.label}</span>
+        <span className="ml-auto text-[10px] uppercase tracking-wider text-slate-600">Belum tersedia</span>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
+          isChildActive
+            ? 'bg-cyan-500/10 text-cyan-400'
+            : 'text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'
+        }`}
+      >
+        <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
+        </svg>
+        <span className="truncate">{item.label}</span>
+        <svg
+          className={`ml-auto w-4 h-4 flex-shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="mt-1 space-y-0.5 border-l border-slate-700/60 pl-3 ml-5">
+          {children.map((child) => {
+            const active = location.pathname === child.path;
+            return (
+              <NavLink
+                key={child.path}
+                to={child.path}
+                end
+                onClick={onNavigate}
+                className={`flex items-center rounded-lg px-3 py-2 text-sm transition ${
+                  active
+                    ? 'bg-cyan-500/10 text-cyan-300 font-medium'
+                    : 'text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'
+                }`}
+              >
+                <span className="truncate">{child.label}</span>
+              </NavLink>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // Layout route React Router v6: child route dirender lewat <Outlet />,
 // bukan lewat prop `children` (prop itu tidak pernah dikirim router).
 const Layout: React.FC = () => {
@@ -120,20 +198,11 @@ const Layout: React.FC = () => {
           style={{ width: 'var(--drawer-width)', maxWidth: 'var(--drawer-max-width)' }}
           aria-label="Sidebar navigasi"
         >
-          <div className="flex flex-col flex-shrink-0">
+          {/* flex-1 + min-h-0: wajib, agar nav di dalamnya benar-benar scroll
+              dan bukan mendorong footer keluar layar. */}
+          <div className="flex flex-1 min-h-0 flex-col">
             {/* Drawer header */}
             <div className="flex items-center justify-between px-4 py-4 border-b border-slate-700/50">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-cyan-500 flex items-center justify-center text-white">
-                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                  </svg>
-                </div>
-                <div className="hidden sm:block">
-                  <p className="text-sm font-bold leading-tight text-white">jawara-billing</p>
-                  <p className="text-xs text-slate-500 leading-tight">BibitNet ISP</p>
-                </div>
-              </div>
               <div className="flex items-center gap-2">
                 {user && (
                   <div className="flex items-center gap-2">
@@ -156,9 +225,13 @@ const Layout: React.FC = () => {
 
             {/* Drawer nav */}
             <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
-              {visibleMenu.map((item) => (
-                <MenuItem key={item.path} item={item} onNavigate={() => setOpen(false)} />
-              ))}
+              {visibleMenu.map((item) =>
+                item.children && item.children.length > 0 ? (
+                  <MenuGroup key={item.path} item={item} onNavigate={() => setOpen(false)} />
+                ) : (
+                  <MenuItem key={item.path} item={item} onNavigate={() => setOpen(false)} />
+                ),
+              )}
             </nav>
 
             {/* Drawer footer */}

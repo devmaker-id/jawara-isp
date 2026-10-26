@@ -1,118 +1,178 @@
-import React, { useEffect, useState } from 'react';
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import React, { useCallback, useEffect, useState } from 'react';
 import api from '../services/api';
-import { useAuth } from '../contexts/AuthContext';
+import {
+  Badge,
+  Button,
+  Card,
+  ErrorNote,
+  Loading,
+  PageHeader,
+  errorMessage,
+  formatBytes,
+  formatUptime,
+} from '../components/net/NetUI';
+
+interface ServerMetrics {
+  uptime_seconds: number;
+  cpu_count: number;
+  cpu_percent: number | null;
+  processes: number;
+  mem_total: number;
+  mem_used: number;
+  disk_total: number;
+  disk_used: number;
+}
+
+interface OnlineCounts {
+  hotspot: number | null;
+  ppp: number | null;
+  device: string | null;
+  error: string | null;
+}
 
 interface DashboardData {
   total_customers: number;
-  total_invoices: number;
-  total_revenue: number;
   active_packages: number;
-  new_customers_this_month: number;
+  total_invoices: number;
+  unpaid_count: number;
+  unpaid_total: number;
+  today_revenue: number;
+  today_payments: number;
+  server: ServerMetrics;
+  online: OnlineCounts;
 }
 
+const rupiah = (value: number) => `Rp ${value.toLocaleString('id-ID')}`;
+
+const percent = (used: number, total: number) =>
+  total > 0 ? Math.round((used / total) * 100) : 0;
+
+// Tile kecil untuk status server: satu angka besar, satu keterangan.
+const Metric: React.FC<{ label: string; value: string; note?: string }> = ({
+  label,
+  value,
+  note,
+}) => (
+  <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 px-3 py-2">
+    <div className="text-[11px] uppercase tracking-wide text-slate-400">{label}</div>
+    <div className="mt-0.5 text-sm font-semibold text-slate-100">{value}</div>
+    {note && <div className="text-[11px] text-slate-500">{note}</div>}
+  </div>
+);
+
 const Dashboard: React.FC = () => {
-  const { user } = useAuth();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const response = await api.get('/api/dashboard');
-        setData(response.data);
-      } catch (err) {
-        setError('Gagal mengambil data dashboard');
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchData();
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await api.get<DashboardData>('/api/dashboard');
+      setData(response.data);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-400"></div>
-      </div>
-    );
-  }
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-  if (error) {
-    return <div className="text-center text-red-400">{error}</div>;
-  }
-
-  if (!data) {
-    return <div className="text-center text-slate-400">Tidak ada data dashboard</div>;
-  }
+  const server = data?.server;
+  const online = data?.online;
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-white">Dashboard</h1>
-          <p className="text-slate-400 text-sm mt-1">Ringkasan performa sistem dan data bisnis Anda</p>
-        </div>
-        <div className="flex gap-2">
-          <div className="bg-slate-700/50 rounded-lg px-4 py-2.5 text-sm text-slate-300">
-            <span className="font-medium text-slate-400">Role:</span>
-            <span className="ml-1 text-white">{user?.role ?? '-'}</span>
-          </div>
-        </div>
-      </div>
+    <div className="page-container">
+      <PageHeader
+        title="Dashboard"
+        subtitle="Kondisi server, sesi aktif, dan tagihan."
+        actions={<Button onClick={() => void load()}>Muat ulang</Button>}
+      />
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-5 hover:border-slate-600 transition">
-          <div className="text-sm text-slate-400">Total Pelanggan</div>
-          <div className="text-2xl font-bold text-white mt-1">{data.total_customers}</div>
+      {loading && <Loading label="Memuat dashboard…" />}
+      {error && (
+        <div className="mb-4">
+          <ErrorNote message={error} onRetry={() => void load()} />
         </div>
-        <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-5 hover:border-slate-600 transition">
-          <div className="text-sm text-slate-400">Total Tagihan</div>
-          <div className="text-2xl font-bold text-white mt-1">{data.total_invoices}</div>
-        </div>
-        <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-5 hover:border-slate-600 transition">
-          <div className="text-sm text-slate-400">Total Pendapatan</div>
-          <div className="text-2xl font-bold text-white mt-1">Rp {data.total_revenue.toLocaleString('id-ID')}</div>
-        </div>
-        <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-5 hover:border-slate-600 transition">
-          <div className="text-sm text-slate-400">Paket Aktif</div>
-          <div className="text-2xl font-bold text-white mt-1">{data.active_packages}</div>
-        </div>
-      </div>
+      )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-5 col-span-2">
-          <h3 className="text-lg font-semibold text-white mb-4">Pelanggan Baru (30 Hari Terakhir)</h3>
-          <div className="space-y-3">
-            {Array.from({ length: data.new_customers_this_month }, (_, i) => (
-              <div key={i} className="flex items-center justify-between">
-                <span className="text-sm text-slate-300">Hari {i + 1}</span>
-                <span className="text-sm font-medium text-cyan-400">{Math.floor(Math.random() * 10) + 1}</span>
-              </div>
-            ))}
+      {data && server && online && !loading && (
+        <>
+          <Card className="mb-4">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-xs uppercase tracking-wide text-slate-400">Status server</p>
+              <Badge tone={(server.cpu_percent ?? 0) > 85 ? 'warn' : 'good'}>
+                {server.cpu_count} core
+              </Badge>
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+              <Metric label="Uptime" value={formatUptime(server.uptime_seconds)} />
+              <Metric
+                label="RAM"
+                value={`${percent(server.mem_used, server.mem_total)}%`}
+                note={`${formatBytes(server.mem_used)} / ${formatBytes(server.mem_total)}`}
+              />
+              <Metric
+                label="Disk"
+                value={`${percent(server.disk_used, server.disk_total)}%`}
+                note={`${formatBytes(server.disk_used)} / ${formatBytes(server.disk_total)}`}
+              />
+              <Metric
+                label="CPU"
+                value={server.cpu_percent === null ? '—' : `${server.cpu_percent}%`}
+                note={`${server.cpu_count} core`}
+              />
+              <Metric label="Proses" value={server.processes.toLocaleString('id-ID')} />
+            </div>
+          </Card>
+
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+            <Card>
+              <p className="text-xs text-slate-400">Pelanggan</p>
+              <p className="mt-1 text-xl font-semibold text-slate-100">
+                {data.total_customers.toLocaleString('id-ID')}
+              </p>
+              <p className="text-[11px] text-slate-500">{data.total_invoices} tagihan</p>
+            </Card>
+            <Card>
+              <p className="text-xs text-slate-400">Tagihan belum bayar</p>
+              <p className="mt-1 text-xl font-semibold text-amber-300">{rupiah(data.unpaid_total)}</p>
+              <p className="text-[11px] text-slate-500">{data.unpaid_count} tagihan</p>
+            </Card>
+            <Card>
+              <p className="text-xs text-slate-400">Pendapatan hari ini</p>
+              <p className="mt-1 text-xl font-semibold text-emerald-300">
+                {rupiah(data.today_revenue)}
+              </p>
+              <p className="text-[11px] text-slate-500">{data.today_payments} pembayaran</p>
+            </Card>
+            <Card>
+              <p className="text-xs text-slate-400">Online hotspot</p>
+              <p className="mt-1 text-xl font-semibold text-slate-100">
+                {online.hotspot === null ? '—' : online.hotspot.toLocaleString('id-ID')}
+              </p>
+              <p className="text-[11px] text-slate-500">{online.device ?? 'perangkat default'}</p>
+            </Card>
+            <Card>
+              <p className="text-xs text-slate-400">Online PPP</p>
+              <p className="mt-1 text-xl font-semibold text-slate-100">
+                {online.ppp === null ? '—' : online.ppp.toLocaleString('id-ID')}
+              </p>
+              <p className="text-[11px] text-slate-500">{online.device ?? 'perangkat default'}</p>
+            </Card>
           </div>
-        </div>
-        <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-5">
-          <h3 className="text-lg font-semibold text-white mb-4">Ringkasan Cepat</h3>
-          <div className="space-y-3">
-            {[
-              { label: 'Total Pelanggan', value: data.total_customers },
-              { label: 'Total Tagihan', value: data.total_invoices },
-              { label: 'Total Pendapatan', value: `Rp ${data.total_revenue.toLocaleString('id-ID')}` },
-              { label: 'Paket Aktif', value: data.active_packages },
-            ].map((item) => (
-              <div key={item.label} className="flex items-center justify-between p-3 rounded-lg bg-slate-700/30">
-                <span className="text-sm text-slate-300">{item.label}</span>
-                <span className="text-sm font-medium text-cyan-400">{item.value}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+
+          {online.error && (
+            <p className="mt-3 text-xs text-amber-300">
+              Sesi online tidak terbaca: {online.error}
+            </p>
+          )}
+        </>
+      )}
     </div>
   );
 };

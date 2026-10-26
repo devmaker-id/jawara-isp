@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../services/api';
+import TablePagination from '../components/TablePagination';
 import { useAuth } from '../contexts/AuthContext';
 
 interface InvoiceItem {
@@ -8,7 +9,7 @@ interface InvoiceItem {
   customer_id: number;
   customer_name: string;
   amount: number;
-  status: 'unpaid' | 'paid' | 'overdue';
+  status: 'unpaid' | 'paid' | 'overdue' | 'partial';
   due_date: string;
   paid_date: string | null;
   description: string;
@@ -34,9 +35,25 @@ interface InvoiceForm {
   description: string;
 }
 
+interface PaymentItem {
+  id: number;
+  invoice_id: number;
+  amount: number;
+  method: 'cash' | 'transfer' | 'qris' | 'other';
+  reference: string | null;
+  paid_at: string;
+  recorded_by_name: string | null;
+  note: string;
+  voided_at: string | null;
+  void_reason: string | null;
+}
+
 interface PayForm {
   amount: string;
   paid_date: string;
+  method: PaymentItem['method'];
+  reference: string;
+  note: string;
 }
 
 type Toast = { type: 'success' | 'error'; text: string } | null;
@@ -67,12 +84,26 @@ const STATUS_LABEL: Record<InvoiceItem['status'], string> = {
   paid: 'Lunas',
   overdue: 'Terlambat',
   unpaid: 'Belum bayar',
+  partial: 'Sebagian',
 };
+
+const METHOD_LABEL: Record<PaymentItem['method'], string> = {
+  cash: 'Tunai',
+  transfer: 'Transfer',
+  qris: 'QRIS',
+  other: 'Lainnya',
+};
+
+const round2 = (value: number): number => Math.round(value * 100) / 100;
+
+const sumValid = (list: PaymentItem[]): number =>
+  round2(list.filter((p) => !p.voided_at).reduce((total, p) => total + p.amount, 0));
 
 const STATUS_CLASS: Record<InvoiceItem['status'], string> = {
   paid: 'bg-emerald-500/10 text-emerald-400',
   overdue: 'bg-red-500/10 text-red-400',
   unpaid: 'bg-amber-500/10 text-amber-400',
+  partial: 'bg-cyan-500/10 text-cyan-300',
 };
 
 const readError = (error: unknown, fallback: string): string => {
@@ -105,6 +136,10 @@ const Invoices: React.FC = () => {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | InvoiceItem['status']>('all');
+  // Fase 0: daftar diambil per halaman dari server (bukan ambil semua).
+  const PAGE_LIMIT = 10;
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
 
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [formOpen, setFormOpen] = useState(false);
@@ -116,9 +151,27 @@ const Invoices: React.FC = () => {
   const [detail, setDetail] = useState<InvoiceItem | null>(null);
 
   const [payTarget, setPayTarget] = useState<InvoiceItem | null>(null);
-  const [payForm, setPayForm] = useState<PayForm>({ amount: '', paid_date: today() });
+  const [payForm, setPayForm] = useState<PayForm>({
+    amount: '',
+    paid_date: today(),
+    method: 'cash',
+    reference: '',
+    note: '',
+  });
+  const [payKey, setPayKey] = useState('');
   const [payError, setPayError] = useState<string | null>(null);
   const [paying, setPaying] = useState(false);
+
+  // Riwayat pembayaran invoice yang sedang dibuka (detail atau dialog bayar).
+  const [payments, setPayments] = useState<PaymentItem[]>([]);
+  const [paymentsLoading, setPaymentsLoading] = useState(false);
+  // Sebelum migrasi 001 dijalankan, endpoint riwayat menjawab 503. Pesannya
+  // ditampilkan inline (bukan toast) agar panel tidak terlihat rusak.
+  const [paymentsError, setPaymentsError] = useState<string | null>(null);
+  const [voidTarget, setVoidTarget] = useState<PaymentItem | null>(null);
+  const [voidReason, setVoidReason] = useState('');
+  const [voidError, setVoidError] = useState<string | null>(null);
+  const [voiding, setVoiding] = useState(false);
 
   const [confirmTarget, setConfirmTarget] = useState<InvoiceItem | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -128,17 +181,32 @@ const Invoices: React.FC = () => {
     setLoadError(null);
     try {
       const [list, stats] = await Promise.all([
-        api.get('/api/invoices'),
+        api.get('/api/invoices', {
+          params: {
+            page,
+            limit: PAGE_LIMIT,
+            status: statusFilter === 'all' ? undefined : statusFilter,
+          },
+        }),
         api.get('/api/invoices/summary'),
       ]);
-      setInvoices(Array.isArray(list.data) ? list.data : []);
+      const data = list.data;
+      if (Array.isArray(data)) {
+        setInvoices(data);
+        setTotal(data.length);
+      } else {
+        setInvoices(Array.isArray(data?.rows) ? data.rows : []);
+        setTotal(Number(data?.total ?? 0));
+      }
       setSummary(stats.data ?? null);
     } catch (error) {
+      setInvoices([]);
+      setTotal(0);
       setLoadError(readError(error, 'Gagal memuat tagihan. Periksa koneksi ke server.'));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [page, statusFilter]);
 
   useEffect(() => {
     void load();
@@ -157,11 +225,6 @@ const Invoices: React.FC = () => {
       .then((res) => setCustomers(Array.isArray(res.data) ? res.data : []))
       .catch(() => setFormError('Gagal memuat daftar pelanggan.'));
   }, [formOpen, editing, canWrite]);
-
-  const visible = useMemo(
-    () => (statusFilter === 'all' ? invoices : invoices.filter((i) => i.status === statusFilter)),
-    [invoices, statusFilter],
-  );
 
   const openCreate = () => {
     setEditing(null);
@@ -236,10 +299,51 @@ const Invoices: React.FC = () => {
     }
   };
 
-  const openPay = (invoice: InvoiceItem) => {
+  const loadPayments = async (invoiceId: number): Promise<PaymentItem[]> => {
+    setPaymentsLoading(true);
+    try {
+      const res = await api.get(`/api/invoices/${invoiceId}/payments`);
+      const list: PaymentItem[] = Array.isArray(res.data) ? res.data : [];
+      setPayments(list);
+      return list;
+    } catch (error) {
+      setPayments([]);
+      throw error;
+    } finally {
+      setPaymentsLoading(false);
+    }
+  };
+
+  const openDetail = async (invoice: InvoiceItem) => {
+    setDetail(invoice);
+    setPayments([]);
+    setPaymentsError(null);
+    try {
+      await loadPayments(invoice.id);
+    } catch (error) {
+      setPaymentsError(readError(error, 'Gagal memuat riwayat pembayaran.'));
+    }
+  };
+
+  // Kunci idempoten per dialog: klik ganda tidak boleh menjadi dua tagihan.
+  const newPayKey = (): string =>
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `pay-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+  const openPay = async (invoice: InvoiceItem) => {
     setPayTarget(invoice);
-    setPayForm({ amount: String(invoice.amount), paid_date: today() });
     setPayError(null);
+    setPayKey(newPayKey());
+    setPayForm({ amount: '', paid_date: today(), method: 'cash', reference: '', note: '' });
+    setPayments([]);
+    try {
+      const list = await loadPayments(invoice.id);
+      const sisa = round2(invoice.amount - sumValid(list));
+      setPayForm((f) => ({ ...f, amount: sisa > 0 ? String(sisa) : '' }));
+    } catch (error) {
+      setPayError(readError(error, 'Gagal memuat sisa tagihan.'));
+    }
   };
 
   const handlePay = async (event: React.FormEvent) => {
@@ -251,35 +355,97 @@ const Invoices: React.FC = () => {
       setPayError(invalid);
       return;
     }
+
     const value = parseAmount(payForm.amount);
-    if (value > payTarget.amount) {
-      setPayError(`Nominal melebihi sisa tagihan (${formatRupiah(payTarget.amount)}).`);
+    const sisa = round2(payTarget.amount - sumValid(payments));
+    if (sisa <= 0) {
+      setPayError('Tagihan ini sudah lunas, tidak ada sisa yang bisa dibayar.');
       return;
     }
-    if (value < payTarget.amount) {
-      setPayError(
-        `Pembayaran parsial belum didukung skema database. Sisa tagihan ${formatRupiah(
-          payTarget.amount,
-        )}; catat pembayaran penuh.`,
-      );
+    if (value > sisa) {
+      setPayError(`Nominal melebihi sisa tagihan (${formatRupiah(sisa)}).`);
       return;
     }
 
     setPaying(true);
     setPayError(null);
     try {
-      await api.post(`/api/invoices/${payTarget.id}/pay`, {
+      const res = await api.post(`/api/invoices/${payTarget.id}/payments`, {
         amount: value,
+        method: payForm.method,
         paid_date: payForm.paid_date,
+        reference: payForm.reference.trim() || undefined,
+        note: payForm.note.trim() || undefined,
+        idempotency_key: payKey,
       });
-      setToast({ type: 'success', text: `Pembayaran ${payTarget.invoice_number} tercatat lunas.` });
+      const status = res.data?.invoice?.status as InvoiceItem['status'] | undefined;
+      setToast({
+        type: 'success',
+        text:
+          status === 'paid'
+            ? `Pembayaran ${payTarget.invoice_number} tercatat lunas.`
+            : `Pembayaran parsial ${formatRupiah(value)} tercatat; sisa ${formatRupiah(
+                round2(sisa - value),
+              )}.`,
+      });
+      setDetail((d) =>
+        d && d.id === payTarget.id
+          ? { ...d, status: status ?? d.status, paid_date: res.data?.invoice?.paid_date ?? d.paid_date }
+          : d,
+      );
       setPayTarget(null);
-      setDetail(null);
       await load();
+      if (detail?.id === payTarget.id) {
+        await loadPayments(payTarget.id).catch(() => undefined);
+      }
     } catch (error) {
       setPayError(readError(error, 'Gagal mencatat pembayaran.'));
     } finally {
       setPaying(false);
+    }
+  };
+
+  const openVoid = (payment: PaymentItem) => {
+    setVoidTarget(payment);
+    setVoidReason('');
+    setVoidError(null);
+  };
+
+  const handleVoid = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!voidTarget || voiding) return;
+    if (voidReason.trim().length === 0) {
+      setVoidError('Alasan void wajib diisi.');
+      return;
+    }
+
+    setVoiding(true);
+    setVoidError(null);
+    try {
+      const res = await api.post(`/api/payments/${voidTarget.id}/void`, {
+        reason: voidReason.trim(),
+      });
+      setToast({
+        type: 'success',
+        text: `Pembayaran ${formatRupiah(voidTarget.amount)} dibatalkan (void).`,
+      });
+      const invoiceId = voidTarget.invoice_id;
+      setVoidTarget(null);
+      setDetail((d) =>
+        d && d.id === invoiceId
+          ? {
+              ...d,
+              status: (res.data?.invoice?.status as InvoiceItem['status']) ?? d.status,
+              paid_date: res.data?.invoice?.paid_date ?? null,
+            }
+          : d,
+      );
+      await load();
+      await loadPayments(invoiceId).catch(() => undefined);
+    } catch (error) {
+      setVoidError(readError(error, 'Gagal membatalkan pembayaran.'));
+    } finally {
+      setVoiding(false);
     }
   };
 
@@ -358,11 +524,14 @@ const Invoices: React.FC = () => {
       )}
 
       <div className="flex flex-wrap gap-2">
-        {(['all', 'unpaid', 'overdue', 'paid'] as const).map((key) => (
+        {(['all', 'unpaid', 'overdue', 'partial', 'paid'] as const).map((key) => (
           <button
             key={key}
             type="button"
-            onClick={() => setStatusFilter(key)}
+            onClick={() => {
+              setStatusFilter(key);
+              setPage(1);
+            }}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
               statusFilter === key
                 ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
@@ -391,7 +560,7 @@ const Invoices: React.FC = () => {
             Coba lagi
           </button>
         </div>
-      ) : visible.length === 0 ? (
+      ) : invoices.length === 0 ? (
         <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-10 text-center space-y-2">
           <p className="text-slate-300 font-medium">
             {invoices.length === 0 ? 'Belum ada tagihan' : 'Tidak ada tagihan pada filter ini'}
@@ -420,7 +589,7 @@ const Invoices: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-700/50">
-                {visible.map((invoice) => (
+                {invoices.map((invoice) => (
                   <tr key={invoice.id} className="hover:bg-slate-700/20 transition">
                     <td className="px-4 py-3 font-medium text-cyan-400 whitespace-nowrap">
                       {invoice.invoice_number}
@@ -440,7 +609,7 @@ const Invoices: React.FC = () => {
                       <div className="flex flex-wrap justify-end gap-3">
                         <button
                           type="button"
-                          onClick={() => setDetail(invoice)}
+                          onClick={() => void openDetail(invoice)}
                           className="text-slate-400 hover:text-cyan-400 transition"
                         >
                           Detail
@@ -479,9 +648,14 @@ const Invoices: React.FC = () => {
               </tbody>
             </table>
           </div>
-          <div className="px-4 py-3 bg-slate-700/30 text-sm text-slate-400">
-            Menampilkan {visible.length} dari {invoices.length} tagihan
-          </div>
+          <TablePagination
+            page={page}
+            total={total}
+            limit={PAGE_LIMIT}
+            loading={loading}
+            unit="tagihan"
+            onPage={setPage}
+          />
         </div>
       )}
 
@@ -633,6 +807,16 @@ const Invoices: React.FC = () => {
                 <dd className="text-white font-medium">{formatRupiah(detail.amount)}</dd>
               </div>
               <div className="flex justify-between gap-4">
+                <dt className="text-slate-400">Terbayar</dt>
+                <dd className="text-emerald-300">{formatRupiah(sumValid(payments))}</dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-slate-400">Sisa</dt>
+                <dd className="text-white font-medium">
+                  {formatRupiah(round2(detail.amount - sumValid(payments)))}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-4">
                 <dt className="text-slate-400">Jatuh tempo</dt>
                 <dd className="text-slate-200">{formatDate(detail.due_date)}</dd>
               </div>
@@ -645,6 +829,61 @@ const Invoices: React.FC = () => {
                 <dd className="text-slate-200 text-right break-words">{detail.description || '-'}</dd>
               </div>
             </dl>
+
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-slate-300">Riwayat pembayaran</p>
+              {paymentsLoading ? (
+                <p className="text-sm text-slate-500">Memuat riwayat...</p>
+              ) : paymentsError ? (
+                <p className="text-sm text-amber-400">{paymentsError}</p>
+              ) : payments.length === 0 ? (
+                <p className="text-sm text-slate-500">Belum ada pembayaran tercatat.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {payments.map((payment) => (
+                    <li
+                      key={payment.id}
+                      className={`rounded-lg border px-3 py-2 ${
+                        payment.voided_at
+                          ? 'border-slate-700/40 bg-slate-800/40'
+                          : 'border-slate-700/50 bg-slate-700/20'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p
+                            className={`text-sm font-medium ${
+                              payment.voided_at ? 'text-slate-500 line-through' : 'text-white'
+                            }`}
+                          >
+                            {formatRupiah(payment.amount)}
+                          </p>
+                          <p className="text-xs text-slate-400 mt-0.5">
+                            {formatDate(payment.paid_at.slice(0, 10))} · {METHOD_LABEL[payment.method]}
+                            {payment.reference ? ` · ${payment.reference}` : ''}
+                            {payment.recorded_by_name ? ` · oleh ${payment.recorded_by_name}` : ''}
+                          </p>
+                          {payment.voided_at ? (
+                            <p className="text-xs text-red-400 mt-1">Void: {payment.void_reason}</p>
+                          ) : payment.note ? (
+                            <p className="text-xs text-slate-500 mt-1 break-words">{payment.note}</p>
+                          ) : null}
+                        </div>
+                        {canDelete && !payment.voided_at && (
+                          <button
+                            type="button"
+                            onClick={() => openVoid(payment)}
+                            className="shrink-0 text-xs text-slate-400 hover:text-red-400 transition"
+                          >
+                            Void
+                          </button>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
 
             <div className="flex gap-3 justify-end pt-2">
               <button
@@ -681,7 +920,16 @@ const Invoices: React.FC = () => {
                 Pembayaran {payTarget.invoice_number}
               </h2>
               <p className="text-sm text-slate-400">
-                Sisa tagihan <span className="text-white font-medium">{formatRupiah(payTarget.amount)}</span>
+                Sisa tagihan{' '}
+                <span className="text-white font-medium">
+                  {formatRupiah(round2(payTarget.amount - sumValid(payments)))}
+                </span>
+                {sumValid(payments) > 0 && (
+                  <span className="text-slate-500">
+                    {' '}
+                    (terbayar {formatRupiah(sumValid(payments))})
+                  </span>
+                )}
               </p>
 
               <div>
@@ -699,19 +947,71 @@ const Invoices: React.FC = () => {
                 />
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1" htmlFor="p-date">
-                  Tanggal bayar *
-                </label>
-                <input
-                  id="p-date"
-                  type="date"
-                  max={today()}
-                  value={payForm.paid_date}
-                  onChange={(e) => setPayForm((f) => ({ ...f, paid_date: e.target.value }))}
-                  className={inputClass}
-                  required
-                />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-1" htmlFor="p-date">
+                    Tanggal bayar *
+                  </label>
+                  <input
+                    id="p-date"
+                    type="date"
+                    max={today()}
+                    value={payForm.paid_date}
+                    onChange={(e) => setPayForm((f) => ({ ...f, paid_date: e.target.value }))}
+                    className={inputClass}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-1" htmlFor="p-method">
+                    Metode *
+                  </label>
+                  <select
+                    id="p-method"
+                    value={payForm.method}
+                    onChange={(e) =>
+                      setPayForm((f) => ({ ...f, method: e.target.value as PaymentItem['method'] }))
+                    }
+                    className={inputClass}
+                  >
+                    {(Object.keys(METHOD_LABEL) as PaymentItem['method'][]).map((key) => (
+                      <option key={key} value={key}>
+                        {METHOD_LABEL[key]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-1" htmlFor="p-ref">
+                    Referensi
+                  </label>
+                  <input
+                    id="p-ref"
+                    type="text"
+                    maxLength={64}
+                    value={payForm.reference}
+                    onChange={(e) => setPayForm((f) => ({ ...f, reference: e.target.value }))}
+                    className={inputClass}
+                    placeholder="No. transfer / bukti"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-1" htmlFor="p-note">
+                    Catatan
+                  </label>
+                  <input
+                    id="p-note"
+                    type="text"
+                    maxLength={255}
+                    value={payForm.note}
+                    onChange={(e) => setPayForm((f) => ({ ...f, note: e.target.value }))}
+                    className={inputClass}
+                    placeholder="Opsional"
+                  />
+                </div>
               </div>
 
               {payError && (
@@ -738,7 +1038,70 @@ const Invoices: React.FC = () => {
                   disabled={paying}
                   className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 transition"
                 >
-                  {paying ? 'Menyimpan...' : 'Tandai Lunas'}
+                  {paying ? 'Menyimpan...' : 'Simpan Pembayaran'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {voidTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="void-payment-title"
+            className="w-full max-w-sm bg-slate-800 rounded-2xl border border-slate-700 shadow-2xl p-5 space-y-4"
+          >
+            <form onSubmit={handleVoid} className="space-y-4">
+              <h2 id="void-payment-title" className="text-lg font-semibold text-white">
+                Void pembayaran?
+              </h2>
+              <p className="text-sm text-slate-400">
+                Pembayaran <span className="text-slate-200 font-medium">{formatRupiah(voidTarget.amount)}</span>{' '}
+                tidak dihapus, hanya dibatalkan dan tetap tersimpan di riwayat. Status tagihan
+                dihitung ulang dari pembayaran yang sah.
+              </p>
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-1" htmlFor="void-reason">
+                  Alasan void *
+                </label>
+                <input
+                  id="void-reason"
+                  type="text"
+                  maxLength={255}
+                  value={voidReason}
+                  onChange={(e) => setVoidReason(e.target.value)}
+                  className={inputClass}
+                  placeholder="Mis. transfer ganda"
+                  required
+                />
+              </div>
+              {voidError && (
+                <p role="alert" className="text-sm text-red-400">
+                  {voidError}
+                </p>
+              )}
+              <div className="flex gap-3 justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (voiding) return;
+                    setVoidTarget(null);
+                    setVoidError(null);
+                  }}
+                  disabled={voiding}
+                  className="px-4 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-slate-700/50 disabled:opacity-50 transition"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={voiding}
+                  className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-500 hover:bg-red-400 disabled:opacity-50 transition"
+                >
+                  {voiding ? 'Membatalkan...' : 'Void'}
                 </button>
               </div>
             </form>

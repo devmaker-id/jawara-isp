@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import api from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
+import TablePagination from '../components/TablePagination';
 
 interface Customer {
   id: number;
@@ -10,7 +11,11 @@ interface Customer {
   address: string;
   is_active: boolean;
   created_at: string;
+  // Diisi server hanya setelah kolom customers.reseller_id ada (migrasi 003).
+  reseller_id?: number | null;
 }
+
+const PAGE_LIMIT = 10;
 
 interface CustomerForm {
   name: string;
@@ -51,11 +56,21 @@ const Customers: React.FC = () => {
   // role lain). Tombol disembunyikan agar tidak menjadi aksi yang pasti gagal.
   const canDelete = user?.role === 'admin';
 
+  const canAssignOwner = user?.role === 'admin';
+
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [ownerAvailable, setOwnerAvailable] = useState(false);
+  const [ownerTarget, setOwnerTarget] = useState<Customer | null>(null);
+  const [ownerValue, setOwnerValue] = useState('');
+  const [ownerSaving, setOwnerSaving] = useState(false);
+  const [resellerOptions, setResellerOptions] = useState<Array<{ id: number; name: string; email: string }>>([]);
   const [toast, setToast] = useState<Toast>(null);
 
   const [modalOpen, setModalOpen] = useState(false);
@@ -67,39 +82,69 @@ const Customers: React.FC = () => {
   const [confirmTarget, setConfirmTarget] = useState<Customer | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  // Pagination & pencarian dikerjakan server: tidak ada lagi ambil-semua +
+  // filter di useMemo.
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
-      const response = await api.get('/api/customers');
-      setCustomers(Array.isArray(response.data) ? response.data : []);
+      const response = await api.get('/api/customers', {
+        params: { page, limit: PAGE_LIMIT, search: debouncedSearch || undefined },
+      });
+      const data = response.data;
+      if (Array.isArray(data)) {
+        setCustomers(data);
+        setTotal(data.length);
+      } else {
+        setCustomers(Array.isArray(data?.rows) ? data.rows : []);
+        setTotal(Number(data?.total ?? 0));
+      }
     } catch (error) {
+      setCustomers([]);
+      setTotal(0);
       setLoadError(readError(error, 'Gagal memuat data pelanggan. Periksa koneksi ke server.'));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [page, debouncedSearch]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Debounce pencarian agar tidak membanjiri API.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setPage(1);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  // Kemampuan penetapan pemilik reseller (belum aktif sebelum migrasi 003).
+  useEffect(() => {
+    api
+      .get('/api/customers/meta')
+      .then((res) => setOwnerAvailable(Boolean(res.data?.owner_assignment)))
+      .catch(() => setOwnerAvailable(false));
+  }, []);
+
+  useEffect(() => {
+    if (!canAssignOwner || !ownerAvailable) return;
+    api
+      .get('/api/admin/users', { params: { page: 1, limit: 200, role: 'resseler', status: 'active' } })
+      .then((res) => {
+        const rows = Array.isArray(res.data) ? res.data : res.data?.rows ?? [];
+        setResellerOptions(rows);
+      })
+      .catch(() => setResellerOptions([]));
+  }, [canAssignOwner, ownerAvailable]);
 
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(null), 4000);
     return () => clearTimeout(timer);
   }, [toast]);
-
-  const filtered = useMemo(() => {
-    const keyword = search.trim().toLowerCase();
-    if (!keyword) return customers;
-    return customers.filter(
-      (c) =>
-        c.name.toLowerCase().includes(keyword) ||
-        c.email.toLowerCase().includes(keyword) ||
-        c.phone.toLowerCase().includes(keyword),
-    );
-  }, [customers, search]);
 
   const openCreate = () => {
     setEditing(null);
@@ -155,14 +200,13 @@ const Customers: React.FC = () => {
 
     try {
       if (editing) {
-        const response = await api.patch(`/api/customers/${editing.id}`, payload);
-        setCustomers((prev) => prev.map((c) => (c.id === editing.id ? response.data : c)));
+        await api.patch(`/api/customers/${editing.id}`, payload);
         setToast({ type: 'success', text: 'Data pelanggan berhasil diperbarui.' });
       } else {
-        const response = await api.post('/api/customers', payload);
-        setCustomers((prev) => [response.data, ...prev]);
+        await api.post('/api/customers', payload);
         setToast({ type: 'success', text: 'Pelanggan baru berhasil ditambahkan.' });
       }
+      await load();
       setModalOpen(false);
       setEditing(null);
     } catch (error) {
@@ -177,14 +221,47 @@ const Customers: React.FC = () => {
     setDeleting(true);
     try {
       await api.delete(`/api/customers/${confirmTarget.id}`);
-      setCustomers((prev) => prev.filter((c) => c.id !== confirmTarget.id));
       setToast({ type: 'success', text: `Pelanggan "${confirmTarget.name}" berhasil dihapus.` });
       setConfirmTarget(null);
+      await load();
     } catch (error) {
       setToast({ type: 'error', text: readError(error, 'Gagal menghapus pelanggan.') });
       setConfirmTarget(null);
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const resellerLabel = (id: number | null | undefined): string => {
+    if (!id) return 'Belum ditugaskan';
+    const found = resellerOptions.find((option) => option.id === Number(id));
+    return found ? found.name : `Reseller #${id}`;
+  };
+
+  const handleAssignOwner = async () => {
+    if (!ownerTarget) return;
+    setOwnerSaving(true);
+    try {
+      const resellerId = ownerValue === '' ? null : Number(ownerValue);
+      const response = await api.patch(`/api/customers/${ownerTarget.id}/owner`, {
+        reseller_id: resellerId,
+      });
+      const previous = response.data?.previous_owner_id ?? null;
+      setToast({
+        type: 'success',
+        text:
+          resellerId === null
+            ? `Kepemilikan "${ownerTarget.name}" dilepas (sebelumnya: ${previous ?? 'tanpa pemilik'}).`
+            : `Pemilik "${ownerTarget.name}" ditetapkan. Pemilik sebelumnya: ${previous ?? 'tanpa pemilik'}.`,
+      });
+      setOwnerTarget(null);
+      setOwnerValue('');
+      await load();
+    } catch (error) {
+      setToast({ type: 'error', text: readError(error, 'Gagal menetapkan pemilik pelanggan.') });
+      setOwnerTarget(null);
+    } finally {
+      setOwnerSaving(false);
     }
   };
 
@@ -225,6 +302,16 @@ const Customers: React.FC = () => {
         </div>
       )}
 
+      {/* Status fitur kepemilikan reseller (Fase 0: belum aktif sebelum migrasi) */}
+      {!ownerAvailable && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
+          Penetapan pemilik reseller belum aktif: kolom <code>customers.reseller_id</code> belum ada.
+          Menunggu migrasi <code>003_customer_reseller_ownership.sql</code>. Semua pelanggan saat ini
+          berstatus <span className="font-semibold">belum ditugaskan</span> dan hanya terlihat oleh
+          admin/operator.
+        </div>
+      )}
+
       {/* Pencarian */}
       <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-4">
         <input
@@ -256,17 +343,17 @@ const Customers: React.FC = () => {
               Coba lagi
             </button>
           </div>
-        ) : filtered.length === 0 ? (
+        ) : customers.length === 0 ? (
           <div className="p-10 text-center space-y-2">
             <p className="text-slate-300 font-medium">
-              {customers.length === 0 ? 'Belum ada pelanggan' : 'Tidak ada hasil'}
+              {debouncedSearch ? 'Tidak ada hasil' : 'Belum ada pelanggan'}
             </p>
             <p className="text-sm text-slate-500">
-              {customers.length === 0
-                ? 'Tambahkan pelanggan pertama untuk mulai mengelola layanan.'
-                : 'Coba kata kunci lain atau kosongkan pencarian.'}
+              {debouncedSearch
+                ? 'Coba kata kunci lain atau kosongkan pencarian.'
+                : 'Tambahkan pelanggan pertama untuk mulai mengelola layanan.'}
             </p>
-            {customers.length === 0 && (
+            {!debouncedSearch && (
               <button
                 type="button"
                 onClick={openCreate}
@@ -287,12 +374,13 @@ const Customers: React.FC = () => {
                     <th className="px-4 py-3 font-medium">Email</th>
                     <th className="px-4 py-3 font-medium">Telepon</th>
                     <th className="px-4 py-3 font-medium">Status</th>
+                    {ownerAvailable && <th className="px-4 py-3 font-medium">Pemilik</th>}
                     <th className="px-4 py-3 font-medium">Bergabung</th>
                     <th className="px-4 py-3 font-medium text-right">Aksi</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-700/50">
-                  {filtered.map((customer) => (
+                  {customers.map((customer) => (
                     <tr key={customer.id} className="hover:bg-slate-700/20 transition">
                       <td className="px-4 py-3">
                         <div className="font-medium text-white">{customer.name}</div>
@@ -313,6 +401,15 @@ const Customers: React.FC = () => {
                           {customer.is_active ? 'Aktif' : 'Tidak Aktif'}
                         </span>
                       </td>
+                      {ownerAvailable && (
+                        <td className="px-4 py-3 text-slate-400">
+                          {customer.reseller_id ? (
+                            resellerLabel(customer.reseller_id)
+                          ) : (
+                            <span className="text-slate-500">Belum ditugaskan</span>
+                          )}
+                        </td>
+                      )}
                       <td className="px-4 py-3 text-slate-400">{formatDate(customer.created_at)}</td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
                         <button
@@ -322,6 +419,18 @@ const Customers: React.FC = () => {
                         >
                           Ubah
                         </button>
+                        {canAssignOwner && ownerAvailable && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setOwnerTarget(customer);
+                              setOwnerValue(customer.reseller_id ? String(customer.reseller_id) : '');
+                            }}
+                            className="text-amber-300 hover:text-amber-200 transition mr-3"
+                          >
+                            Pemilik
+                          </button>
+                        )}
                         {canDelete && (
                           <button
                             type="button"
@@ -340,7 +449,7 @@ const Customers: React.FC = () => {
 
             {/* Kartu: mobile */}
             <div className="md:hidden divide-y divide-slate-700/50">
-              {filtered.map((customer) => (
+              {customers.map((customer) => (
                 <div key={customer.id} className="p-4 space-y-2">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -387,10 +496,15 @@ const Customers: React.FC = () => {
         )}
       </div>
 
-      {!loading && !loadError && filtered.length > 0 && (
-        <p className="text-xs text-slate-500">
-          Menampilkan {filtered.length} dari {customers.length} pelanggan
-        </p>
+      {!loadError && (
+        <TablePagination
+          page={page}
+          total={total}
+          limit={PAGE_LIMIT}
+          loading={loading}
+          unit="pelanggan"
+          onPage={setPage}
+        />
       )}
 
       {/* Modal tambah/ubah */}
@@ -517,6 +631,65 @@ const Customers: React.FC = () => {
       )}
 
       {/* Konfirmasi hapus */}
+      {ownerTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="owner-title"
+            className="w-full max-w-md bg-slate-800 rounded-2xl border border-slate-700 shadow-2xl p-5 space-y-4"
+          >
+            <h2 id="owner-title" className="text-lg font-semibold text-white">
+              Tetapkan pemilik pelanggan
+            </h2>
+            <p className="text-sm text-slate-400">
+              <span className="text-slate-200 font-medium">{ownerTarget.name}</span> — pemilik saat ini:{' '}
+              {resellerLabel(ownerTarget.reseller_id)}
+            </p>
+            <div>
+              <label className="block text-xs text-slate-400 mb-1" htmlFor="owner-select">
+                Reseller
+              </label>
+              <select
+                id="owner-select"
+                value={ownerValue}
+                onChange={(e) => setOwnerValue(e.target.value)}
+                className={inputClass}
+              >
+                <option value="">— Lepas kepemilikan (tanpa reseller) —</option>
+                {resellerOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.name} ({option.email})
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-slate-500 mt-2">
+                Melepas kepemilikan membuat pelanggan hanya terlihat oleh admin/operator. Tagihan,
+                pembayaran, dan layanan tidak diubah.
+              </p>
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => setOwnerTarget(null)}
+                disabled={ownerSaving}
+                className="px-4 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-slate-700/50 disabled:opacity-50 transition"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleAssignOwner()}
+                disabled={ownerSaving}
+                className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 transition"
+              >
+                {ownerSaving ? 'Menyimpan...' : 'Simpan'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {confirmTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4">
           <div
@@ -530,6 +703,10 @@ const Customers: React.FC = () => {
             </h2>
             <p className="text-sm text-slate-400">
               Data <span className="text-slate-200 font-medium">{confirmTarget.name}</span> akan dihapus permanen.
+            </p>
+            <p className="text-xs text-slate-500">
+              Pelanggan yang sudah punya tagihan atau sesi layanan tidak dapat dihapus — server akan
+              menolak (409) dan menyarankan penonaktifan agar riwayat tetap tersimpan.
             </p>
             <div className="flex gap-3 justify-end">
               <button

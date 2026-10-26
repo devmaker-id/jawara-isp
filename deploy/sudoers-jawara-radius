@@ -1,0 +1,16 @@
+# /etc/sudoers.d/jawara-radius
+#
+# Memberi user panel (devmaker) izin menjalankan DUA file tetap sebagai root:
+#   /usr/local/sbin/jawara-radius-install   pemasang paket FreeRADIUS
+#   /usr/local/sbin/jawara-radius-config    pengelola konfigurasi + service
+#
+# Yang TIDAK diberikan: akses shell root, akses apt-get langsung, akses
+# systemctl bebas, akses baca/tulis /etc/freeradius.
+#
+# Syarat: kedua file milik root:root, mode 0755, tidak writable oleh devmaker.
+# Pasang dengan: sudo bash deploy/setup-helper.sh
+
+devmaker ALL=(root) NOPASSWD: /usr/local/sbin/jawara-radius-install
+devmaker ALL=(root) NOPASSWD: /usr/local/sbin/jawara-radius-config
+Defaults!/usr/local/sbin/jawara-radius-install !requiretty
+Defaults!/usr/local/sbin/jawara-radius-config !requiretty

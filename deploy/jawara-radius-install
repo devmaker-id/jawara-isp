@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# ============================================================================
+# jawara-radius-install
+# Pemasang FreeRADIUS untuk panel Jawara ISP di bit78.
+#
+# ATURAN FILE INI (jangan diubah tanpa alasan kuat):
+#   * TIDAK menerima argumen. Semua langkah sudah tetap (hardcoded).
+#   * TIDAK menerima input dari jaringan. Tidak ada variabel yang berasal dari
+#     request web.
+#   * Hanya melakukan: apt-get update, apt-get install paket FreeRADIUS,
+#     STOP service sesudahnya (supaya tidak listen dengan config default),
+#     lalu verifikasi.
+#   * TIDAK menyentuh MariaDB, tabel panel, mikrotik_devices, cloudflared,
+#     n8n, atau konfigurasi jaringan.
+#
+# Dipanggil oleh backend lewat:
+#   sudo -n /usr/local/sbin/jawara-radius-install
+# dengan sudoers sempit (lihat deploy/sudoers-jawara-radius).
+# ============================================================================
+set -euo pipefail
+
+# Output selalu baris-per-baris dan tidak di-buffer, supaya GUI bisa
+# menampilkan progres secara live.
+export DEBIAN_FRONTEND=noninteractive
+export LC_ALL=C
+date_fmt='+%H:%M:%S'
+
+PACKAGES=(freeradius freeradius-mysql freeradius-utils)
+
+log() { printf '[%s] %s\n' "$(date "$date_fmt")" "$*"; }
+step() { printf '[%s] === %s ===\n' "$(date "$date_fmt")" "$*"; }
+fail() { printf '[%s] GAGAL: %s\n' "$(date "$date_fmt")" "$*" >&2; exit 1; }
+
+# Hanya root yang boleh menjalankan file ini.
+[ "$(id -u)" -eq 0 ] || fail "skrip ini harus dijalankan sebagai root (lewat sudo -n)."
+
+command -v apt-get >/dev/null 2>&1 || fail "apt-get tidak ditemukan; sistem ini bukan Debian/Ubuntu."
+
+step "Persiapan"
+log "host      : $(hostname)"
+log "kernel    : $(uname -r)"
+log "distro    : $(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME")"
+log "paket     : ${PACKAGES[*]}"
+
+# Idempoten: kalau sudah terpasang semua, jangan install ulang.
+missing=()
+for pkg in "${PACKAGES[@]}"; do
+  if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
+    log "sudah ada : $pkg"
+  else
+    missing+=("$pkg")
+  fi
+done
+
+if [ "${#missing[@]}" -eq 0 ]; then
+  log "Semua paket sudah terpasang. Tidak ada yang perlu diunduh."
+else
+  log "perlu install: ${missing[*]}"
+
+  step "apt-get update"
+  # --error-on=any: repository yang gagal tidak diabaikan diam-diam.
+  apt-get update -o Acquire::Retries=2 || fail "apt-get update gagal. Periksa koneksi atau sumber apt."
+
+  step "apt-get install ${missing[*]}"
+  # --no-install-recommends menjaga perubahan sistem tetap minimal.
+  apt-get install -y --no-install-recommends "${missing[@]}" \
+    || fail "apt-get install gagal. Lihat baris error di atas."
+fi
+
+step "Menghentikan service dengan konfigurasi default"
+# Paket Ubuntu langsung menyalakan freeradius di semua interface dengan
+# config bawaan (termasuk user 'testing'). Kita matikan dulu supaya tidak
+# ada RADIUS aktif yang belum dikonfigurasi.
+#
+# CATATAN: jangan memakai `systemctl list-unit-files | grep -q`, karena grep -q
+# menutup pipe lebih awal -> systemctl kena SIGPIPE -> dengan `set -o pipefail`
+# seluruh pipeline dianggap gagal dan blok ini terlewat. Cek file unit langsung.
+if [ -f /lib/systemd/system/freeradius.service ] || [ -f /etc/systemd/system/freeradius.service ]; then
+  systemctl stop freeradius 2>/dev/null || true
+  systemctl disable freeradius 2>/dev/null || true
+  state="$(systemctl is-active freeradius 2>/dev/null || true)"
+  log "freeradius dihentikan (is-active=${state:-unknown})"
+  if [ "$state" = "active" ]; then
+    fail "freeradius masih aktif setelah stop; periksa journalctl -u freeradius"
+  fi
+else
+  log "unit freeradius.service tidak ditemukan (paket mungkin belum lengkap)"
+fi
+
+step "Verifikasi"
+for bin in freeradius radtest radclient; do
+  path="$(command -v "$bin" 2>/dev/null || true)"
+  [ -n "$path" ] && log "ok   $bin -> $path" || log "HILANG $bin"
+done
+
+freeradius -v 2>&1 | head -3 | sed "s/^/[$(date "$date_fmt")] /"
+log "modul SQL  : $(ls /usr/lib/freeradius/rlm_sql_mysql.so 2>/dev/null || echo 'TIDAK ADA')"
+log "config dir : $(ls -d /etc/freeradius/* 2>/dev/null | tr '\n' ' ')"
+
+step "SELESAI"
+log "FreeRADIUS terpasang tetapi BELUM berjalan dan BELUM dikonfigurasi."
+log "Langkah berikutnya: isi SQL module, client NAS, lalu start dari panel."

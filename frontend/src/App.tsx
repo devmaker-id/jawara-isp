@@ -5,11 +5,30 @@ import Layout from './components/Layout';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Customers from './pages/Customers';
-import Packages from './pages/Packages';
 import Invoices from './pages/Invoices';
 import Settings from './pages/Settings';
+import Payments from './pages/Payments';
+import Reports from './pages/Reports';
+import Users from './pages/Users';
 import Profile from './pages/Profile';
 import NotFound from './pages/NotFound';
+import MikrotikRingkasan from './pages/mikrotik/Ringkasan';
+import MikrotikPerangkat from './pages/mikrotik/Perangkat';
+import MikrotikInterfaces from './pages/mikrotik/Interfaces';
+import MikrotikHotspot from './pages/mikrotik/Hotspot';
+import MikrotikPpp from './pages/mikrotik/Ppp';
+import MikrotikRouting from './pages/mikrotik/Routing';
+import RadiusRingkasan from './pages/freeradius/Ringkasan';
+import RadiusNas from './pages/freeradius/Nas';
+import RadiusSesi from './pages/freeradius/Sesi';
+import RadiusAuthLog from './pages/freeradius/AuthLog';
+import RadiusKonfigurasi from './pages/freeradius/Konfigurasi';
+import RadiusGrup from './pages/freeradius/Grup';
+import LayananBandwidth from './pages/layanan/Bandwidth';
+import LayananGroup from './pages/layanan/GroupProfile';
+import LayananHotspot from './pages/layanan/ServiceProfile';
+import LayananPpp from './pages/layanan/ServiceProfile';
+import LayananVoucher from './pages/layanan/Voucher';
 
 const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading } = useAuth();
@@ -27,7 +46,7 @@ const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => 
 const HomeRoute: React.FC = () => {
   const { user } = useAuth();
   if (user?.role === 'resseler') {
-    return <Navigate to="/packages" replace />;
+    return <Navigate to="/layanan/hotspot" replace />;
   }
   return <Dashboard />;
 };
@@ -55,18 +74,34 @@ const AppContent: React.FC = () => {
             }
           />
           <Route
-            path="/packages"
-            element={
-              <PrivateRoute>
-                <Packages />
-              </PrivateRoute>
-            }
-          />
-          <Route
             path="/invoices"
             element={
               <PrivateRoute>
                 <Invoices />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/pembayaran"
+            element={
+              <PrivateRoute>
+                <Payments />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/laporan"
+            element={
+              <PrivateRoute>
+                <Reports />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/pengguna"
+            element={
+              <PrivateRoute>
+                <Users />
               </PrivateRoute>
             }
           />
@@ -86,6 +121,107 @@ const AppContent: React.FC = () => {
               </PrivateRoute>
             }
           />
+          <Route
+            path="/mikrotik"
+            element={
+              <PrivateRoute>
+                <MikrotikRingkasan />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/mikrotik/perangkat"
+            element={
+              <PrivateRoute>
+                <MikrotikPerangkat />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/mikrotik/interface"
+            element={
+              <PrivateRoute>
+                <MikrotikInterfaces />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/mikrotik/hotspot"
+            element={
+              <PrivateRoute>
+                <MikrotikHotspot />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/mikrotik/ppp"
+            element={
+              <PrivateRoute>
+                <MikrotikPpp />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/mikrotik/routing"
+            element={
+              <PrivateRoute>
+                <MikrotikRouting />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/freeradius"
+            element={
+              <PrivateRoute>
+                <RadiusRingkasan />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/freeradius/nas"
+            element={
+              <PrivateRoute>
+                <RadiusNas />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/freeradius/sesi"
+            element={
+              <PrivateRoute>
+                <RadiusSesi />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/freeradius/log"
+            element={
+              <PrivateRoute>
+                <RadiusAuthLog />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/freeradius/konfigurasi"
+            element={
+              <PrivateRoute>
+                <RadiusKonfigurasi />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/freeradius/grup"
+            element={
+              <PrivateRoute>
+                <RadiusGrup />
+              </PrivateRoute>
+            }
+          />
+          <Route path="/layanan/bandwidth" element={<PrivateRoute><LayananBandwidth /></PrivateRoute>} />
+          <Route path="/layanan/group" element={<PrivateRoute><LayananGroup /></PrivateRoute>} />
+          <Route path="/layanan/hotspot" element={<PrivateRoute><LayananHotspot type="hotspot" /></PrivateRoute>} />
+          <Route path="/layanan/ppp" element={<PrivateRoute><LayananPpp type="ppp" /></PrivateRoute>} />
+          <Route path="/layanan/voucher" element={<PrivateRoute><LayananVoucher /></PrivateRoute>} />
           <Route path="*" element={<NotFound />} />
         </Route>
       </Routes>

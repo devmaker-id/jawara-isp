@@ -11,8 +11,9 @@ import { InvoicesRepository } from './../src/app/modules/invoices/invoices.repos
 import { createFakeUsers, FakeUsers } from './helpers/fake-users.js';
 import { createFakeInvoices, FakeInvoices } from './helpers/fake-invoices.js';
 
-// CRUD tagihan + alur pembayaran diuji lewat HTTP dengan UsersRepository dan
+// CRUD tagihan diuji lewat HTTP dengan UsersRepository dan
 // InvoicesRepository in-memory: tidak ada penulisan ke tabel produksi.
+// Alur pembayaran/void diuji di payments.e2e-spec.ts.
 describe('Invoices (e2e)', () => {
   let app: INestApplication<App>;
   let fakeUsers: FakeUsers;
@@ -20,9 +21,6 @@ describe('Invoices (e2e)', () => {
   let adminToken: string;
   let operatorToken: string;
   let resellerToken: string;
-
-  const ISO_TODAY = new Date().toISOString().slice(0, 10);
-  const FUTURE = new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10);
 
   beforeAll(async () => {
     fakeUsers = await createFakeUsers();
@@ -69,9 +67,11 @@ describe('Invoices (e2e)', () => {
       await api().get('/api/invoices').expect(401);
     });
 
-    it('resseler tidak boleh membaca tagihan → 403', async () => {
-      await api().get('/api/invoices').set(auth(resellerToken)).expect(403);
-      await api().get('/api/invoices/summary').set(auth(resellerToken)).expect(403);
+    // Fase 1: reseller boleh membaca; filter pemilik diterapkan di SQL
+    // (dibuktikan pada test/reseller-isolation.int-spec.ts).
+    it('resseler boleh membaca tagihan (cakupan diuji di tes integrasi)', async () => {
+      await api().get('/api/invoices').set(auth(resellerToken)).expect(200);
+      await api().get('/api/invoices/summary').set(auth(resellerToken)).expect(200);
     });
 
     it('resseler tidak boleh membuat tagihan → 403', async () => {
@@ -166,70 +166,6 @@ describe('Invoices (e2e)', () => {
         .set(auth(adminToken))
         .send({ ...validPayload, customer_id: 999 })
         .expect(404);
-    });
-  });
-
-  describe('alur pembayaran', () => {
-    let id: number;
-
-    beforeAll(async () => {
-      const res = await api()
-        .post('/api/invoices')
-        .set(auth(adminToken))
-        .send({ customer_id: 2, amount: 1000, due_date: '2026-12-01' });
-      id = res.body.id;
-    });
-
-    it('menolak pembayaran melebihi sisa tagihan → 400', async () => {
-      await api().post(`/api/invoices/${id}/pay`).set(auth(operatorToken)).send({ amount: 1000.01 }).expect(400);
-    });
-
-    it('menolak pembayaran parsial → 409 dengan alasan skema', async () => {
-      const res = await api()
-        .post(`/api/invoices/${id}/pay`)
-        .set(auth(operatorToken))
-        .send({ amount: 400 })
-        .expect(409);
-      expect(res.body.message).toMatch(/tabel payments/);
-    });
-
-    it('menolak tanggal pembayaran di masa depan → 400', async () => {
-      await api()
-        .post(`/api/invoices/${id}/pay`)
-        .set(auth(operatorToken))
-        .send({ amount: 1000, paid_date: FUTURE })
-        .expect(400);
-    });
-
-    it('menolak amount tidak valid → 400', async () => {
-      await api().post(`/api/invoices/${id}/pay`).set(auth(operatorToken)).send({ amount: 0 }).expect(400);
-      await api()
-        .post(`/api/invoices/${id}/pay`)
-        .set(auth(operatorToken))
-        .send({ amount: 1000.123 })
-        .expect(400);
-    });
-
-    it('pembayaran penuh oleh operator → 200, status paid, paid_date terisi', async () => {
-      const res = await api()
-        .post(`/api/invoices/${id}/pay`)
-        .set(auth(operatorToken))
-        .send({ amount: 1000, paid_date: ISO_TODAY })
-        .expect(200);
-      expect(res.body.status).toBe('paid');
-      expect(res.body.paid_date).toBe(ISO_TODAY);
-    });
-
-    it('pembayaran kedua ditolak → 409 sudah lunas', async () => {
-      await api().post(`/api/invoices/${id}/pay`).set(auth(adminToken)).send({ amount: 1000 }).expect(409);
-    });
-
-    it('tagihan lunas tidak boleh diubah nominalnya → 409', async () => {
-      await api().patch(`/api/invoices/${id}`).set(auth(adminToken)).send({ amount: 2000 }).expect(409);
-    });
-
-    it('pembayaran untuk ID tidak ada → 404', async () => {
-      await api().post('/api/invoices/999999/pay').set(auth(adminToken)).send({ amount: 10 }).expect(404);
     });
   });
 

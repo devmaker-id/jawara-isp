@@ -18,6 +18,8 @@ export async function testPasswordHash(): Promise<string> {
 export interface FakeUsers {
   repo: UsersRepository;
   accounts: Map<number, UserRecord>;
+  // Menandai akun punya jejak audit/transaksi (untuk menguji larangan hapus).
+  references: Map<number, number>;
 }
 
 export async function createFakeUsers(): Promise<FakeUsers> {
@@ -38,6 +40,7 @@ export async function createFakeUsers(): Promise<FakeUsers> {
   ]);
 
   let nextId = 4;
+  const references = new Map<number, number>();
 
   const repo = {
     findAll: async () => [...accounts.values()],
@@ -51,6 +54,32 @@ export async function createFakeUsers(): Promise<FakeUsers> {
       return [...accounts.values()].some((u) => u.email.toLowerCase() === target);
     },
     countAll: async () => accounts.size,
+    // Pagination dihitung di sini agar perilaku service tetap teruji tanpa DB.
+    findPage: async (query: {
+      search?: string;
+      role?: string;
+      isActive?: boolean;
+      page?: number;
+      limit?: number;
+    }) => {
+      const needle = query.search?.trim().toLowerCase();
+      const filtered = [...accounts.values()].filter((u) => {
+        if (query.role && u.role !== query.role) return false;
+        if (query.isActive !== undefined && u.is_active !== query.isActive) return false;
+        if (needle && !`${u.name} ${u.email}`.toLowerCase().includes(needle)) return false;
+        return true;
+      });
+      const limit = Math.max(1, query.limit ?? 20);
+      const page = Math.max(1, query.page ?? 1);
+      return {
+        rows: filtered.slice((page - 1) * limit, page * limit),
+        total: filtered.length,
+      };
+    },
+    countActiveAdminsExcept: async (id: number) =>
+      [...accounts.values()].filter((u) => u.role === 'admin' && u.is_active && u.id !== id)
+        .length,
+    countReferences: async (id: number) => references.get(id) ?? 0,
     countAdmins: async () =>
       [...accounts.values()].filter((u) => u.role === 'admin' && u.is_active).length,
     create: async (data: CreateUserRecord) => {
@@ -83,5 +112,5 @@ export async function createFakeUsers(): Promise<FakeUsers> {
     remove: async (id: number) => accounts.delete(id),
   } as unknown as UsersRepository;
 
-  return { repo, accounts };
+  return { repo, accounts, references };
 }

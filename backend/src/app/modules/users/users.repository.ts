@@ -31,6 +31,16 @@ export interface CreateUserRecord {
 
 export type UpdateUserRecord = Partial<CreateUserRecord>;
 
+// Filter daftar pengguna. `page`/`limit` opsional: tanpa keduanya repository
+// mengembalikan seluruh hasil (dipakai kode lama).
+export interface UserQuery {
+  search?: string;
+  role?: Role;
+  isActive?: boolean;
+  page?: number;
+  limit?: number;
+}
+
 interface UserRow {
   id: number;
   name: string;
@@ -73,6 +83,90 @@ export class UsersRepository {
   async findAll(): Promise<UserRecord[]> {
     const rows = await this.db.query<UserRow>(`SELECT ${COLUMNS} FROM users ORDER BY id ASC`);
     return rows.map(toRecord);
+  }
+
+  // Daftar dengan pencarian/filter/pagination. Semua nilai di-bind sebagai
+  // parameter — tidak ada string SQL yang disusun dari input pengguna.
+  async findPage(query: UserQuery): Promise<{ rows: UserRecord[]; total: number }> {
+    const where: string[] = [];
+    const params: unknown[] = [];
+
+    const search = query.search?.trim();
+    if (search) {
+      where.push('(name LIKE ? OR email LIKE ?)');
+      params.push(`%${search}%`, `%${search}%`);
+    }
+    if (query.role) {
+      where.push('role = ?');
+      params.push(query.role);
+    }
+    if (query.isActive !== undefined) {
+      where.push('is_active = ?');
+      params.push(query.isActive ? 1 : 0);
+    }
+
+    const clause = where.length > 0 ? ` WHERE ${where.join(' AND ')}` : '';
+    const totalRow = await this.db.queryOne<{ total: number }>(
+      `SELECT COUNT(*) AS total FROM users${clause}`,
+      params,
+    );
+    const total = totalRow ? Number(totalRow.total) : 0;
+
+    let sql = `SELECT ${COLUMNS} FROM users${clause} ORDER BY id ASC`;
+    const listParams = [...params];
+    if (query.limit !== undefined) {
+      const limit = Math.max(1, Math.min(200, Math.trunc(query.limit)));
+      const page = Math.max(1, Math.trunc(query.page ?? 1));
+      sql += ' LIMIT ? OFFSET ?';
+      listParams.push(limit, (page - 1) * limit);
+    }
+
+    const rows = await this.db.query<UserRow>(sql, listParams);
+    return { rows: rows.map(toRecord), total };
+  }
+
+  // Jumlah admin aktif SELAIN id tertentu. Dipakai untuk menolak penurunan
+  // role/penonaktifan admin terakhir.
+  async countActiveAdminsExcept(id: number): Promise<number> {
+    const row = await this.db.queryOne<{ total: number }>(
+      "SELECT COUNT(*) AS total FROM users WHERE role = 'admin' AND is_active = 1 AND id <> ?",
+      [id],
+    );
+    return row ? Number(row.total) : 0;
+  }
+
+  // Apakah akun ini sudah terpakai sebagai jejak audit/petugas transaksi,
+  // atau masih memiliki data layanan (bandwidth/group/profil)?
+  // Menghapus akun seperti itu akan menghapus riwayat audit atau membuat
+  // paketnya kehilangan pemilik, jadi penghapusan harus ditolak dan akun
+  // dinonaktifkan saja.
+  async countReferences(id: number): Promise<number> {
+    const checks = [
+      'SELECT COUNT(*) AS total FROM audit_logs WHERE user_id = ?',
+      'SELECT COUNT(*) AS total FROM payments WHERE recorded_by = ? OR voided_by = ?',
+      // Kepemilikan data layanan: FK-nya SET NULL (data selamat), tetapi
+      // pemilik yang hilang membuat paket tidak terkelola. Lebih baik ditolak.
+      'SELECT COUNT(*) AS total FROM bandwidth_profiles WHERE owner_id = ?',
+      'SELECT COUNT(*) AS total FROM group_profiles WHERE owner_id = ?',
+      'SELECT COUNT(*) AS total FROM hotspot_profiles WHERE owner_id = ?',
+      'SELECT COUNT(*) AS total FROM ppp_profiles WHERE owner_id = ?',
+    ];
+    let total = 0;
+    for (const sql of checks) {
+      try {
+        const row = await this.db.queryOne<{ total: number }>(
+          sql,
+          sql.includes('voided_by') ? [id, id] : [id],
+        );
+        total += row ? Number(row.total) : 0;
+      } catch (error) {
+        // Tabel belum ada (mis. payments sebelum migrasi) → anggap tidak ada
+        // referensi, bukan menggagalkan penghapusan akun yang belum terpakai.
+        const code = (error as { code?: string })?.code;
+        if (code !== 'ER_NO_SUCH_TABLE') throw error;
+      }
+    }
+    return total;
   }
 
   // Dipakai autentikasi untuk membedakan "akun belum dikonfigurasi" (tabel

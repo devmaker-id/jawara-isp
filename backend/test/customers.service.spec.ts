@@ -19,8 +19,12 @@ function makeCustomer(overrides: Partial<Customer> = {}): Customer {
 function makeRepo(): CustomersRepository {
   return {
     findAll: vi.fn(),
+    findPage: vi.fn(),
     findById: vi.fn(),
     findByEmail: vi.fn(),
+    hasOwnerColumn: vi.fn().mockResolvedValue(false),
+    countRelations: vi.fn().mockResolvedValue({ invoices: 0, services: 0 }),
+    assignOwner: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),
     remove: vi.fn(),
@@ -33,7 +37,7 @@ describe('CustomersService', () => {
 
   beforeEach(() => {
     repo = makeRepo();
-    service = new CustomersService(repo);
+    service = new CustomersService(repo, {} as never);
   });
 
   it('menolak email duplikat dengan ConflictException (bukan 500)', async () => {
@@ -72,9 +76,18 @@ describe('CustomersService', () => {
   });
 
   it('melempar NotFoundException saat menghapus pelanggan yang tidak ada', async () => {
+    vi.mocked(repo.findById).mockResolvedValue(null);
     vi.mocked(repo.remove).mockResolvedValue(false);
 
     await expect(service.remove(99)).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('menolak hapus pelanggan yang masih punya tagihan/sesi layanan', async () => {
+    vi.mocked(repo.findById).mockResolvedValue(makeCustomer({ id: 5 }));
+    vi.mocked(repo.countRelations).mockResolvedValue({ invoices: 3, services: 1 });
+
+    await expect(service.remove(5)).rejects.toBeInstanceOf(ConflictException);
+    expect(repo.remove).not.toHaveBeenCalled();
   });
 
   it('mengizinkan update dengan email milik pelanggan itu sendiri', async () => {

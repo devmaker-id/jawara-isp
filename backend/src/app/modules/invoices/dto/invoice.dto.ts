@@ -1,6 +1,8 @@
+import { Type } from 'class-transformer';
 import {
   IsDateString,
   IsEnum,
+  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
@@ -15,6 +17,9 @@ export enum InvoiceStatus {
   UNPAID = 'unpaid',
   PAID = 'paid',
   OVERDUE = 'overdue',
+  // Ditambahkan setelah migrasi 001 (enum DB: partial di posisi terakhir).
+  // Hanya ditulis oleh alur pembayaran, bukan lewat PATCH tagihan.
+  PARTIAL = 'partial',
 }
 
 // Kolom amount DECIMAL(12,2) → maksimum 10 digit sebelum koma.
@@ -86,4 +91,28 @@ export class PayInvoiceDto {
   @IsDateString({ strict: true }, { message: DATE_MESSAGE })
   @Matches(DATE_ONLY, { message: DATE_MESSAGE })
   paid_date?: string;
+}
+// Query daftar tagihan (Fase 0: pagination & pencarian di server).
+export class ListInvoicesQueryDto {
+  @IsString()
+  @IsOptional()
+  @MaxLength(100)
+  search?: string;
+
+  @IsIn(['unpaid', 'paid', 'overdue', 'partial'])
+  @IsOptional()
+  status?: 'unpaid' | 'paid' | 'overdue' | 'partial';
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @IsOptional()
+  page?: number;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  @IsOptional()
+  limit?: number;
 }

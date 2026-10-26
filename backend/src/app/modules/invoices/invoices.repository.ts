@@ -1,21 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { DatabaseService } from '../../database/database.service';
-import {
-  CreateInvoiceDto,
-  InvoiceStatus,
-  PayInvoiceDto,
-  UpdateInvoiceDto,
-} from './dto/invoice.dto';
+import { ownerFilter, RequestScope, SYSTEM_SCOPE } from '../auth/request-scope';
+import { CreateInvoiceDto, InvoiceStatus, UpdateInvoiceDto } from './dto/invoice.dto';
 
 export type InvoiceErrorCode =
   | 'NOT_FOUND'
   | 'CUSTOMER_NOT_FOUND'
-  | 'ALREADY_PAID'
   | 'PAID_INVOICE_LOCKED'
-  | 'INVALID_STATUS'
-  | 'OVERPAY'
-  | 'PARTIAL_UNSUPPORTED';
+  | 'INVALID_STATUS';
 
 // Kesalahan domain tagihan: service menerjemahkannya menjadi respons HTTP.
 // Dilempar dari dalam transaksi agar rollback terjadi sebelum respons dikirim.
@@ -95,44 +88,111 @@ function toInvoice(row: InvoiceRow): Invoice {
   };
 }
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
-
-function todayIso(): string {
-  return toDateOnly(new Date()) as string;
+export interface InvoiceQuery {
+  search?: string;
+  status?: 'unpaid' | 'paid' | 'overdue' | 'partial';
+  page?: number;
+  limit?: number;
 }
 
 @Injectable()
 export class InvoicesRepository {
   constructor(private readonly db: DatabaseService) {}
 
-  async findAll(): Promise<Invoice[]> {
-    const rows = await this.db.query<InvoiceRow>(`SELECT ${COLUMNS} FROM invoices ORDER BY id DESC`);
-    return rows.map(toInvoice);
-  }
-
-  async findById(id: number): Promise<Invoice | null> {
-    const row = await this.db.queryOne<InvoiceRow>(`SELECT ${COLUMNS} FROM invoices WHERE id = ?`, [id]);
-    return row ? toInvoice(row) : null;
-  }
-
-  async findByCustomer(customerId: number): Promise<Invoice[]> {
+  async findAll(scope: RequestScope = SYSTEM_SCOPE): Promise<Invoice[]> {
+    const owner = ownerFilter(scope, 'invoices');
+    const where = owner.sql ? ` WHERE ${owner.sql}` : '';
     const rows = await this.db.query<InvoiceRow>(
-      `SELECT ${COLUMNS} FROM invoices WHERE customer_id = ? ORDER BY id DESC`,
-      [customerId],
+      `SELECT ${COLUMNS} FROM invoices${where} ORDER BY id DESC`,
+      owner.params,
     );
     return rows.map(toInvoice);
   }
 
-  async summary(): Promise<InvoiceSummary> {
+  // Pagination/pencarian di SQL. Catatan: filter status memakai kolom tersimpan
+  // (`status`), bukan STATUS_EXPR turunan, agar COUNT dan LIMIT konsisten.
+  async findPage(
+    query: InvoiceQuery,
+    scope: RequestScope = SYSTEM_SCOPE,
+  ): Promise<{ rows: Invoice[]; total: number }> {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    const search = query.search?.trim();
+
+    // Scope reseller masuk ke SELECT dan COUNT lewat klausa yang sama.
+    const owner = ownerFilter(scope, 'invoices');
+    if (owner.sql) {
+      where.push(owner.sql);
+      params.push(...owner.params);
+    }
+
+    if (search) {
+      where.push('(invoice_number LIKE ? OR customer_name LIKE ?)');
+      params.push(`%${search}%`, `%${search}%`);
+    }
+    if (query.status) {
+      where.push('status = ?');
+      params.push(query.status);
+    }
+
+    const clause = where.length > 0 ? ` WHERE ${where.join(' AND ')}` : '';
+    const totalRow = await this.db.queryOne<{ total: number }>(
+      `SELECT COUNT(*) AS total FROM invoices${clause}`,
+      params,
+    );
+
+    const listParams = [...params];
+    let sql = `SELECT ${COLUMNS} FROM invoices${clause} ORDER BY id DESC`;
+    if (query.limit !== undefined) {
+      const limit = Math.max(1, Math.min(200, Math.trunc(query.limit)));
+      const page = Math.max(1, Math.trunc(query.page ?? 1));
+      sql += ' LIMIT ? OFFSET ?';
+      listParams.push(limit, (page - 1) * limit);
+    }
+
+    const rows = await this.db.query<InvoiceRow>(sql, listParams);
+    return {
+      rows: rows.map(toInvoice),
+      total: totalRow ? Number(totalRow.total) : 0,
+    };
+  }
+
+  async findById(id: number, scope: RequestScope = SYSTEM_SCOPE): Promise<Invoice | null> {
+    const owner = ownerFilter(scope, 'invoices');
+    const clause = owner.sql ? ` AND ${owner.sql}` : '';
+    const row = await this.db.queryOne<InvoiceRow>(
+      `SELECT ${COLUMNS} FROM invoices WHERE id = ?${clause}`,
+      [id, ...owner.params],
+    );
+    return row ? toInvoice(row) : null;
+  }
+
+  async findByCustomer(
+    customerId: number,
+    scope: RequestScope = SYSTEM_SCOPE,
+  ): Promise<Invoice[]> {
+    const owner = ownerFilter(scope, 'invoices');
+    const clause = owner.sql ? ` AND ${owner.sql}` : '';
+    const rows = await this.db.query<InvoiceRow>(
+      `SELECT ${COLUMNS} FROM invoices WHERE customer_id = ?${clause} ORDER BY id DESC`,
+      [customerId, ...owner.params],
+    );
+    return rows.map(toInvoice);
+  }
+
+  // Ringkasan ikut ter-scope: angka reseller tidak boleh memuat tagihan
+  // reseller lain, dan total tidak boleh membocorkan keberadaan data itu.
+  async summary(scope: RequestScope = SYSTEM_SCOPE): Promise<InvoiceSummary> {
+    const owner = ownerFilter(scope, 'invoices');
+    const where = owner.sql ? ` WHERE ${owner.sql}` : '';
     const row = await this.db.queryOne<RowDataPacket & Record<string, number | string>>(
       `SELECT
          COALESCE(SUM(amount), 0) AS total,
          SUM(s = 'paid') AS paid,
          SUM(s = 'unpaid') AS unpaid,
          SUM(s = 'overdue') AS overdue
-       FROM (SELECT amount, ${STATUS_EXPR.replace(' AS status', '')} AS s FROM invoices) AS t`,
+       FROM (SELECT amount, ${STATUS_EXPR.replace(' AS status', '')} AS s FROM invoices${where}) AS t`,
+      owner.params,
     );
     return {
       total: Number(row?.total ?? 0),
@@ -177,10 +237,10 @@ export class InvoicesRepository {
           'Tagihan sudah lunas: nominal dan jatuh tempo tidak dapat diubah',
         );
       }
-      if (dto.status === InvoiceStatus.PAID) {
+      if (dto.status === InvoiceStatus.PAID || dto.status === InvoiceStatus.PARTIAL) {
         throw new InvoiceError(
           'INVALID_STATUS',
-          'Status lunas hanya dapat diatur melalui endpoint pembayaran',
+          'Status lunas/parsial hanya dapat diatur melalui endpoint pembayaran',
         );
       }
 
@@ -220,46 +280,6 @@ export class InvoicesRepository {
   async remove(id: number): Promise<boolean> {
     const result = await this.db.execute('DELETE FROM invoices WHERE id = ?', [id]);
     return result.affectedRows > 0;
-  }
-
-  // Pembayaran penuh. Skema saat ini tidak punya tabel payments dan kolom
-  // nominal terbayar, jadi pembayaran parsial ditolak dengan pesan eksplisit
-  // (bukan dicatat setengah-setengah).
-  async pay(id: number, dto: PayInvoiceDto): Promise<Invoice> {
-    return this.db.withTransaction(async (conn) => {
-      const current = await this.lock(conn, id);
-
-      if (current.status === InvoiceStatus.PAID) {
-        throw new InvoiceError('ALREADY_PAID', 'Tagihan sudah lunas', 0);
-      }
-
-      const remaining = round2(current.amount);
-      const paid = round2(dto.amount);
-
-      if (paid > remaining) {
-        throw new InvoiceError(
-          'OVERPAY',
-          `Nominal pembayaran melebihi sisa tagihan (sisa ${remaining})`,
-          remaining,
-        );
-      }
-      if (paid < remaining) {
-        throw new InvoiceError(
-          'PARTIAL_UNSUPPORTED',
-          `Pembayaran parsial belum dapat dicatat: skema database belum memiliki tabel payments ` +
-            `(sisa tagihan ${remaining}, dibayar ${paid})`,
-          remaining,
-        );
-      }
-
-      await conn.query('UPDATE invoices SET status = ?, paid_date = ? WHERE id = ?', [
-        InvoiceStatus.PAID,
-        dto.paid_date ?? todayIso(),
-        id,
-      ]);
-
-      return this.requireById(conn, id);
-    });
   }
 
   private async select(conn: PoolConnection, id: number, lock: boolean): Promise<Invoice | null> {

@@ -1,6 +1,6 @@
 import { InvoicesRepository, InvoiceError, Invoice } from '../../src/app/modules/invoices/invoices.repository';
 import { InvoiceStatus } from '../../src/app/modules/invoices/dto/invoice.dto';
-import type { CreateInvoiceDto, PayInvoiceDto, UpdateInvoiceDto } from '../../src/app/modules/invoices/dto/invoice.dto';
+import type { CreateInvoiceDto, UpdateInvoiceDto } from '../../src/app/modules/invoices/dto/invoice.dto';
 
 // Repository in-memory untuk e2e: tidak menyentuh tabel invoices sebenarnya.
 // Aturan domain (overpay, parsial, sudah lunas) ditiru agar otorisasi dan
@@ -91,25 +91,6 @@ export function createFakeInvoices(): FakeInvoices {
       return withStatus(updated);
     },
     remove: async (id: number) => items.delete(id),
-    pay: async (id: number, dto: PayInvoiceDto) => {
-      const current = need(id);
-      if (current.status === InvoiceStatus.PAID) {
-        throw new InvoiceError('ALREADY_PAID', 'Tagihan sudah lunas', 0);
-      }
-      if (dto.amount > current.amount) {
-        throw new InvoiceError('OVERPAY', 'melebihi sisa', current.amount);
-      }
-      if (dto.amount < current.amount) {
-        throw new InvoiceError('PARTIAL_UNSUPPORTED', 'parsial tidak didukung', current.amount);
-      }
-      const paid: Invoice = {
-        ...current,
-        status: InvoiceStatus.PAID,
-        paid_date: dto.paid_date ?? new Date().toISOString().slice(0, 10),
-      };
-      items.set(id, paid);
-      return paid;
-    },
   } as unknown as InvoicesRepository;
 
   return { repo, items, customers };

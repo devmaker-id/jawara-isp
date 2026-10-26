@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { InvoicesRepository, InvoiceError } from '../src/app/modules/invoices/invoices.repository';
+import { InvoicesRepository } from '../src/app/modules/invoices/invoices.repository';
 import type { DatabaseService } from '../src/app/database/database.service';
 
 // Semua test memakai mock DatabaseService: tidak ada koneksi ke database.
@@ -120,60 +120,6 @@ describe('InvoicesRepository', () => {
       await expect(
         new InvoicesRepository(db).create({ customer_id: 999, amount: 1000, due_date: '2026-03-01' }),
       ).rejects.toMatchObject({ code: 'CUSTOMER_NOT_FOUND' });
-    });
-  });
-
-  describe('pay', () => {
-    const paidRow = (amount: unknown, status = 'unpaid') => row({ amount, status });
-
-    function txDb(first: unknown, after?: unknown) {
-      const conn = {
-        query: vi.fn(async (sql: string, _params?: unknown[]) => {
-          if (sql.startsWith('UPDATE')) return [{ affectedRows: 1 }, []];
-          if (sql.includes('FOR UPDATE')) return [[first], []];
-          return [[after ?? first], []];
-        }),
-      };
-      return { db: { withTransaction: async (w: (c: unknown) => Promise<unknown>) => w(conn) } as unknown as DatabaseService, conn };
-    }
-
-    it('pembayaran penuh mengubah status jadi paid dan mengisi paid_date', async () => {
-      const { db, conn } = txDb(paidRow(49500.5), row({ amount: 49500.5, status: 'paid', paid_date: '2026-02-10' }));
-      const result = await new InvoicesRepository(db).pay(1, { amount: 49500.5, paid_date: '2026-02-10' });
-
-      expect(result.status).toBe('paid');
-      expect(result.paid_date).toBe('2026-02-10');
-      const update = conn.query.mock.calls.find(([sql]) => String(sql).startsWith('UPDATE'));
-      expect(update?.[1]).toEqual(['paid', '2026-02-10', 1]);
-    });
-
-    it('menolak nominal melebihi sisa tagihan', async () => {
-      const { db } = txDb(paidRow(1000));
-      await expect(new InvoicesRepository(db).pay(1, { amount: 1000.01 })).rejects.toMatchObject({
-        code: 'OVERPAY',
-        remaining: 1000,
-      });
-    });
-
-    it('menolak pembayaran parsial karena skema tidak punya tabel payments', async () => {
-      const { db } = txDb(paidRow(1000));
-      await expect(new InvoicesRepository(db).pay(1, { amount: 400 })).rejects.toMatchObject({
-        code: 'PARTIAL_UNSUPPORTED',
-        remaining: 1000,
-      });
-    });
-
-    it('menolak pembayaran pada tagihan yang sudah lunas', async () => {
-      const { db } = txDb(paidRow(1000, 'paid'));
-      await expect(new InvoicesRepository(db).pay(1, { amount: 1000 })).rejects.toMatchObject({
-        code: 'ALREADY_PAID',
-      });
-    });
-
-    it('menolak ID yang tidak ada', async () => {
-      const conn = { query: vi.fn().mockResolvedValue([[], []]) };
-      const db = { withTransaction: async (w: (c: unknown) => Promise<unknown>) => w(conn) } as unknown as DatabaseService;
-      await expect(new InvoicesRepository(db).pay(77, { amount: 1 })).rejects.toBeInstanceOf(InvoiceError);
     });
   });
 

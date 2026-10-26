@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { networkInterfaces } from 'node:os';
 import { DatabaseService } from '../database/database.service';
 
 export type Role = 'admin' | 'operator' | 'resseler';
@@ -65,6 +66,9 @@ export class ConfigService {
     DB_NAME: process.env.DB_NAME,
     FREERADIUS_HOST: process.env.FREERADIUS_HOST,
     FREERADIUS_SECRET: process.env.FREERADIUS_SECRET,
+    // Alamat yang dipakai NAS untuk menghubungi server ini. Tanpa ini, panel
+    // menebak dari interface non-loopback pertama — sering salah.
+    FREERADIUS_NAS_ADDRESS: process.env.FREERADIUS_NAS_ADDRESS,
     // MIKROTIK_* tidak dibaca dari .env lagi; dibaca dari tabel config.
     SECRET_KEY: process.env.SECRET_KEY,
     JWT_SECRET: process.env.JWT_SECRET,
@@ -159,6 +163,9 @@ export class ConfigService {
     host: this.get('FREERADIUS_HOST', '127.0.0.1'),
     secret: this.get('FREERADIUS_SECRET', ''),
     port: this.getInt('FREERADIUS_PORT', 1812),
+    // Alamat yang dipakai NAS untuk menghubungi server ini. Bila tidak diisi,
+    // pakai FREERADIUS_HOST (kalau bukan loopback) atau IP non-loopback pertama.
+    nas_address: this.get('FREERADIUS_NAS_ADDRESS', '') || firstExternalIpv4(),
   };
 
   public readonly mikrotik = {
@@ -186,4 +193,17 @@ export class ConfigService {
       );
     }
   }
+}
+
+/**
+ * IP non-loopback pertama milik mesin ini. Dipakai sebagai alamat NAS bawaan
+ * ketika FREERADIUS_NAS_ADDRESS tidak diisi: NAS tidak bisa memakai 127.0.0.1.
+ */
+function firstExternalIpv4(): string {
+  for (const addresses of Object.values(networkInterfaces())) {
+    for (const address of addresses ?? []) {
+      if (address.family === 'IPv4' && !address.internal) return address.address;
+    }
+  }
+  return '127.0.0.1';
 }
