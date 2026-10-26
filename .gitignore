@@ -4,10 +4,34 @@ node_modules/
 # Build output
 frontend/dist/
 backend/dist/
+__pycache__/
+*.pyc
 
 # Environment files (berisi secret)
 backend/.env
 frontend/.env
+# Semua varian .env di mana pun, kecuali contoh tanpa nilai asli
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# Kredensial / kunci / sertifikat
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+id_rsa*
+id_ed25519*
+.npmrc
+.netrc
+*credential*
+*credential*.json
+*secret*
+# Dokumen internal: instruksi agen & status proyek, tidak untuk repo publik
+AGENTS.md
+PROJECT_STATUS.md
 
 # IDE / OS artifacts
 .vscode/
@@ -22,3 +46,6 @@ test_profile.sh
 
 # Password awal admin hasil seed lokal (jangan pernah di-commit)
 backend/.admin-initial-password
+
+# Log pemasangan FreeRADIUS (ditulis runtime, berisi jejak langkah root)
+backend/var/
