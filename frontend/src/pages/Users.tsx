@@ -13,6 +13,8 @@ interface UserRow {
   phone: string | null;
   address: string | null;
   is_active: boolean;
+  /** Administrator utama: akun yang dilindungi dari penghapusan. */
+  is_primary: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -86,6 +88,8 @@ const Users: React.FC = () => {
   const [passwordTarget, setPasswordTarget] = useState<UserRow | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [confirmTarget, setConfirmTarget] = useState<{ user: UserRow; nextState: boolean } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<UserRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   // Status fitur kepemilikan pelanggan, dibaca dari server (bukan teks tetap),
   // supaya pemberitahuan hilang sendiri setelah migrasi 003 dijalankan.
@@ -201,6 +205,30 @@ const Users: React.FC = () => {
       await load();
     } catch (error) {
       setNotice({ kind: 'error', text: readError(error, 'Gagal mengubah status akun.') });
+    }
+  };
+
+  /**
+   * Hapus akun permanen.
+   *
+   * Server yang memutuskan boleh atau tidak: administrator utama ditolak, dan
+   * akun yang masih terikat data (pelanggan, voucher, profil, audit) ditolak
+   * dengan pesan yang menyebut apa yang menghalangi. Di sini cukup menampilkan
+   * jawaban server apa adanya — jangan menebak aturannya di browser.
+   */
+  const removeUser = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/api/admin/users/${deleteTarget.id}`);
+      setNotice({ kind: 'ok', text: `Akun ${deleteTarget.email} dihapus permanen.` });
+      setDeleteTarget(null);
+      await load();
+    } catch (error) {
+      setNotice({ kind: 'error', text: readError(error, 'Gagal menghapus akun.') });
+      setDeleteTarget(null);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -378,6 +406,14 @@ const Users: React.FC = () => {
                             Anda
                           </span>
                         )}
+                        {user.is_primary && (
+                          <span
+                            className="ml-2 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300"
+                            title="Akun pemilik panel — tidak dapat dihapus"
+                          >
+                            Administrator utama
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-slate-400">{user.email}</td>
                       <td className="px-4 py-3">
@@ -432,6 +468,21 @@ const Users: React.FC = () => {
                             }`}
                           >
                             {user.is_active ? 'Nonaktifkan' : 'Aktifkan'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeleteTarget(user)}
+                            disabled={user.is_primary || user.id === currentUserId}
+                            title={
+                              user.is_primary
+                                ? 'Administrator utama tidak dapat dihapus'
+                                : user.id === currentUserId
+                                  ? 'Tidak dapat menghapus akun sendiri'
+                                  : 'Hapus permanen (hanya bila tidak terikat data)'
+                            }
+                            className="px-2.5 py-1.5 rounded-lg text-xs text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 transition disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-rose-500/10"
+                          >
+                            Hapus
                           </button>
                         </div>
                       </td>
@@ -644,6 +695,46 @@ const Users: React.FC = () => {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Konfirmasi hapus akun"
+            className="w-full max-w-md space-y-4 rounded-xl border border-slate-700 bg-slate-800 p-5"
+          >
+            <h2 className="text-lg font-semibold text-white">Hapus akun permanen?</h2>
+            <p className="text-sm text-slate-400">
+              <span className="font-mono text-slate-200">{deleteTarget.email}</span> (
+              {ROLE_LABEL[deleteTarget.role]}) akan dihapus dan tidak bisa dikembalikan.
+            </p>
+            <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+              Penghapusan hanya berhasil bila akun ini tidak punya pelanggan, voucher, profil,
+              perangkat, jejak audit, atau transaksi. Kalau masih punya, nonaktifkan saja atau
+              pindahkan dulu kepemilikan datanya.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDeleteTarget(null)}
+                disabled={deleting}
+                className="rounded-lg bg-slate-700/50 px-3 py-2 text-sm text-slate-300 transition hover:bg-slate-700"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={() => void removeUser()}
+                disabled={deleting}
+                className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-rose-500 disabled:opacity-50"
+              >
+                {deleting ? 'Menghapus…' : 'Ya, hapus permanen'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

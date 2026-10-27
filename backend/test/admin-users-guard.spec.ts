@@ -51,14 +51,37 @@ describe('AdminService — pengamanan akun', () => {
     await expect(service.remove(1, 1)).rejects.toBeInstanceOf(ForbiddenException);
   });
 
+  it('menolak penghapusan administrator utama', async () => {
+    // id 1 adalah administrator utama: dilindungi apa pun yang meminta.
+    await expect(service.remove(1, 999)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
   it('menolak penghapusan admin aktif terakhir', async () => {
-    await expect(service.remove(1, 999)).rejects.toBeInstanceOf(ConflictException);
+    // Admin non-utama yang menjadi satu-satunya admin aktif.
+    fake.accounts.set(60, { ...admin(1), id: 60, email: 'admin3@uji.test', role: 'admin', is_primary: false });
+    fake.accounts.set(1, { ...admin(1), is_active: false });
+    await expect(service.remove(60, 999)).rejects.toBeInstanceOf(ConflictException);
+    fake.accounts.set(1, { ...admin(1), is_active: true });
+    fake.accounts.delete(60);
   });
 
   it('menolak penghapusan akun yang punya jejak audit/transaksi', async () => {
     const target = admin(3);
     fake.references.set(target.id, 1);
     await expect(service.remove(target.id, 1)).rejects.toBeInstanceOf(ConflictException);
+    fake.references.delete(target.id);
+  });
+
+  it('mengizinkan penghapusan akun ber-role apa pun bila tidak terikat data', async () => {
+    fake.accounts.set(70, { ...admin(1), id: 70, email: 'reseller2@uji.test', role: 'resseler', is_primary: false });
+    await expect(service.remove(70, 1)).resolves.toEqual({ ok: true });
+    expect(fake.accounts.has(70)).toBe(false);
+  });
+
+  it('menyebut APA yang menghalangi penghapusan, bukan hanya menolak', async () => {
+    const target = admin(2); // operator
+    fake.references.set(target.id, 3);
+    await expect(service.remove(target.id, 1)).rejects.toThrow(/riwayat audit/);
     fake.references.delete(target.id);
   });
 

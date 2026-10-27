@@ -29,12 +29,13 @@ export async function createFakeUsers(): Promise<FakeUsers> {
     phone: null,
     address: null,
     is_active: true,
+    is_primary: false,
     created_at: new Date('2026-01-01T00:00:00Z'),
     updated_at: new Date('2026-01-01T00:00:00Z'),
   };
 
   const accounts = new Map<number, UserRecord>([
-    [1, { id: 1, name: 'Admin Uji', email: 'admin@uji.test', role: 'admin', ...base }],
+    [1, { id: 1, name: 'Admin Uji', email: 'admin@uji.test', role: 'admin', ...base, is_primary: true }],
     [2, { id: 2, name: 'Operator Uji', email: 'operator@uji.test', role: 'operator', ...base }],
     [3, { id: 3, name: 'Reseller Uji', email: 'reseller@uji.test', role: 'resseler', ...base }],
   ]);
@@ -79,7 +80,10 @@ export async function createFakeUsers(): Promise<FakeUsers> {
     countActiveAdminsExcept: async (id: number) =>
       [...accounts.values()].filter((u) => u.role === 'admin' && u.is_active && u.id !== id)
         .length,
-    countReferences: async (id: number) => references.get(id) ?? 0,
+    referenceBreakdown: async (id: number) => {
+      const total = references.get(id) ?? 0;
+      return total > 0 ? [{ label: 'riwayat audit', count: total }] : [];
+    },
     countAdmins: async () =>
       [...accounts.values()].filter((u) => u.role === 'admin' && u.is_active).length,
     create: async (data: CreateUserRecord) => {
@@ -92,6 +96,7 @@ export async function createFakeUsers(): Promise<FakeUsers> {
         phone: data.phone ?? null,
         address: data.address ?? null,
         is_active: data.is_active !== false,
+        is_primary: false,
         created_at: new Date(),
         updated_at: new Date(),
       };

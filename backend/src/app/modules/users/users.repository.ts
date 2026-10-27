@@ -12,6 +12,8 @@ export interface UserRecord {
   phone: string | null;
   address: string | null;
   is_active: boolean;
+  /** Administrator utama: satu-satunya akun yang tidak boleh dihapus. */
+  is_primary: boolean;
   created_at: Date;
   updated_at: Date;
 }
@@ -50,12 +52,13 @@ interface UserRow {
   phone: string | null;
   address: string | null;
   is_active: number | boolean;
+  is_primary: number | boolean;
   created_at: Date;
   updated_at: Date;
 }
 
 const COLUMNS =
-  'id, name, email, password_hash, role, phone, address, is_active, created_at, updated_at';
+  'id, name, email, password_hash, role, phone, address, is_active, is_primary, created_at, updated_at';
 
 function toRecord(row: UserRow): UserRecord {
   return {
@@ -68,6 +71,7 @@ function toRecord(row: UserRow): UserRecord {
     address: row.address,
     // MySQL BOOLEAN = TINYINT(1) → 1/0
     is_active: row.is_active === 1 || row.is_active === true,
+    is_primary: row.is_primary === 1 || row.is_primary === true,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -135,38 +139,87 @@ export class UsersRepository {
     return row ? Number(row.total) : 0;
   }
 
-  // Apakah akun ini sudah terpakai sebagai jejak audit/petugas transaksi,
-  // atau masih memiliki data layanan (bandwidth/group/profil)?
-  // Menghapus akun seperti itu akan menghapus riwayat audit atau membuat
-  // paketnya kehilangan pemilik, jadi penghapusan harus ditolak dan akun
-  // dinonaktifkan saja.
-  async countReferences(id: number): Promise<number> {
-    const checks = [
-      'SELECT COUNT(*) AS total FROM audit_logs WHERE user_id = ?',
-      'SELECT COUNT(*) AS total FROM payments WHERE recorded_by = ? OR voided_by = ?',
-      // Kepemilikan data layanan: FK-nya SET NULL (data selamat), tetapi
-      // pemilik yang hilang membuat paket tidak terkelola. Lebih baik ditolak.
-      'SELECT COUNT(*) AS total FROM bandwidth_profiles WHERE owner_id = ?',
-      'SELECT COUNT(*) AS total FROM group_profiles WHERE owner_id = ?',
-      'SELECT COUNT(*) AS total FROM hotspot_profiles WHERE owner_id = ?',
-      'SELECT COUNT(*) AS total FROM ppp_profiles WHERE owner_id = ?',
+  /**
+   * Rincian data yang masih terikat pada akun ini.
+   *
+   * Dikembalikan per sumber (bukan satu angka) supaya operator tahu APA yang
+   * menghalangi penghapusan — "3 pelanggan dan 12 voucher" jauh lebih berguna
+   * daripada "ada 15 referensi".
+   *
+   * Semua sumber dihitung: jejak audit, transaksi, dan WARISAN kepemilikan
+   * (pelanggan, voucher, profil, perangkat) — karena akun pemilik yang dihapus
+   * membuat data itu kehilangan penanggung jawab.
+   */
+  async referenceBreakdown(id: number): Promise<Array<{ label: string; count: number }>> {
+    const checks: Array<{ label: string; sql: string; params: number[] }> = [
+      { label: 'pelanggan', sql: 'SELECT COUNT(*) AS total FROM customers WHERE owner_id = ?', params: [id] },
+      {
+        label: 'pelanggan (pencatat)',
+        sql: 'SELECT COUNT(*) AS total FROM customers WHERE created_by = ?',
+        params: [id],
+      },
+      { label: 'voucher', sql: 'SELECT COUNT(*) AS total FROM radius_vouchers WHERE owner_id = ?', params: [id] },
+      {
+        label: 'voucher (pencatat)',
+        sql: 'SELECT COUNT(*) AS total FROM radius_vouchers WHERE created_by = ?',
+        params: [id],
+      },
+      {
+        label: 'bandwidth profile',
+        sql: 'SELECT COUNT(*) AS total FROM bandwidth_profiles WHERE owner_id = ? OR created_by = ?',
+        params: [id, id],
+      },
+      {
+        label: 'group profile',
+        sql: 'SELECT COUNT(*) AS total FROM group_profiles WHERE owner_id = ? OR created_by = ?',
+        params: [id, id],
+      },
+      {
+        label: 'profil hotspot',
+        sql: 'SELECT COUNT(*) AS total FROM hotspot_profiles WHERE owner_id = ? OR created_by = ?',
+        params: [id, id],
+      },
+      {
+        label: 'profil PPP',
+        sql: 'SELECT COUNT(*) AS total FROM ppp_profiles WHERE owner_id = ? OR created_by = ?',
+        params: [id, id],
+      },
+      {
+        label: 'perangkat OLT',
+        sql: 'SELECT COUNT(*) AS total FROM olt_devices WHERE created_by = ?',
+        params: [id],
+      },
+      {
+        label: 'riwayat audit',
+        sql: 'SELECT COUNT(*) AS total FROM audit_logs WHERE user_id = ?',
+        params: [id],
+      },
+      {
+        label: 'pembayaran',
+        sql: 'SELECT COUNT(*) AS total FROM payments WHERE recorded_by = ? OR voided_by = ?',
+        params: [id, id],
+      },
+      {
+        label: 'permintaan persetujuan',
+        sql: 'SELECT COUNT(*) AS total FROM approval_requests WHERE requested_by = ? OR decided_by = ?',
+        params: [id, id],
+      },
     ];
-    let total = 0;
-    for (const sql of checks) {
+
+    const result: Array<{ label: string; count: number }> = [];
+    for (const check of checks) {
       try {
-        const row = await this.db.queryOne<{ total: number }>(
-          sql,
-          sql.includes('voided_by') ? [id, id] : [id],
-        );
-        total += row ? Number(row.total) : 0;
+        const row = await this.db.queryOne<{ total: number }>(check.sql, check.params);
+        const count = row ? Number(row.total) : 0;
+        if (count > 0) result.push({ label: check.label, count });
       } catch (error) {
-        // Tabel belum ada (mis. payments sebelum migrasi) → anggap tidak ada
-        // referensi, bukan menggagalkan penghapusan akun yang belum terpakai.
+        // Tabel belum ada (mis. instalasi lama sebelum migrasi) → anggap tidak
+        // ada referensi; jangan gagalkan penghapusan akun yang belum terpakai.
         const code = (error as { code?: string })?.code;
-        if (code !== 'ER_NO_SUCH_TABLE') throw error;
+        if (code !== 'ER_NO_SUCH_TABLE' && code !== 'ER_BAD_FIELD_ERROR') throw error;
       }
     }
-    return total;
+    return result;
   }
 
   // Dipakai autentikasi untuk membedakan "akun belum dikonfigurasi" (tabel

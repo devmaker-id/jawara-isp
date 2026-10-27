@@ -166,28 +166,54 @@ export class AdminService {
     }
   }
 
-  // Penghapusan permanen hanya untuk akun yang belum punya jejak. Akun yang
-  // pernah dipakai (audit_logs/payments) harus dinonaktifkan, bukan dihapus:
-  // audit_logs memakai ON DELETE CASCADE sehingga riwayatnya ikut hilang.
+  /**
+   * Hapus akun pengguna.
+   *
+   * Aturan yang berlaku:
+   *  1. Administrator UTAMA tidak boleh dihapus, siapa pun yang meminta.
+   *  2. Akun sendiri tidak boleh dihapus (mencegah panel kehilangan akses
+   *     saat operatornya sendiri hilang).
+   *  3. Role apa pun (admin/operator/resseler) boleh dihapus — TIDAK ada
+   *     larangan karena role — asalkan akun itu tidak terikat data warisan.
+   *  4. Penghapusan hanya berhasil bila akun tidak memiliki pelanggan,
+   *     voucher, profil, perangkat, jejak audit, atau transaksi. Kalau ada,
+   *     permintaan ditolak dengan menyebut APA yang menghalangi, karena
+   *     menghapus akun seperti itu akan menghilangkan riwayat atau membuat
+   *     data kehilangan penanggung jawab.
+   *  5. Panel tidak boleh kehilangan seluruh admin aktif.
+   */
   async remove(id: number, actorId?: number): Promise<{ ok: true }> {
     const user = await this.users.findById(id);
     if (!user) {
       throw new NotFoundException(`Pengguna dengan ID ${id} tidak ditemukan`);
     }
+
+    if (user.is_primary) {
+      throw new ForbiddenException(
+        'Administrator utama tidak dapat dihapus. Akun ini adalah pemilik panel dan satu-satunya yang dilindungi dari penghapusan.',
+      );
+    }
+
     if (actorId !== undefined && actorId === id) {
       throw new ForbiddenException('Tidak dapat menghapus akun sendiri');
     }
+
     if (user.role === 'admin' && user.is_active) {
       const others = await this.users.countActiveAdminsExcept(id);
       if (others === 0) {
-        throw new ConflictException('Admin aktif terakhir tidak boleh dihapus');
+        throw new ConflictException(
+          'Akun admin aktif terakhir tidak boleh dihapus. Tambahkan admin lain lebih dulu.',
+        );
       }
     }
 
-    const references = await this.users.countReferences(id);
-    if (references > 0) {
+    const blockers = await this.users.referenceBreakdown(id);
+    if (blockers.length > 0) {
+      const detail = blockers.map((item) => `${item.count} ${item.label}`).join(', ');
       throw new ConflictException(
-        'Akun ini sudah memiliki riwayat audit/transaksi. Nonaktifkan akun, jangan dihapus.',
+        `Akun ini masih terikat data: ${detail}. Nonaktifkan akunnya, jangan dihapus — ` +
+          'menghapus akan menghilangkan riwayat atau membuat data kehilangan pemilik. ' +
+          'Pindahkan dulu kepemilikan datanya bila memang ingin dihapus permanen.',
       );
     }
 
