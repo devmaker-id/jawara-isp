@@ -19,6 +19,8 @@ import { MikrotikModule } from './app/modules/mikrotik/mikrotik.module';
 import { RadiusModule } from './app/modules/freeradius/radius.module';
 import { ProfilesModule } from './app/modules/profiles/profiles.module';
 import { DashboardModule } from './app/modules/dashboard/dashboard.module';
+import { ToolsModule } from './app/modules/tools/tools.module';
+import { PermissionsModule } from './app/modules/permissions/permissions.module';
 
 @Module({
   imports: [
@@ -42,6 +44,8 @@ import { DashboardModule } from './app/modules/dashboard/dashboard.module';
     RadiusModule,
     ProfilesModule,
     DashboardModule,
+    ToolsModule,
+    PermissionsModule,
   ],
   controllers: [AppController],
   providers: [AppService, ConfigService],

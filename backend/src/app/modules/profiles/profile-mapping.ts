@@ -6,6 +6,7 @@
 import {
   buildLoginTime,
   buildRateLimit,
+  limitReplyAttributes,
   quotaToBytes,
   splitTotalLimit,
   unitToSeconds,
@@ -75,10 +76,12 @@ export function effectiveParentQueue(value: string | null | undefined): string |
  * batas waktu, dan batas kuota dikirim sebagai atribut balasan — router tidak
  * perlu menyetelnya sendiri.
  *
- * `Mikrotik-Group` hanya dikirim bila grup memang memakai parent queue, karena
- * satu-satunya cara queue dinamis masuk ke induk tertentu adalah lewat profil
- * lokal router. Bila parent queue = DEFAULT, atribut ini dihilangkan supaya
- * router memakai profil bawaannya — persis "IS DEFAULT" yang diinginkan.
+ * `Mikrotik-Group` hanya dikirim bila grup memang memakai parent queue DAN
+ * profil lokalnya benar-benar ada. Satu-satunya cara queue dinamis masuk ke
+ * induk tertentu adalah lewat profil lokal router. Bila parent queue = DEFAULT,
+ * atau grup memakai mode GROUP ONLY (tidak membuat profil lokal), atribut ini
+ * dihilangkan supaya router memakai profil bawaannya — persis "IS DEFAULT"
+ * yang diinginkan.
  */
 export function toRadiusMapping(
   profile: ServiceProfileRow,
@@ -92,21 +95,43 @@ export function toRadiusMapping(
 
   // Mikrotik-Group = NAMA PROFIL LOKAL (bukan nama queue). Profil lokal itulah
   // yang membawa setelan parent-queue; queue dinamis mengikuti induknya.
-  if (effectiveParentQueue(group.parent_queue)) {
+  //
+  // GROUP ONLY tidak membuat profil lokal di router (RADIUS memakai profil
+  // bawaan), jadi menunjuk nama profil di sini akan menunjuk objek yang tidak
+  // ada. `use_router_default` sama: tidak ada profil milik grup.
+  const hasLocalProfile = group.pool_mode !== 'group-pool' && group.use_router_default !== 1;
+  if (hasLocalProfile && effectiveParentQueue(group.parent_queue)) {
     push(reply, 'Mikrotik-Group', group.name);
   }
 
-  // Pool dari router hanya berlaku bila grup memakai pool MikroTik.
-  if (group.pool_mode === 'mikrotik-pool') {
+  // Pool dari router berlaku untuk pool yang sudah ada (mikrotik-pool) maupun
+  // pool yang dibuat panel (router-pool): keduanya objek nyata di perangkat.
+  // GROUP ONLY tidak punya pool — alamat datang dari profil hotspot bawaan.
+  if (group.pool_mode === 'mikrotik-pool' || group.pool_mode === 'router-pool') {
     push(reply, 'Framed-Pool', group.mikrotik_pool_name);
   }
 
   push(reply, 'MS-Primary-DNS-Server', group.dns_primary);
   push(reply, 'MS-Secondary-DNS-Server', group.dns_secondary);
 
-  // Batas lama online (hotspot limited).
+  // Batas lama online. Hotspot memakai timebase (nilai + satuan); PPP memakai
+  // detik langsung karena tidak punya kolom timebase.
   if (profile.timebase_value && profile.timebase_unit) {
     push(reply, 'Session-Timeout', unitToSeconds(profile.timebase_value, profile.timebase_unit));
+  }
+  // Limitasi GRUP untuk PPP. Ditulis ke radgroupreply, jadi berlaku untuk semua
+  // user di grup ini — bukan per pelanggan.
+  if (group.type === 'ppp') {
+    for (const row of limitReplyAttributes({
+      timeLimitSeconds: profile.time_limit_seconds,
+      quotaLimitBytes: profile.quota_limit_bytes,
+    })) {
+      // Session-Timeout bisa sudah dikirim dari timebase; jangan dobel.
+      if (row.attribute === 'Session-Timeout' && reply.some((r) => r.attribute === 'Session-Timeout')) {
+        continue;
+      }
+      push(reply, row.attribute, row.value);
+    }
   }
 
   // Batas pemakaian data.
@@ -127,76 +152,6 @@ export function toRadiusMapping(
   push(check, 'Login-Time', loginTime);
 
   return { reply, check };
-}
-
-export interface PreviewCommand {
-  /** Perintah yang bisa ditempel di terminal MikroTik. */
-  command: string;
-  /** Keterangan singkat mengapa perintah ini ada. */
-  note: string;
-}
-
-/**
- * Perintah MikroTik yang perlu dijalankan agar profil di router sama dengan
- * panel. Dihasilkan sebagai teks: akun API saat ini read-only, jadi panel tidak
- * mengirimnya sendiri.
- */
-export function toMikrotikCommands(
-  profile: ServiceProfileRow,
-  group: GroupProfileRow,
-  bandwidth: BandwidthRow,
-): PreviewCommand[] {
-  const rate = buildRateLimit(bandwidthSpec(bandwidth));
-  const commands: PreviewCommand[] = [];
-  const dns = [group.dns_primary, group.dns_secondary].filter(Boolean).join(',');
-
-  if (group.use_router_default === 1) {
-    commands.push({
-      command: '# grup memakai profil bawaan router — tidak ada profil baru dibuat',
-      note: 'use_router_default aktif pada Group Profile.',
-    });
-  } else if (group.type === 'hotspot') {
-    const parts = [
-      `/ip hotspot user profile add name=${group.name}`,
-      `rate-limit="${rate}"`,
-      `shared-users=${profile.shared_users}`,
-    ];
-    if (profile.timebase_value && profile.timebase_unit) {
-      parts.push(`session-timeout=${unitToSeconds(profile.timebase_value, profile.timebase_unit)}`);
-    }
-    if (group.pool_mode === 'mikrotik-pool' && group.mikrotik_pool_name) {
-      parts.push(`address-pool=${group.mikrotik_pool_name}`);
-    }
-    commands.push({
-      command: parts.join(' '),
-      note: 'Profil user hotspot; nama = nama Group Profile.',
-    });
-  } else {
-    const parts = [`/ppp profile add name=${group.name}`, `rate-limit="${rate}"`];
-    if (dns) parts.push(`dns-server=${dns}`);
-    if (group.pool_mode === 'mikrotik-pool' && group.mikrotik_pool_name) {
-      parts.push(`remote-address=${group.mikrotik_pool_name}`);
-    }
-    commands.push({
-      command: parts.join(' '),
-      note: 'Profil PPP; nama = nama Group Profile.',
-    });
-  }
-
-  const parentQueue = effectiveParentQueue(group.parent_queue);
-  if (parentQueue) {
-    // Parent queue tidak punya parameter di profil hotspot/PPP: queue dinamis
-    // mengikuti induk yang ditunjuk pada queue tree. Perintah ini hanya contoh
-    // yang perlu disesuaikan interface/target-nya.
-    commands.push({
-      command:
-        `# parent queue "${parentQueue}" dipakai sebagai induk queue dinamis\n` +
-        `# /queue tree add name=${group.name}-parent parent=${parentQueue} …`,
-      note: 'Parent queue merujuk nama yang sudah ada di MikroTik (ditulis manual).',
-    });
-  }
-
-  return commands;
 }
 
 /** Harga akhir yang dibayar pelanggan: promo bila ada, lalu PPN menaikkan. */

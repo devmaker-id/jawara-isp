@@ -45,16 +45,6 @@ const Sesi: React.FC = () => {
       <PageHeader
         title="FreeRADIUS — Sesi & Akuntansi"
         subtitle="Sesi berjalan (acctstoptime NULL) dan riwayat akuntansi dari tabel radacct."
-        actions={
-          <Button
-            onClick={() => {
-              sessions.reload();
-              accounting.reload();
-            }}
-          >
-            Muat ulang
-          </Button>
-        }
       />
 
       <div className="mb-4 grid gap-3 sm:grid-cols-3">

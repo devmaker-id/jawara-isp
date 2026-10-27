@@ -40,6 +40,16 @@ export class SettingsService {
     throw error;
   }
 
+  /**
+   * Nilai mentah satu kunci, untuk pemakaian internal server (mis. token
+   * WhatsApp saat mengirim pesan). Tidak pernah diekspos ke browser — endpoint
+   * settings tetap memakai `get()` yang menyamarkan rahasia.
+   */
+  async rawValue(key: SettingKey): Promise<string> {
+    const stored = await this.repository.findValues().catch((error) => this.rethrow(error));
+    return stored[key] ?? SETTING_DEFAULTS[key] ?? '';
+  }
+
   async get(): Promise<SettingsView> {
     const stored = await this.repository.findValues().catch((error) => this.rethrow(error));
 

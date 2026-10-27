@@ -18,8 +18,10 @@ describe('buildRateLimit', () => {
     maxDownloadKbps: 20_000,
   };
 
-  it('hanya max + priority bila tanpa burst dan min', () => {
-    expect(buildRateLimit(base)).toBe('10000k/20000k 1');
+  it('selalu menulis kepala burst supaya priority tidak bergeser ke posisi burst', () => {
+    // Regresi: dulu hasilnya "10000k/20000k 1" dan RouterOS membaca burst=1k,
+    // lalu menolak queue: "download-burst-limit less than download-max-limit".
+    expect(buildRateLimit(base)).toBe('10000k/20000k 10000k/20000k 10000k/20000k 8/8 8');
   });
 
   it('menulis burst, threshold, dan burst-time berurutan', () => {
@@ -36,16 +38,53 @@ describe('buildRateLimit', () => {
     expect(value).toBe('10000k/20000k 12000k/24000k 8000k/16000k 8/8 5');
   });
 
-  it('melengkapi nilai burst yang kosong dengan nilai wajar, bukan bagian kosong', () => {
+  it('memakai prioritas 8 (paling rendah) bila tidak ditentukan', () => {
+    // RouterOS: 1 = prioritas tertinggi. Pelanggan biasa tidak boleh otomatis
+    // mendapat antrean teratas, jadi default-nya angka terbesar.
+    expect(buildRateLimit(base).split(' ')[4]).toBe('8');
+  });
+
+  it('menghitung burst otomatis 2x max saat nilainya kosong', () => {
     const value = buildRateLimit({ ...base, burstEnabled: true });
-    // Burst = max, threshold 75% dari max, time 8 detik.
-    expect(value).toBe('10000k/20000k 10000k/20000k 7500k/15000k 8/8 1');
+    // burst = 2x max, threshold = max (baru naik kalau di bawah max), time 8s.
+    expect(value).toBe('10000k/20000k 20000k/40000k 10000k/20000k 8/8 8');
     expect(value).not.toContain('  ');
   });
 
-  it('menambahkan min-rate di posisi terakhir', () => {
+  it('tidak pernah membiarkan burst melebihi 2x max', () => {
+    const value = buildRateLimit({
+      ...base,
+      burstEnabled: true,
+      burstUploadKbps: 90_000,
+      burstDownloadKbps: 90_000,
+    });
+    expect(value).toBe('10000k/20000k 20000k/40000k 10000k/20000k 8/8 8');
+  });
+
+  it('menaruh min-rate di posisi terakhir, bukan menimpa posisi burst', () => {
     const value = buildRateLimit({ ...base, minUploadKbps: 1_000, minDownloadKbps: 2_000 });
-    expect(value).toBe('10000k/20000k 1 1000k/2000k');
+    expect(value).toBe('10000k/20000k 10000k/20000k 10000k/20000k 8/8 8 1000k/2000k');
+
+    // Semua token burst wajib >= max; inilah yang ditolak RouterOS.
+    const tokens = value.split(' ');
+    const burstDown = parseRate(tokens[1].split('/')[1]) ?? 0;
+    const thrDown = parseRate(tokens[2].split('/')[1]) ?? 0;
+    expect(burstDown).toBeGreaterThanOrEqual(20_000);
+    expect(thrDown).toBeLessThanOrEqual(burstDown);
+  });
+
+  it('menjepit burst yang lebih kecil dari max dari data lama', () => {
+    // Data database bisa saja sudah terlanjur salah; string yang dikirim tetap sah.
+    const value = buildRateLimit({
+      ...base,
+      burstEnabled: true,
+      burstUploadKbps: 5_000,
+      burstDownloadKbps: 5_000,
+      burstThresholdUploadKbps: 9_000,
+      burstThresholdDownloadKbps: 9_000,
+    });
+    // Burst dijepit naik ke max; threshold tetap di bawah burst, jadi sah.
+    expect(value).toBe('10000k/20000k 10000k/20000k 9000k/9000k 8/8 8');
   });
 });
 

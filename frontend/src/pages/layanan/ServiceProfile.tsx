@@ -1,6 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import api from '../../services/api';
+import { useBackgroundRefresh } from '../../hooks/useBackgroundRefresh';
 import { useAuth } from '../../contexts/AuthContext';
+import OwnerSelect from '../../components/OwnerSelect';
 import {
   Badge,
   Button,
@@ -21,6 +23,10 @@ export type ProfileType = 'hotspot' | 'ppp';
 interface ProfileRow {
   id: number;
   name: string;
+  owner_id?: number | null;
+  owner_name?: string | null;
+  created_by?: number | null;
+  created_by_name?: string | null;
   group_profile_id: number;
   bandwidth_id: number;
   cost_price: number;
@@ -28,6 +34,8 @@ interface ProfileRow {
   promo_price: number;
   tax_percent: number;
   quota_type?: 'unlimited' | 'limited';
+  time_limit_seconds?: number | null;
+  quota_limit_bytes?: number | null;
   timebase_value?: number | null;
   timebase_unit?: string | null;
   quotabase_value?: number | null;
@@ -46,8 +54,16 @@ interface GroupOption {
   id: number;
   name: string;
   type: ProfileType;
-  pool_mode: string;
+  router_id: number;
+  pool_mode: 'mikrotik-pool' | 'sql-ippool' | 'group-pool' | 'router-pool';
+  mikrotik_pool_name: string | null;
+  pool_range_start: string | null;
+  pool_range_end: string | null;
+  pool_local_address: string | null;
   parent_queue: string | null;
+  dns_primary: string | null;
+  dns_secondary: string | null;
+  use_router_default: number;
 }
 
 interface BandwidthOption {
@@ -60,10 +76,32 @@ interface BandwidthOption {
 interface Preview {
   groupname: string;
   radius: { reply: Array<{ attribute: string; value: string }>; check: Array<{ attribute: string; value: string }> };
-  mikrotik: Array<{ command: string; note: string }>;
+  writes_to_router: boolean;
+  group: {
+    name: string;
+    type: ProfileType;
+    router_id: number;
+    pool_mode: string;
+    pool_name: string | null;
+    pool_range: string | null;
+    parent_queue: string | null;
+    dns: string;
+    local_profile: string | null;
+  };
   price: { base: number; tax: number; total: number };
   validity_seconds: number | null;
 }
+
+/** Ringkasan sumber IP dari sebuah grup, untuk ditampilkan apa adanya. */
+const groupPool = (group: GroupOption) => {
+  if (group.pool_mode === 'sql-ippool') return 'sql-ippool (RADIUS)';
+  // GROUP ONLY tidak punya pool: alamat datang dari profil hotspot bawaan.
+  if (group.pool_mode === 'group-pool') return 'profil hotspot bawaan router';
+  if (group.pool_mode === 'router-pool') {
+    return `${group.mikrotik_pool_name}${group.pool_range_start ? ` ${group.pool_range_start}-${group.pool_range_end}` : ''}`;
+  }
+  return group.mikrotik_pool_name ?? '-';
+};
 
 const UNITS = [
   { value: 'minute', label: 'Menit' },
@@ -83,6 +121,8 @@ const DAYS = [
 
 interface FormState {
   name: string;
+  /** Pemilik data (admin saja). '' = dirinya sendiri. */
+  owner_id: string;
   group_profile_id: string;
   bandwidth_id: string;
   cost_price: string;
@@ -90,6 +130,10 @@ interface FormState {
   promo_price: string;
   tax_percent: string;
   quota_type: 'unlimited' | 'limited';
+  time_limit_value: string;
+  time_limit_unit: 'minute' | 'hour' | 'day';
+  quota_limit_value: string;
+  quota_limit_unit: 'MB' | 'GB';
   timebase_value: string;
   timebase_unit: string;
   quotabase_value: string;
@@ -105,6 +149,7 @@ interface FormState {
 
 const EMPTY: FormState = {
   name: '',
+  owner_id: '',
   group_profile_id: '',
   bandwidth_id: '',
   cost_price: '',
@@ -112,6 +157,10 @@ const EMPTY: FormState = {
   promo_price: '0',
   tax_percent: '0',
   quota_type: 'unlimited',
+  time_limit_value: '',
+  time_limit_unit: 'hour',
+  quota_limit_value: '',
+  quota_limit_unit: 'GB',
   timebase_value: '',
   timebase_unit: 'hour',
   quotabase_value: '',
@@ -134,6 +183,9 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
   const [groups, setGroups] = useState<GroupOption[]>([]);
   const [bandwidths, setBandwidths] = useState<BandwidthOption[]>([]);
   const [loading, setLoading] = useState(true);
+  // Pemuatan pertama menampilkan spinner; pemuatan berikutnya berjalan
+  // di belakang layar tanpa mengosongkan data yang sudah tampil.
+  const loadedOnce = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -143,7 +195,8 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
   const [preview, setPreview] = useState<Preview | null>(null);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    if (!loadedOnce.current) setLoading(true);
+    loadedOnce.current = true;
     setError(null);
     try {
       const [list, groupList, bwList] = await Promise.all([
@@ -165,6 +218,8 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
     void load();
   }, [load]);
 
+  useBackgroundRefresh(load, { intervalMs: 60000 });
+
   const openCreate = () => {
     setEditId(null);
     setForm({
@@ -177,7 +232,9 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
   const openEdit = (row: ProfileRow) => {
     setEditId(row.id);
     setForm({
+      ...EMPTY,
       name: row.name,
+      owner_id: row.owner_id ? String(row.owner_id) : '',
       group_profile_id: String(row.group_profile_id),
       bandwidth_id: String(row.bandwidth_id),
       cost_price: String(row.cost_price),
@@ -185,6 +242,15 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
       promo_price: String(row.promo_price),
       tax_percent: String(row.tax_percent),
       quota_type: row.quota_type ?? 'unlimited',
+      // Limitasi grup PPP disimpan dalam detik/byte; tampilkan dalam satuan besar.
+      time_limit_value: row.time_limit_seconds
+        ? String(row.time_limit_seconds % 3600 === 0 ? row.time_limit_seconds / 3600 : Math.round(row.time_limit_seconds / 60))
+        : '',
+      time_limit_unit: row.time_limit_seconds && row.time_limit_seconds % 3600 !== 0 ? 'minute' : 'hour',
+      quota_limit_value: row.quota_limit_bytes
+        ? String(row.quota_limit_bytes % 1_000_000_000 === 0 ? row.quota_limit_bytes / 1_000_000_000 : Math.round(row.quota_limit_bytes / 1_000_000))
+        : '',
+      quota_limit_unit: row.quota_limit_bytes && row.quota_limit_bytes % 1_000_000_000 !== 0 ? 'MB' : 'GB',
       timebase_value: row.timebase_value ? String(row.timebase_value) : '',
       timebase_unit: row.timebase_unit ?? 'hour',
       quotabase_value: row.quotabase_value ? String(row.quotabase_value) : '',
@@ -206,7 +272,7 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
     form.name.trim() === '' ||
     form.group_profile_id === '' ||
     form.bandwidth_id === '' ||
-    Number(form.sell_price) <= 0 ||
+    Number(form.sell_price) < 0 ||
     Number(form.cost_price) < 0 ||
     Number(form.promo_price) > Number(form.sell_price) ||
     (isHotspot &&
@@ -237,6 +303,13 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
       login_start: form.login_start || null,
       login_end: form.login_end || null,
     };
+    if (!isHotspot) {
+      // Limitasi grup PPP: ditulis ke radgroupreply, berlaku untuk semua user.
+      payload.time_limit_value = form.time_limit_value ? Number(form.time_limit_value) : 0;
+      payload.time_limit_unit = form.time_limit_unit;
+      payload.quota_limit_value = form.quota_limit_value ? Number(form.quota_limit_value) : 0;
+      payload.quota_limit_unit = form.quota_limit_unit;
+    }
     if (isHotspot) {
       payload.quota_type = form.quota_type;
       if (form.quota_type === 'limited') {
@@ -246,6 +319,13 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
         payload.quotabase_unit = form.quotabase_value ? form.quotabase_unit : null;
       }
     }
+    // Pemilik hanya ditetapkan saat MEMBUAT. Mengubahnya lewat sini akan
+    // memindahkan data antar akun tanpa jejak audit.
+    if (!editId) {
+      if (form.owner_id === 'none') payload.owner_id = null;
+      else if (form.owner_id !== '') payload.owner_id = Number(form.owner_id);
+    }
+
     try {
       if (editId) await api.patch(`/api/profiles/${type}/${editId}`, payload);
       else await api.post(`/api/profiles/${type}`, payload);
@@ -290,17 +370,23 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
 
   const groupName = (id: number) => groups.find((g) => g.id === id)?.name ?? `#${id}`;
   const bwName = (id: number) => bandwidths.find((b) => b.id === id)?.name ?? `#${id}`;
+  // Angka limitasi yang benar-benar dikirim sebagai Mikrotik-Rate-Limit.
+  const bwRate = (id: number) => {
+    const bw = bandwidths.find((b) => b.id === id);
+    return bw ? `${bw.max_upload_kbps}/${bw.max_download_kbps} kbps` : '';
+  };
   const rupiah = (value: number) =>
     new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(value);
 
   return (
     <div className="page-container">
       <PageHeader
-        title={`Layanan — Profil ${isHotspot ? 'Hotspot' : 'PPP'}`}
+        title={`Profile Group — Profil ${isHotspot ? 'Hotspot' : 'PPP'}`}
         subtitle={
-          isHotspot
+          (isHotspot
             ? 'Paket jual hotspot: harga, batas waktu/kuota, group profile, dan bandwidth.'
-            : 'Paket jual PPP: harga, masa aktif, group profile, dan bandwidth. Tanpa quota base.'
+            : 'Paket jual PPP: harga, masa aktif, group profile, dan bandwidth. Tanpa quota base.') +
+          ' Tidak menulis ke MikroTik — semuanya atribut RADIUS.'
         }
         actions={isAdmin ? <Button variant="primary" onClick={openCreate}>Tambah profil</Button> : undefined}
       />
@@ -323,6 +409,8 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
               'PPN',
               'Masa aktif',
               isHotspot ? 'Kuota' : 'Shared',
+              'Pemilik',
+              'Dibuat oleh',
               isAdmin ? 'Aksi' : '',
             ]}
             isEmpty={rows.length === 0}
@@ -332,7 +420,10 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
               <tr key={row.id}>
                 <td className="px-3 py-2 font-mono text-xs">{row.name}</td>
                 <td className="px-3 py-2 text-xs">{groupName(row.group_profile_id)}</td>
-                <td className="px-3 py-2 text-xs">{bwName(row.bandwidth_id)}</td>
+                <td className="px-3 py-2 text-xs">
+                  {bwName(row.bandwidth_id)}
+                  <span className="block font-mono text-[10px] text-slate-500">{bwRate(row.bandwidth_id)}</span>
+                </td>
                 <td className="px-3 py-2 text-xs">{rupiah(Number(row.sell_price))}</td>
                 <td className="px-3 py-2 text-xs">{Number(row.tax_percent)}%</td>
                 <td className="px-3 py-2 text-xs">
@@ -355,6 +446,10 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
                     row.shared_users
                   )}
                 </td>
+                <td className="px-3 py-2 text-xs text-slate-400">
+                  {row.owner_name ?? <span className="text-slate-500">Tanpa pemilik</span>}
+                </td>
+                <td className="px-3 py-2 text-xs text-slate-400">{row.created_by_name ?? '—'}</td>
                 {isAdmin && (
                   <td className="px-3 py-2">
                     <div className="flex flex-wrap gap-1">
@@ -385,6 +480,14 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
                   placeholder="HS-10M-30HARI" />
               </div>
 
+              {!editId && (
+                <OwnerSelect
+                  value={form.owner_id}
+                  onChange={(value) => setForm((f) => (f ? { ...f, owner_id: value } : f))}
+                  label="Pemilik profil (admin boleh membuat atas nama akun lain)"
+                />
+              )}
+
               <div>
                 <label className="mb-1 block text-xs text-slate-400">Group Profile *</label>
                 <select value={form.group_profile_id}
@@ -393,10 +496,31 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
                   <option value="">Pilih grup…</option>
                   {groups.map((group) => (
                     <option key={group.id} value={group.id}>
-                      {group.name} ({group.pool_mode})
+                      {group.name} · {group.pool_mode}
                     </option>
                   ))}
                 </select>
+                {groups.length === 0 && (
+                  <p className="mt-1 text-[11px] text-amber-400">
+                    Belum ada Group Profile tipe {type}. Buat dulu di Profile Group → Group Profile.
+                  </p>
+                )}
+                {selectedGroup && (
+                  // Semua nilai di bawah diwarisi dari grup. Profil ini hanya
+                  // menetapkan grup + bandwidth + limitasi; tidak ada yang
+                  // ditulis ke MikroTik.
+                  <div className="mt-2 rounded-lg border border-slate-700 bg-slate-950/60 p-2 font-mono text-[11px] text-slate-400">
+                    <div>pool     : {groupPool(selectedGroup)}</div>
+                    <div>parent   : {selectedGroup.parent_queue ?? 'DEFAULT'}</div>
+                    <div>dns      : {[selectedGroup.dns_primary, selectedGroup.dns_secondary].filter(Boolean).join(',') || '-'}</div>
+                    <div>
+                      profil   :{' '}
+                      {selectedGroup.use_router_default === 1 || selectedGroup.pool_mode === 'group-pool'
+                        ? 'bawaan router (tanpa Mikrotik-Group)'
+                        : selectedGroup.name}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -414,19 +538,25 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-slate-400">Harga modal *</label>
+                <label className="mb-1 block text-xs text-slate-400">
+                  Harga modal (kosong = 0)
+                </label>
                 <input type="number" min="0" value={form.cost_price}
                   onChange={(e) => setForm({ ...form, cost_price: e.target.value })}
                   className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100" />
               </div>
               <div>
-                <label className="mb-1 block text-xs text-slate-400">Harga jual *</label>
+                <label className="mb-1 block text-xs text-slate-400">
+                  Harga jual (kosong = gratis)
+                </label>
                 <input type="number" min="0" value={form.sell_price}
                   onChange={(e) => setForm({ ...form, sell_price: e.target.value })}
                   className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100" />
               </div>
               <div>
-                <label className="mb-1 block text-xs text-slate-400">Harga promo (0 = tidak ada)</label>
+                <label className="mb-1 block text-xs text-slate-400">
+                  Harga promo (0 = tidak ada)
+                </label>
                 <input type="number" min="0" value={form.promo_price}
                   onChange={(e) => setForm({ ...form, promo_price: e.target.value })}
                   className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100" />
@@ -437,6 +567,48 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
                   onChange={(e) => setForm({ ...form, tax_percent: e.target.value })}
                   className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100" />
               </div>
+
+              {!isHotspot && (
+                <>
+                  <div>
+                    <label className="mb-1 block text-xs text-slate-400">Batas waktu per sesi (grup)</label>
+                    <div className="flex gap-2">
+                      <input type="number" min="0" value={form.time_limit_value}
+                        onChange={(e) => setForm({ ...form, time_limit_value: e.target.value })}
+                        className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100"
+                        placeholder="0 = tanpa batas" />
+                      <select value={form.time_limit_unit}
+                        onChange={(e) => setForm({ ...form, time_limit_unit: e.target.value as FormState['time_limit_unit'] })}
+                        className="rounded-lg border border-slate-700 bg-slate-950 px-2 text-sm text-slate-100">
+                        <option value="minute">menit</option>
+                        <option value="hour">jam</option>
+                        <option value="day">hari</option>
+                      </select>
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      <code>Session-Timeout</code> — berlaku untuk semua user di grup ini.
+                    </p>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-slate-400">Batas kuota total (grup)</label>
+                    <div className="flex gap-2">
+                      <input type="number" min="0" value={form.quota_limit_value}
+                        onChange={(e) => setForm({ ...form, quota_limit_value: e.target.value })}
+                        className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100"
+                        placeholder="0 = tanpa batas" />
+                      <select value={form.quota_limit_unit}
+                        onChange={(e) => setForm({ ...form, quota_limit_unit: e.target.value as FormState['quota_limit_unit'] })}
+                        className="rounded-lg border border-slate-700 bg-slate-950 px-2 text-sm text-slate-100">
+                        <option value="MB">MB</option>
+                        <option value="GB">GB</option>
+                      </select>
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      <code>Mikrotik-Total-Limit</code> — berlaku untuk semua user di grup ini.
+                    </p>
+                  </div>
+                </>
+              )}
 
               {isHotspot && (
                 <div className="sm:col-span-2">
@@ -594,15 +766,29 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
               ))}
             </div>
 
-            <p className="mt-3 text-xs uppercase tracking-wide text-slate-400">Perintah MikroTik</p>
-            <div className="mt-1 whitespace-pre-wrap rounded-lg border border-slate-700 bg-black/70 p-3 font-mono text-[11px] text-cyan-200">
-              {preview.mikrotik.map((item, index) => (
-                <div key={index} className="mb-1">{item.command}</div>
-              ))}
+            <p className="mt-3 text-xs uppercase tracking-wide text-slate-400">Dari Group Profile</p>
+            <div className="mt-1 grid gap-1 rounded-lg border border-slate-700 bg-black/70 p-3 font-mono text-[11px] text-slate-300">
+              <div>
+                pool      :{' '}
+                {preview.group.pool_mode === 'sql-ippool'
+                  ? 'sql-ippool (RADIUS)'
+                  : preview.group.pool_mode === 'group-pool'
+                    ? 'profil hotspot bawaan router'
+                    : `${preview.group.pool_name ?? '-'}${preview.group.pool_range ? ` ${preview.group.pool_range}` : ''}`}
+              </div>
+              <div>parent    : {preview.group.parent_queue ?? 'DEFAULT'}</div>
+              <div>dns       : {preview.group.dns || '-'}</div>
+              <div>profil    : {preview.group.local_profile ?? 'bawaan router (tanpa Mikrotik-Group)'}</div>
             </div>
-            <p className="mt-2 text-[11px] text-slate-500">
-              Akun API saat ini read-only, jadi perintah di atas perlu dijalankan manual di router.
-            </p>
+
+            <div className="mt-3 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-200">
+              Profil ini tidak menulis apa pun ke MikroTik. Yang disimpan hanya penetapan grup,
+              bandwidth, dan limitasi; semuanya dikirim sebagai atribut RADIUS di atas.
+              {preview.group.local_profile && (
+                <> Profil lokal <span className="font-mono">{preview.group.local_profile}</span> sudah dibuat
+                sekali oleh Group Profile.</>
+              )}
+            </div>
 
             <div className="mt-4 flex justify-end">
               <Button onClick={() => setPreview(null)}>Tutup</Button>

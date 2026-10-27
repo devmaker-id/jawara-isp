@@ -110,7 +110,6 @@ const Interfaces: React.FC = () => {
       <PageHeader
         title="MikroTik — Interface & Resource"
         subtitle="Daftar interface beserta status link, ditambah ringkasan resource perangkat."
-        actions={<Button onClick={() => { interfaces.reload(); resources.reload(); }}>Muat ulang</Button>}
       />
 
       {resources.data && (

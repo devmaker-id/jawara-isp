@@ -32,8 +32,12 @@ export interface GroupProfileRow {
   router_id: number;
   name: string;
   type: 'hotspot' | 'ppp';
-  pool_mode: 'mikrotik-pool' | 'sql-ippool';
+  pool_mode: 'mikrotik-pool' | 'sql-ippool' | 'group-pool' | 'router-pool';
   mikrotik_pool_name: string | null;
+  pool_local_address: string | null;
+  pool_range_start: string | null;
+  pool_range_end: string | null;
+  pool_created: number;
   dns_primary: string | null;
   dns_secondary: string | null;
   parent_queue: string | null;
@@ -63,6 +67,10 @@ export interface ServiceProfileRow {
   validity_unit: string;
   shared_users: number;
   priority: number;
+  /** Limitasi GRUP (khusus PPP): batas durasi satu sesi, detik. */
+  time_limit_seconds?: number | null;
+  /** Limitasi GRUP (khusus PPP): batas total pemakaian, byte. */
+  quota_limit_bytes?: number | null;
   login_days: string | null;
   login_start: string | null;
   login_end: string | null;
@@ -91,24 +99,43 @@ export interface VoucherRow {
   online_seconds: number;
   quota_used_bytes: number;
   created_by: number | null;
+  /** Nama pembuat (diisi dari join users). */
+  created_by_name?: string | null;
+  /** Pemilik voucher — diwarisi dari profil saat dibuat. */
+  owner_id: number | null;
+  owner_name?: string | null;
   created_at: string | null;
   updated_at: string | null;
 }
 
-const BANDWIDTH_COLUMNS = `id, owner_id, name, min_upload_kbps, min_download_kbps,
+// Nama pemilik & pembuat lewat subquery: klausa WHERE/COUNT yang sudah ada
+// tidak perlu diubah dan tidak ada baris berlipat.
+function ownerNames(table: string): string {
+  return `(SELECT u.name FROM users u WHERE u.id = ${table}.owner_id) AS owner_name,
+  (SELECT u.name FROM users u WHERE u.id = ${table}.created_by) AS created_by_name`;
+}
+
+const BANDWIDTH_COLUMNS = `id, owner_id, created_by, name, min_upload_kbps, min_download_kbps,
   max_upload_kbps, max_download_kbps, burst_enabled, burst_upload_kbps, burst_download_kbps,
   burst_threshold_upload_kbps, burst_threshold_download_kbps, burst_time_sec, priority,
-  created_at, updated_at`;
+  created_at, updated_at, ${ownerNames('bandwidth_profiles')}`;
 
-const GROUP_COLUMNS = `id, owner_id, router_id, name, type, pool_mode, mikrotik_pool_name,
-  dns_primary, dns_secondary, parent_queue, use_router_default, created_at, updated_at`;
+const GROUP_COLUMNS = `id, owner_id, created_by, router_id, name, type, pool_mode, mikrotik_pool_name,
+  pool_local_address, pool_range_start, pool_range_end, pool_created,
+  dns_primary, dns_secondary, parent_queue, use_router_default, created_at, updated_at,
+  ${ownerNames('group_profiles')}`;
 
-const PROFILE_BASE = `id, owner_id, group_profile_id, bandwidth_id, name, radius_group, cost_price, sell_price,
+const PROFILE_BASE = (table: string) => `id, owner_id, created_by, group_profile_id, bandwidth_id,
+  name, radius_group, cost_price, sell_price,
   promo_price, tax_percent, validity_value, validity_unit, shared_users, priority,
-  login_days, login_start, login_end, is_active, created_at, updated_at`;
+  login_days, login_start, login_end, is_active, created_at, updated_at,
+  ${ownerNames(table)}`;
 
 // Kolom khusus hotspot yang tidak ada di tabel ppp.
 const HOTSPOT_EXTRA = `quota_type, timebase_value, timebase_unit, quotabase_value, quotabase_unit`;
+
+// Kolom khusus ppp: limitasi grup. Hotspot memakai timebase/quotabase.
+const PPP_EXTRA = `time_limit_seconds, quota_limit_bytes`;
 
 @Injectable()
 export class BandwidthRepository {
@@ -273,7 +300,9 @@ export class ServiceProfileRepository {
   }
 
   private columns(type: 'hotspot' | 'ppp'): string {
-    return type === 'hotspot' ? `${PROFILE_BASE}, ${HOTSPOT_EXTRA}` : PROFILE_BASE;
+    return type === 'hotspot'
+      ? `${PROFILE_BASE(this.table(type))}, ${HOTSPOT_EXTRA}`
+      : `${PROFILE_BASE(this.table(type))}, ${PPP_EXTRA}`;
   }
 
   async list(type: 'hotspot' | 'ppp', ownerId?: number, search?: string): Promise<ServiceProfileRow[]> {
@@ -358,6 +387,7 @@ export class VoucherRepository {
     userType?: string;
     search?: string;
     createdBy?: number;
+    ownerId?: number;
     dateFrom?: string;
     dateTo?: string;
     limit?: number;
@@ -388,6 +418,10 @@ export class VoucherRepository {
       where.push('v.created_by = ?');
       params.push(filters.createdBy);
     }
+    if (filters.ownerId) {
+      where.push('v.owner_id = ?');
+      params.push(filters.ownerId);
+    }
     // Batas tanggal inklusif: date_to mencakup seluruh hari tersebut.
     if (filters.dateFrom) {
       where.push('v.created_at >= ?');
@@ -399,9 +433,12 @@ export class VoucherRepository {
     }
     const limit = Math.min(Math.max(filters.limit ?? 200, 1), 500);
     return this.db.query<VoucherRow>(
-      `SELECT v.*, c.name AS customer_name
+      `SELECT v.*, c.name AS customer_name,
+              ow.name AS owner_name, cr.name AS created_by_name
          FROM radius_vouchers v
          LEFT JOIN customers c ON c.id = v.customer_id
+         LEFT JOIN users ow ON ow.id = v.owner_id
+         LEFT JOIN users cr ON cr.id = v.created_by
         ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
         ORDER BY v.id DESC LIMIT ?`,
       [...params, limit],
@@ -410,9 +447,12 @@ export class VoucherRepository {
 
   async findById(id: number): Promise<VoucherRow | null> {
     const rows = await this.db.query<VoucherRow>(
-      `SELECT v.*, c.name AS customer_name
+      `SELECT v.*, c.name AS customer_name,
+              ow.name AS owner_name, cr.name AS created_by_name
          FROM radius_vouchers v
          LEFT JOIN customers c ON c.id = v.customer_id
+         LEFT JOIN users ow ON ow.id = v.owner_id
+         LEFT JOIN users cr ON cr.id = v.created_by
         WHERE v.id = ?`,
       [id],
     );
@@ -462,9 +502,12 @@ export class VoucherRepository {
     return result.affectedRows ?? 0;
   }
 
-  async counts(): Promise<Record<string, number>> {
+  async counts(ownerId?: number): Promise<Record<string, number>> {
     const rows = await this.db.query<{ status: string; total: number }>(
-      'SELECT status, COUNT(*) AS total FROM radius_vouchers GROUP BY status',
+      `SELECT status, COUNT(*) AS total FROM radius_vouchers
+        ${ownerId ? 'WHERE owner_id = ?' : ''}
+        GROUP BY status`,
+      ownerId ? [ownerId] : [],
     );
     return rows.reduce<Record<string, number>>((acc, row) => {
       acc[row.status] = Number(row.total);

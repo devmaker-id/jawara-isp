@@ -224,3 +224,21 @@ export class UpdateRadiusUserDto {
   @IsBoolean()
   disabled?: boolean;
 }
+/**
+ * Cek pemakaian user (dialog "Cek pemakaian user").
+ * Password/kredensial TIDAK pernah ikut: hanya identitas layanan dan angka pemakaian.
+ */
+export class UsageLookupQueryDto {
+  @IsIn(['customer', 'voucher'], { message: 'Pilih jenis: pelanggan atau voucher' })
+  type!: 'customer' | 'voucher';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  username?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  mac?: string;
+}

@@ -57,7 +57,7 @@ export class PaymentsService {
   private rethrow(error: unknown): never {
     if (isMissingOwnerColumn(error)) {
       throw new ServiceUnavailableException(
-        'Data pembayaran reseller belum dapat difilter: kolom customers.reseller_id belum ada ' +
+        'Data pembayaran reseller belum dapat difilter: kolom customers.owner_id belum ada ' +
           '(migrasi 003_customer_reseller_ownership.sql belum dijalankan).',
       );
     }

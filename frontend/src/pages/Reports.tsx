@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import api from '../services/api';
+import { useBackgroundRefresh } from '../hooks/useBackgroundRefresh';
 import { downloadCsv } from '../utils/csv';
 
 type ReportType = 'summary' | 'transactions' | 'unpaid' | 'by-method';
@@ -94,6 +95,18 @@ const readError = (error: unknown, fallback: string): string => {
   return fallback;
 };
 
+interface ContributionRow {
+  user_id: number;
+  name: string;
+  role: string;
+  customers: number;
+  vouchers: number;
+  hotspot_profiles: number;
+  ppp_profiles: number;
+  group_profiles: number;
+  total: number;
+}
+
 const inputClass =
   'w-full px-3 py-2 rounded-lg bg-slate-700/50 border border-slate-600 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 outline-none transition text-slate-100 text-sm';
 
@@ -107,10 +120,18 @@ const Reports: React.FC = () => {
 
   const [result, setResult] = useState<ReportResult | null>(null);
   const [loading, setLoading] = useState(true);
+  // Pemuatan pertama menampilkan spinner; pemuatan berikutnya berjalan
+  // di belakang layar tanpa mengosongkan data yang sudah tampil.
+  const loadedOnce = useRef(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // Kontribusi per akun: berapa pelanggan/voucher/profil yang DIBUAT siapa.
+  const [contrib, setContrib] = useState<ContributionRow[]>([]);
+  const [contribLoading, setContribLoading] = useState(true);
+
   const load = useCallback(async () => {
-    setLoading(true);
+    if (!loadedOnce.current) setLoading(true);
+    loadedOnce.current = true;
     setLoadError(null);
     try {
       const res = await api.get('/api/reports', {
@@ -140,6 +161,29 @@ const Reports: React.FC = () => {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useBackgroundRefresh(load, { intervalMs: 120000 });
+
+  // Kontribusi memakai periode yang sama; kegagalannya tidak boleh
+  // menggagalkan laporan keuangan, jadi ditangani terpisah.
+  useEffect(() => {
+    let alive = true;
+    setContribLoading(true);
+    api
+      .get('/api/reports/contributions', { params: { from: from || undefined, to: to || undefined } })
+      .then((res) => {
+        if (alive) setContrib(Array.isArray(res.data?.rows) ? res.data.rows : []);
+      })
+      .catch(() => {
+        if (alive) setContrib([]);
+      })
+      .finally(() => {
+        if (alive) setContribLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [from, to]);
 
   const changeType = (next: ReportType) => {
     setType(next);
@@ -484,6 +528,61 @@ const Reports: React.FC = () => {
                 <p className="mt-1 text-lg font-bold text-white">{card.value}</p>
               </div>
             ))}
+          </div>
+
+          <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-700/50">
+              <p className="text-sm font-medium text-slate-200">Kontribusi per pengguna</p>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Dihitung dari akun yang <span className="text-slate-300">membuat</span> data pada
+                periode ini — bukan dari pemiliknya. Admin yang membuatkan data untuk reseller tetap
+                tercatat sebagai pembuat.
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-slate-700/30">
+                    <th className="px-4 py-2 text-left font-medium text-slate-400">Pengguna</th>
+                    <th className="px-4 py-2 text-left font-medium text-slate-400">Role</th>
+                    <th className="px-4 py-2 text-right font-medium text-slate-400">Pelanggan</th>
+                    <th className="px-4 py-2 text-right font-medium text-slate-400">Voucher</th>
+                    <th className="px-4 py-2 text-right font-medium text-slate-400">Profil HS</th>
+                    <th className="px-4 py-2 text-right font-medium text-slate-400">Profil PPP</th>
+                    <th className="px-4 py-2 text-right font-medium text-slate-400">Group</th>
+                    <th className="px-4 py-2 text-right font-medium text-slate-400">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-700/50">
+                  {contribLoading ? (
+                    <tr>
+                      <td colSpan={8} className="px-4 py-6 text-center text-slate-500">
+                        Memuat kontribusi…
+                      </td>
+                    </tr>
+                  ) : contrib.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="px-4 py-6 text-center text-slate-500">
+                        Belum ada data yang dibuat pada periode ini.
+                      </td>
+                    </tr>
+                  ) : (
+                    contrib.map((row) => (
+                      <tr key={row.user_id}>
+                        <td className="px-4 py-2 text-slate-200">{row.name}</td>
+                        <td className="px-4 py-2 text-xs text-slate-400">{row.role}</td>
+                        <td className="px-4 py-2 text-right font-mono text-xs">{row.customers}</td>
+                        <td className="px-4 py-2 text-right font-mono text-xs">{row.vouchers}</td>
+                        <td className="px-4 py-2 text-right font-mono text-xs">{row.hotspot_profiles}</td>
+                        <td className="px-4 py-2 text-right font-mono text-xs">{row.ppp_profiles}</td>
+                        <td className="px-4 py-2 text-right font-mono text-xs">{row.group_profiles}</td>
+                        <td className="px-4 py-2 text-right font-mono text-xs text-cyan-300">{row.total}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           {loading ? (

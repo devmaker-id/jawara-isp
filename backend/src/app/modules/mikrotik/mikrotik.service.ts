@@ -26,6 +26,7 @@ import {
   UpdateHotspotUserDto,
   UpdatePppSecretDto,
 } from './dto/mikrotik.dto';
+import { filterLogs } from './log-filter';
 import { RouterOsClient, RouterOsError, RouterOsRecord } from './routeros.client';
 
 const num = (value: string | undefined, fallback = 0): number => {
@@ -35,15 +36,31 @@ const num = (value: string | undefined, fallback = 0): number => {
 
 const bool = (value: string | undefined): boolean => value === 'true' || value === 'yes';
 
-const uptimeSeconds = (value: string | undefined): number => {
+/**
+ * Uptime RouterOS → detik. Ada DUA format yang beredar dan keduanya harus
+ * dikenali:
+ *   RouterOS 7 : "2w6d2h27m48s"
+ *   RouterOS 6 : "1w2d03:04:05"
+ * Parser lama hanya mengenal format kedua, sehingga perangkat RouterOS 7
+ * selalu melaporkan uptime 0 detik.
+ */
+export const uptimeSeconds = (value: string | undefined): number => {
   if (!value) return 0;
-  // Format RouterOS: 1w2d03:04:05
-  const match = /^(?:(\d+)w)?(?:(\d+)d)?(?:(\d+):(\d+):(\d+))?$/.exec(value.trim());
-  if (!match) return 0;
-  const [, w, d, h, m, s] = match;
-  return (
-    num(w) * 604800 + num(d) * 86400 + num(h) * 3600 + num(m) * 60 + num(s)
-  );
+  const text = value.trim();
+
+  const withClock = /^(?:(\d+)w)?(?:(\d+)d)?(?:(\d+):(\d+):(\d+))?$/.exec(text);
+  if (withClock && (withClock[1] || withClock[2] || withClock[3])) {
+    const [, w, d, h, m, s] = withClock;
+    return num(w) * 604800 + num(d) * 86400 + num(h) * 3600 + num(m) * 60 + num(s);
+  }
+
+  const withSuffix = /^(?:(\d+)w)?(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/.exec(text);
+  if (withSuffix && (withSuffix[1] || withSuffix[2] || withSuffix[3] || withSuffix[4] || withSuffix[5])) {
+    const [, w, d, h, m, s] = withSuffix;
+    return num(w) * 604800 + num(d) * 86400 + num(h) * 3600 + num(m) * 60 + num(s);
+  }
+
+  return 0;
 };
 
 export interface MikrotikTarget {
@@ -62,6 +79,14 @@ export interface MikrotikTarget {
 // (models/mikrotik-device.model.ts); nama lama dipertahankan agar pemanggil
 // yang sudah ada tidak berubah.
 export type MikrotikDeviceView = MikrotikDevice;
+
+
+/**
+ * Penanda objek yang dibuat panel, supaya operator bisa menemukan dan
+ * menghapusnya tanpa menebak. RouterOS 6.49 mendukung `comment` pada
+ * /ip/pool dan /ppp/profile, TIDAK pada /ip/hotspot/user/profile.
+ */
+export const OWNER_COMMENT = 'created by jawara-isp';
 
 @Injectable()
 export class MikrotikService {
@@ -887,6 +912,20 @@ export class MikrotikService {
     }));
   }
 
+  /**
+   * Log aktivitas perangkat (`/log/print`) — baca-saja.
+   *
+   * Difilter di sisi panel, bukan lewat query API: sintaks query RouterOS
+   * berbeda antar versi dan `?#` (regex) tidak konsisten di ROS 6. Satu perintah
+   * print lalu disaring lokal jauh lebih dapat diandalkan, dan isi log perangkat
+   * memang kecil (default 1000 baris).
+   */
+  async logs(query: { topics?: string; search?: string; limit?: number } = {}) {
+    const target = await this.target();
+    const records = await this.read('/log/print');
+    return { device_id: target.device_id, ...filterLogs(records, query) };
+  }
+
   async setInterfaceDisabled(name: string, dto: InterfaceUpdateDto, actor: { userId: number; ip: string }) {
     if (!name) throw new BadRequestException('Nama interface wajib diisi');
     await this.write(
@@ -924,13 +963,29 @@ export class MikrotikService {
     name: string;
     parentQueue?: string | null;
     poolName?: string | null;
+    /** Bila diisi, panel membuat IP pool ini di router sebelum profilnya. */
+    createPool?: { name: string; rangeStart: string; rangeEnd: string } | null;
+    /** Gateway sesi PPP (local-address). Wajib untuk PPP + group-pool. */
+    localAddress?: string | null;
     dnsPrimary?: string | null;
     dnsSecondary?: string | null;
     sharedUsers?: number | null;
   }): Promise<GroupProvisionResult> {
     const path = input.type === 'hotspot' ? '/ip/hotspot/user/profile' : '/ppp/profile';
     const attributes = this.groupProfileAttributes(input);
-    const command = [`${path}/add`, `name=${input.name}`, ...Object.entries(attributes).map(([k, v]) => `${k}=${v}`)].join(' ');
+
+    // Perintah manual harus mencerminkan URUTAN sebenarnya: pool dulu, baru
+    // profil — profil PPP yang menunjuk pool belum ada akan ditolak RouterOS.
+    const poolCommand = input.createPool
+      ? [
+          '/ip/pool/add',
+          `name=${input.createPool.name}`,
+          `ranges=${input.createPool.rangeStart}-${input.createPool.rangeEnd}`,
+          `comment=${OWNER_COMMENT}`,
+        ].join(' ')
+      : '';
+    const profileCommand = [`${path}/add`, `name=${input.name}`, ...Object.entries(attributes).map(([k, v]) => `${k}=${v}`)].join(' ');
+    const command = poolCommand ? `${poolCommand} ; ${profileCommand}` : profileCommand;
 
     const row = await this.devices.find(input.deviceId);
     if (!row) {
@@ -959,6 +1014,33 @@ export class MikrotikService {
     });
 
     try {
+      let poolNote = '';
+      if (input.createPool) {
+        const ranges = `${input.createPool.rangeStart}-${input.createPool.rangeEnd}`;
+        const found = (await client.execute([['/ip/pool/print', `?name=${input.createPool.name}`]])).records ?? [];
+        const poolId = found[0]?.['.id'];
+        if (poolId) {
+          // Pool yang sudah ada diubah rentangnya, bukan dibuat ulang — supaya
+          // sesi yang sedang berjalan tidak kehilangan acuan pool.
+          await client.execute([[
+            '/ip/pool/set',
+            `=.id=${poolId}`,
+            `=ranges=${ranges}`,
+            `=comment=${OWNER_COMMENT}`,
+          ]]);
+          poolNote = ` Pool "${input.createPool.name}" (${ranges}) diperbarui.`;
+        } else {
+          await client.execute([[
+            '/ip/pool/add',
+            `=name=${input.createPool.name}`,
+            `=ranges=${ranges}`,
+            `=comment=${OWNER_COMMENT}`,
+          ]]);
+          poolNote = ` Pool "${input.createPool.name}" (${ranges}) dibuat.`;
+        }
+        this.logger.log(`MikroTik ${row.name}: ${poolNote.trim()}`);
+      }
+
       const existing = (await client.execute([[`${path}/print`, `?name=${input.name}`]])).records ?? [];
       const id = existing[0]?.['.id'];
 
@@ -967,14 +1049,14 @@ export class MikrotikService {
         for (const [key, value] of Object.entries(attributes)) words.push(`=${key}=${value}`);
         await client.execute([words]);
         this.logger.log(`MikroTik ${row.name}: profil ${input.type} "${input.name}" diperbarui`);
-        return { ok: true, action: 'updated', device: row.name, message: `Profil "${input.name}" diperbarui di ${row.name}.`, command };
+        return { ok: true, action: 'updated', device: row.name, message: `Profil "${input.name}" diperbarui di ${row.name}.${poolNote}`, command };
       }
 
       const words = [`${path}/add`, `=name=${input.name}`];
       for (const [key, value] of Object.entries(attributes)) words.push(`=${key}=${value}`);
       await client.execute([words]);
       this.logger.log(`MikroTik ${row.name}: profil ${input.type} "${input.name}" dibuat`);
-      return { ok: true, action: 'created', device: row.name, message: `Profil "${input.name}" dibuat di ${row.name}.`, command };
+      return { ok: true, action: 'created', device: row.name, message: `Profil "${input.name}" dibuat di ${row.name}.${poolNote}`, command };
     } catch (error) {
       return {
         ok: false,
@@ -991,6 +1073,7 @@ export class MikrotikService {
     type: 'hotspot' | 'ppp';
     parentQueue?: string | null;
     poolName?: string | null;
+    localAddress?: string | null;
     dnsPrimary?: string | null;
     dnsSecondary?: string | null;
     sharedUsers?: number | null;
@@ -1019,6 +1102,13 @@ export class MikrotikService {
     }
     if (input.type === 'hotspot' && input.sharedUsers) {
       attributes['shared-users'] = String(input.sharedUsers);
+    }
+    if (input.type === 'ppp') {
+      const local = (input.localAddress ?? '').trim();
+      if (local) attributes['local-address'] = local;
+      // RouterOS 6.49 MENOLAK `comment` pada /ip/hotspot/user/profile, jadi
+      // penanda hanya dipasang di objek yang benar-benar mendukungnya.
+      attributes['comment'] = OWNER_COMMENT;
     }
     return attributes;
   }

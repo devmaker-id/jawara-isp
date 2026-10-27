@@ -27,6 +27,8 @@ export interface Invoice {
   id: number;
   invoice_number: string;
   customer_id: number;
+  /** Akun RADIUS yang ditagih; null untuk tagihan non-layanan. */
+  username: string | null;
   customer_name: string;
   amount: number;
   status: InvoiceStatus;
@@ -47,6 +49,7 @@ interface InvoiceRow extends RowDataPacket {
   id: number;
   invoice_number: string;
   customer_id: number;
+  username: string | null;
   customer_name: string;
   // DECIMAL(12,2): mysql2 mengembalikan string bila decimalNumbers tidak aktif.
   amount: number | string;
@@ -61,7 +64,7 @@ interface InvoiceRow extends RowDataPacket {
 // unpaid yang lewat jatuh tempo ditampilkan sebagai overdue.
 const STATUS_EXPR = `CASE WHEN status = 'unpaid' AND due_date < CURDATE() THEN 'overdue' ELSE status END AS status`;
 
-const COLUMNS = `id, invoice_number, customer_id, customer_name, amount, ${STATUS_EXPR},
+const COLUMNS = `id, invoice_number, customer_id, username, customer_name, amount, ${STATUS_EXPR},
   due_date, paid_date, description, created_at`;
 
 function toDateOnly(value: Date | string | null): string | null {
@@ -78,6 +81,7 @@ function toInvoice(row: InvoiceRow): Invoice {
     id: row.id,
     invoice_number: row.invoice_number,
     customer_id: row.customer_id,
+    username: row.username ?? null,
     customer_name: row.customer_name,
     amount: typeof row.amount === 'string' ? Number(row.amount) : row.amount,
     status: row.status as InvoiceStatus,
@@ -127,8 +131,8 @@ export class InvoicesRepository {
     }
 
     if (search) {
-      where.push('(invoice_number LIKE ? OR customer_name LIKE ?)');
-      params.push(`%${search}%`, `%${search}%`);
+      where.push('(invoice_number LIKE ? OR customer_name LIKE ? OR username LIKE ?)');
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
     if (query.status) {
       where.push('status = ?');
@@ -208,11 +212,12 @@ export class InvoicesRepository {
       const invoiceNumber = await this.nextInvoiceNumber(conn);
 
       const [result] = await conn.query<ResultSetHeader>(
-        `INSERT INTO invoices (invoice_number, customer_id, customer_name, amount, status, due_date, description)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO invoices (invoice_number, customer_id, username, customer_name, amount, status, due_date, description)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           invoiceNumber,
           dto.customer_id,
+          dto.username?.trim() || null,
           customerName,
           dto.amount,
           dto.status ?? InvoiceStatus.UNPAID,
@@ -250,6 +255,10 @@ export class InvoicesRepository {
       if (dto.customer_id !== undefined && dto.customer_id !== current.customer_id) {
         fields.push('customer_id = ?', 'customer_name = ?');
         params.push(dto.customer_id, await this.customerName(conn, dto.customer_id));
+      }
+      if (dto.username !== undefined) {
+        fields.push('username = ?');
+        params.push(dto.username?.trim() || null);
       }
       if (dto.amount !== undefined) {
         fields.push('amount = ?');

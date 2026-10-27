@@ -147,17 +147,6 @@ const Ppp: React.FC = () => {
       <PageHeader
         title="MikroTik — PPP"
         subtitle="Sesi PPPoE/PPTP/L2TP yang aktif, daftar secret, dan profil PPP di perangkat."
-        actions={
-          <Button
-            onClick={() => {
-              active.reload();
-              secrets.reload();
-              profiles.reload();
-            }}
-          >
-            Muat ulang
-          </Button>
-        }
       />
 
       <div className="mb-4 grid gap-3 sm:grid-cols-3">
@@ -395,7 +384,7 @@ const Ppp: React.FC = () => {
 
               <InfoNote>
                 Penambahan secret tidak otomatis membuat pelanggan di panel billing. Hubungkan manual lewat menu
-                Layanan agar pencatatan tetap konsisten.
+                Profile Group agar pencatatan tetap konsisten.
               </InfoNote>
             </div>
 

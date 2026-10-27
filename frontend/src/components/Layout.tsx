@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { NavLink, useLocation, Outlet } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from 'react';
+import { NavLink, Link, useLocation, Outlet } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { menuItems, MenuItemConfig } from '../config/menu';
+import UsageLookupDialog from './net/UsageLookupDialog';
 
 const MenuIcon: React.FC = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -48,19 +49,35 @@ const MenuItem: React.FC<{ item: MenuItemConfig; onNavigate: () => void }> = ({ 
   );
 };
 
-// Grup menu dengan sub-menu. Induk hanya membuka/menutup daftar anak, atau
-// berpindah ke halaman ringkasan bila judul induk diklik dua kali dari grup
-// yang sudah terbuka. Status buka mengikuti halaman aktif agar pengguna
-// selalu melihat di mana posisinya setelah refresh.
-const MenuGroup: React.FC<{ item: MenuItemConfig; onNavigate: () => void }> = ({ item, onNavigate }) => {
+// Grup menu dengan sub-menu. Status buka dititipkan ke Layout supaya berlaku
+// seperti accordion: membuka satu grup menutup grup lain. Induk hanya
+// membuka/menutup daftar anak, atau berpindah ke halaman ringkasan bila judul
+// induk diklik dua kali dari grup yang sudah terbuka.
+// Cocokkan path anak menu. Anak boleh memakai query string (mis.
+// /settings?tab=payment); tanpa query, halaman dianggap memakai pilihan
+// pertama penyedianya — untuk /settings itu "branding".
+const matchesMenuPath = (
+  path: string,
+  location: { pathname: string; search: string },
+): boolean => {
+  if (!path.includes('?')) return location.pathname === path;
+  const [base, query] = path.split('?');
+  if (location.pathname !== base) return false;
+  const search =
+    location.search.replace(/^\?/, '') || (base === '/settings' ? 'tab=branding' : '');
+  return search === query;
+};
+
+const MenuGroup: React.FC<{
+  item: MenuItemConfig;
+  onNavigate: () => void;
+  open: boolean;
+  onToggle: () => void;
+}> = ({ item, onNavigate, open, onToggle }) => {
   const location = useLocation();
   const children = item.children ?? [];
-  const isChildActive = children.some((child) => child.path === location.pathname);
-  const [open, setOpen] = useState(isChildActive);
 
-  useEffect(() => {
-    if (isChildActive) setOpen(true);
-  }, [isChildActive, location.pathname]);
+  const isChildActive = children.some((child) => matchesMenuPath(child.path, location));
 
   if (!item.available) {
     return (
@@ -78,7 +95,7 @@ const MenuGroup: React.FC<{ item: MenuItemConfig; onNavigate: () => void }> = ({
     <div>
       <button
         type="button"
-        onClick={() => setOpen((value) => !value)}
+        onClick={onToggle}
         aria-expanded={open}
         className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
           isChildActive
@@ -100,28 +117,37 @@ const MenuGroup: React.FC<{ item: MenuItemConfig; onNavigate: () => void }> = ({
         </svg>
       </button>
 
-      {open && (
-        <div className="mt-1 space-y-0.5 border-l border-slate-700/60 pl-3 ml-5">
-          {children.map((child) => {
-            const active = location.pathname === child.path;
-            return (
-              <NavLink
-                key={child.path}
-                to={child.path}
-                end
-                onClick={onNavigate}
-                className={`flex items-center rounded-lg px-3 py-2 text-sm transition ${
-                  active
-                    ? 'bg-cyan-500/10 text-cyan-300 font-medium'
-                    : 'text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'
-                }`}
-              >
-                <span className="truncate">{child.label}</span>
-              </NavLink>
-            );
-          })}
+      {/* Baris 0fr -> 1fr: tinggi sub-menu dianimasikan, jadi tutup/buka
+          terasa halus, bukan melompat. */}
+      <div
+        className={`grid transition-all duration-200 ease-out ${
+          open ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
+        }`}
+      >
+        <div className="overflow-hidden" aria-hidden={!open}>
+          <div className="mt-1 space-y-0.5 border-l border-slate-700/60 pl-3 ml-5">
+            {children.map((child) => {
+              const active = matchesMenuPath(child.path, location);
+              return (
+                <NavLink
+                  key={child.path}
+                  to={child.path}
+                  end
+                  onClick={onNavigate}
+                  tabIndex={open ? 0 : -1}
+                  className={`flex items-center rounded-lg px-3 py-2 text-sm transition ${
+                    active
+                      ? 'bg-cyan-500/10 text-cyan-300 font-medium'
+                      : 'text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'
+                  }`}
+                >
+                  <span className="truncate">{child.label}</span>
+                </NavLink>
+              );
+            })}
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 };
@@ -130,6 +156,13 @@ const MenuGroup: React.FC<{ item: MenuItemConfig; onNavigate: () => void }> = ({
 // bukan lewat prop `children` (prop itu tidak pernah dikirim router).
 const Layout: React.FC = () => {
   const [open, setOpen] = useState(false);
+  // Menu akun di navbar kanan: Lihat profil / Logout.
+  const [accountOpen, setAccountOpen] = useState(false);
+  // Accordion sidebar: hanya satu grup menu yang boleh terbuka.
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
+  // Dialog "Cek pemakaian user" — dipakai semua role, dari halaman mana pun.
+  const [usageOpen, setUsageOpen] = useState(false);
+  const accountRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
   const { user, logout } = useAuth();
 
@@ -138,13 +171,38 @@ const Layout: React.FC = () => {
     (item) => !item.roles || (user?.role && item.roles.includes(user.role as never)),
   );
 
+  // Grup yang memuat halaman aktif; grup inilah yang otomatis terbuka.
+  const activeGroup =
+    visibleMenu.find((item) =>
+      item.children?.some((child) => matchesMenuPath(child.path, location)),
+    )?.path ?? null;
+
+  useEffect(() => {
+    if (activeGroup) setOpenGroup(activeGroup);
+  }, [activeGroup]);
+
   useEffect(() => {
     setOpen(false);
+    setAccountOpen(false);
   }, [location.pathname]);
+
+  // Klik di luar menu akun menutup dropdown.
+  useEffect(() => {
+    const onPointerDown = (event: MouseEvent) => {
+      if (accountRef.current && !accountRef.current.contains(event.target as Node)) {
+        setAccountOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, []);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key === 'Escape') {
+        setOpen(false);
+        setAccountOpen(false);
+      }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
@@ -178,13 +236,69 @@ const Layout: React.FC = () => {
           </div>
         </div>
         <div className="flex items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => setUsageOpen(true)}
+            title="Cek pemakaian user"
+            aria-label="Cek pemakaian user"
+            className="flex items-center gap-2 rounded-lg border border-slate-700/60 px-2.5 py-2 text-sm text-slate-300 transition hover:border-slate-600 hover:bg-slate-700/40 hover:text-white"
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M11 18a7 7 0 100-14 7 7 0 000 14z" />
+            </svg>
+            <span className="hidden lg:inline">Cek pemakaian</span>
+          </button>
           {user && (
-            <div className="flex items-center gap-2.5 pl-2 border-l border-slate-700/50">
-              <div className="w-8 h-8 rounded-full bg-slate-600 flex items-center justify-center text-sm font-medium text-slate-200">
-                {user.name.charAt(0).toUpperCase()}
-              </div>
-              <span className="text-sm text-slate-300 hidden md:inline">{user.name}</span>
-              <span className="text-xs text-slate-400 hidden sm:inline">{user.role}</span>
+            <div className="relative" ref={accountRef}>
+              <button
+                type="button"
+                onClick={() => setAccountOpen((value) => !value)}
+                aria-haspopup="menu"
+                aria-expanded={accountOpen}
+                className="flex items-center gap-2.5 rounded-lg border-l border-slate-700/50 py-1.5 pl-3 pr-2 transition hover:bg-slate-700/40"
+              >
+                <div className="w-8 h-8 rounded-full bg-slate-600 flex items-center justify-center text-sm font-medium text-slate-200">
+                  {user.name.charAt(0).toUpperCase()}
+                </div>
+                <span className="text-sm text-slate-300 hidden md:inline">{user.name}</span>
+                <span className="text-xs text-slate-400 hidden sm:inline">{user.role}</span>
+                <svg
+                  className={`w-4 h-4 text-slate-400 transition-transform ${accountOpen ? 'rotate-180' : ''}`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 9l6 6 6-6" />
+                </svg>
+              </button>
+
+              {accountOpen && (
+                <div
+                  role="menu"
+                  aria-label="Menu akun"
+                  className="absolute right-0 z-50 mt-2 w-44 overflow-hidden rounded-lg border border-slate-700 bg-slate-800 py-1 shadow-xl"
+                >
+                  <Link
+                    to="/profile"
+                    role="menuitem"
+                    onClick={() => setAccountOpen(false)}
+                    className="block px-3 py-2 text-sm text-slate-300 transition hover:bg-slate-700/60"
+                  >
+                    Lihat profil
+                  </Link>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setAccountOpen(false);
+                      void logout();
+                    }}
+                    className="block w-full px-3 py-2 text-left text-sm text-rose-300 transition hover:bg-slate-700/60"
+                  >
+                    Logout
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -201,70 +315,72 @@ const Layout: React.FC = () => {
           {/* flex-1 + min-h-0: wajib, agar nav di dalamnya benar-benar scroll
               dan bukan mendorong footer keluar layar. */}
           <div className="flex flex-1 min-h-0 flex-col">
-            {/* Drawer header */}
-            <div className="flex items-center justify-between px-4 py-4 border-b border-slate-700/50">
-              <div className="flex items-center gap-2">
-                {user && (
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-full bg-slate-600 flex items-center justify-center text-sm font-medium text-slate-200">
-                      {user.name.charAt(0).toUpperCase()}
-                    </div>
-                    <span className="text-sm text-slate-300 hidden md:inline">{user.name}</span>
-                    <span className="text-xs text-slate-400 hidden sm:inline">{user.role}</span>
-                  </div>
-                )}
-                <button
-                  onClick={() => setOpen(false)}
-                  className="p-2 rounded-lg text-slate-400 hover:bg-slate-700/50 hover:text-white transition md:hidden"
-                  aria-label="Tutup menu"
-                >
-                  <CloseIcon />
-                </button>
-              </div>
+            {/* Drawer header: hanya tombol tutup (mobile). Akun & logout
+                sekarang ada di navbar kanan. */}
+            <div className="flex items-center justify-end border-b border-slate-700/50 px-4 py-3 md:hidden">
+              <button
+                onClick={() => setOpen(false)}
+                className="p-2 rounded-lg text-slate-400 hover:bg-slate-700/50 hover:text-white transition"
+                aria-label="Tutup menu"
+              >
+                <CloseIcon />
+              </button>
             </div>
 
             {/* Drawer nav */}
             <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
               {visibleMenu.map((item) =>
                 item.children && item.children.length > 0 ? (
-                  <MenuGroup key={item.path} item={item} onNavigate={() => setOpen(false)} />
+                  <MenuGroup
+                    key={item.path}
+                    item={item}
+                    onNavigate={() => setOpen(false)}
+                    open={openGroup === item.path}
+                    onToggle={() =>
+                      setOpenGroup((previous) => (previous === item.path ? null : item.path))
+                    }
+                  />
                 ) : (
                   <MenuItem key={item.path} item={item} onNavigate={() => setOpen(false)} />
                 ),
               )}
             </nav>
-
-            {/* Drawer footer */}
-            <div className="flex items-center gap-3 px-4 py-3 border-t border-slate-700/50">
-              <div className="w-9 h-9 rounded-full bg-slate-600 flex items-center justify-center text-sm font-medium text-slate-200">
-                {user?.name?.charAt(0).toUpperCase() || 'A'}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-slate-200 truncate">{user?.name}</p>
-                <p className="text-xs text-slate-500 truncate">{user?.role}</p>
-              </div>
-              <button
-                onClick={() => {
-                  logout();
-                  setOpen(false);
-                }}
-                className="p-2 rounded-lg text-slate-400 hover:bg-slate-700/50 hover:text-white transition"
-                title="Logout"
-                aria-label="Logout"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                </svg>
-              </button>
-            </div>
           </div>
         </aside>
 
-        {/* Konten utama: menggunakan layout bersama, tanpa margin kiri */}
-        <div className="page-container flex-1 overflow-y-auto">
+        {/* Konten utama: diberi jarak 5 px dari garis navbar. */}
+        <div className="page-container flex-1 overflow-y-auto pt-[5px]">
           <Outlet />
+
+          {/* Footer: kredit pembuat panel. Ikut tergulung bersama konten, jadi
+              tidak pernah menutupi tabel panjang di layar kecil. */}
+          <footer className="mt-8 border-t border-slate-700/50 py-4 text-center text-[11px] text-slate-500">
+            Created by{' '}
+            <a
+              href="https://github.com/devmaker-id/jawara-isp"
+              target="_blank"
+              rel="noreferrer"
+              className="font-medium text-slate-400 transition hover:text-cyan-300"
+            >
+              JAWARA-ISP
+            </a>
+            <span className="mx-1.5 text-slate-600">·</span>
+            <a
+              href="https://github.com/devmaker-id"
+              target="_blank"
+              rel="noreferrer"
+              className="transition hover:text-cyan-300"
+            >
+              devmaker
+            </a>
+            <span className="mx-1.5 text-slate-600">·</span>
+            {new Date().getFullYear()}
+          </footer>
         </div>
       </div>
+
+      {/* Dialog pencarian pemakaian: satu komponen untuk semua halaman. */}
+      <UsageLookupDialog open={usageOpen} onClose={() => setUsageOpen(false)} />
 
       {/* Backdrop mobile */}
       {open && (

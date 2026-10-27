@@ -63,33 +63,33 @@ export function ownerFilter(
 
   switch (kind) {
     case 'customers':
-      return { sql: 'reseller_id = ?', params: [ownerId] };
+      return { sql: 'owner_id = ?', params: [ownerId] };
     case 'invoices':
       return {
-        sql: 'customer_id IN (SELECT owner_c.id FROM customers owner_c WHERE owner_c.reseller_id = ?)',
+        sql: 'customer_id IN (SELECT owner_c.id FROM customers owner_c WHERE owner_c.owner_id = ?)',
         params: [ownerId],
       };
     case 'services':
       return {
-        sql: 's.customer_id IN (SELECT owner_c.id FROM customers owner_c WHERE owner_c.reseller_id = ?)',
+        sql: 's.customer_id IN (SELECT owner_c.id FROM customers owner_c WHERE owner_c.owner_id = ?)',
         params: [ownerId],
       };
     case 'payments':
       return {
-        sql: 'i.customer_id IN (SELECT owner_c.id FROM customers owner_c WHERE owner_c.reseller_id = ?)',
+        sql: 'i.customer_id IN (SELECT owner_c.id FROM customers owner_c WHERE owner_c.owner_id = ?)',
         params: [ownerId],
       };
   }
 }
 
-// Kolom customers.reseller_id belum ada (migrasi 003 belum dijalankan).
-// Query reseller akan gagal di database; pemanggil menerjemahkannya menjadi 503
-// yang jujur, bukan daftar kosong yang menyesatkan.
+// Kolom pemilik (customers.owner_id) belum ada — migrasi 003/020 belum
+// dijalankan. Query reseller akan gagal di database; pemanggil menerjemahkannya
+// menjadi 503 yang jujur, bukan daftar kosong yang menyesatkan.
 export function isMissingOwnerColumn(error: unknown): boolean {
   const candidate = error as { code?: string; message?: string };
   return (
     candidate?.code === 'ER_BAD_FIELD_ERROR' &&
-    /reseller_id/i.test(String(candidate?.message ?? ''))
+    /(owner_id|reseller_id)/i.test(String(candidate?.message ?? ''))
   );
 }
 

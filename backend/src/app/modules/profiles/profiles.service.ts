@@ -26,8 +26,11 @@ import {
   UpdateGroupProfileDto,
   UpdateServiceProfileDto,
 } from './dto/profiles.dto';
-import { finalPrice, toMikrotikCommands, toRadiusMapping } from './profile-mapping';
-import { unitToSeconds } from './rate-limit';
+import { finalPrice, toRadiusMapping } from './profile-mapping';
+import { BURST_FACTOR } from './rate-limit';
+import { buildVoucherPdf, VoucherCard } from './voucher-pdf';
+import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import { quotaToBytes, unitToSeconds } from './rate-limit';
 
 // role ikut dibawa karena kepemilikan data berbeda per peran: reseller hanya
 // melihat datanya sendiri, admin/operator melihat semua. Nilai role SELALU
@@ -44,6 +47,84 @@ function randomCode(length: number): string {
   return out;
 }
 
+/**
+ * Validasi sumber IP untuk sebuah grup.
+ *
+ * Empat mode, dan dua di antaranya terikat tipe:
+ *
+ *   group-pool   GROUP ONLY (Hotspot Only). RADIUS memakai profil hotspot
+ *                bawaan router, jadi tidak ada pool maupun profil yang
+ *                dibuat — rentang TIDAK wajib. Hanya untuk hotspot.
+ *   router-pool  Panel membuat /ip/pool per router + profil PPP. Wajib rentang
+ *                dan IP local gateway di luar rentang. Hanya untuk PPP.
+ *   mikrotik-pool  Menunjuk pool yang sudah ada di router.
+ *   sql-ippool     Alamat dari RADIUS; tidak ada pool di router.
+ */
+export function assertPoolSource(input: {
+  mode: string;
+  type: ProfileType;
+  poolName?: string | null;
+  localAddress?: string | null;
+  rangeStart?: string | null;
+  rangeEnd?: string | null;
+}) {
+  if (input.mode === 'group-pool' && input.type !== 'hotspot') {
+    throw new BadRequestException(
+      'Mode GROUP ONLY (Hotspot Only) hanya untuk grup bertipe hotspot.',
+    );
+  }
+  if (input.mode === 'router-pool' && input.type !== 'ppp') {
+    throw new BadRequestException('Mode IP pool MikroTik (per router) hanya untuk grup bertipe PPP.');
+  }
+
+  // GROUP ONLY tidak membuat apa pun di router: tidak ada pool, tidak ada
+  // profil hotspot. Rentang yang terlanjur diisi diabaikan, bukan ditolak.
+  if (input.mode === 'group-pool') return;
+
+  if (input.mode === 'mikrotik-pool' && !input.poolName) {
+    throw new BadRequestException(
+      'Mode pool mikrotik-pool wajib menyebutkan nama IP pool di router.',
+    );
+  }
+
+  if (input.mode !== 'router-pool') return;
+
+  const start = (input.rangeStart ?? '').trim();
+  const end = (input.rangeEnd ?? '').trim();
+  if (!start || !end) {
+    throw new BadRequestException('Mode router-pool wajib mengisi IP awal dan IP akhir.');
+  }
+
+  const startInt = ipToInt(start);
+  const endInt = ipToInt(end);
+  if (startInt === null || endInt === null) {
+    throw new BadRequestException('IP awal/akhir pool harus alamat IPv4 yang valid.');
+  }
+  if (startInt > endInt) {
+    throw new BadRequestException('IP awal pool harus lebih kecil atau sama dengan IP akhir.');
+  }
+  if (endInt - startInt > 65_534) {
+    throw new BadRequestException('Rentang pool terlalu besar (maksimum 65.535 alamat).');
+  }
+
+  const local = (input.localAddress ?? '').trim();
+  if (!local) {
+    throw new BadRequestException(
+      'Grup PPP wajib mengisi IP local (gateway sesi), dan alamat itu tidak boleh masuk ke pool.',
+    );
+  }
+  const localInt = ipToInt(local);
+  if (localInt === null) {
+    throw new BadRequestException('IP local harus alamat IPv4 yang valid.');
+  }
+  if (localInt >= startInt && localInt <= endInt) {
+    throw new BadRequestException(
+      `IP local ${local} berada di dalam rentang pool ${start}-${end}. ` +
+        'Gateway sesi harus di luar rentang agar tidak dibagikan ke pelanggan.',
+    );
+  }
+}
+
 @Injectable()
 export class ProfilesService {
   private readonly logger = new Logger(ProfilesService.name);
@@ -55,6 +136,7 @@ export class ProfilesService {
     private readonly vouchers: VoucherRepository,
     private readonly db: DatabaseService,
     private readonly mikrotik: MikrotikService,
+    private readonly whatsapp: WhatsAppService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -63,6 +145,34 @@ export class ProfilesService {
   // Reseller dibatasi ke datanya sendiri; admin/operator tanpa filter.
   private ownerScope(actor: Actor): number | undefined {
     return isResellerRole(actor.role) ? actor.userId : undefined;
+  }
+
+  /**
+   * Pemilik yang akan disimpan untuk data baru.
+   *
+   *   admin    → boleh menunjuk akun lain (dropdown di form)
+   *   lainnya  → selalu dirinya sendiri; nilai dari body diabaikan
+   *
+   * Dipakai juga untuk memeriksa keunikan nama: nama profil unik per pemilik,
+   * bukan global, supaya reseller A dan B boleh sama-sama punya "RUMAHAN".
+   */
+  private async resolveOwner(actor: Actor, requested?: number | null): Promise<number> {
+    if (actor.role !== 'admin') return actor.userId;
+    if (requested === undefined || requested === null) return actor.userId;
+    if (!Number.isInteger(requested) || requested <= 0) {
+      throw new BadRequestException('owner_id tidak valid.');
+    }
+    const rows = await this.db.query<{ id: number; is_active: number }>(
+      'SELECT id, is_active FROM users WHERE id = ?',
+      [requested],
+    );
+    if (rows.length === 0) {
+      throw new BadRequestException(`Akun pemilik #${requested} tidak ditemukan.`);
+    }
+    if (Number(rows[0].is_active) !== 1) {
+      throw new BadRequestException(`Akun pemilik #${requested} tidak aktif.`);
+    }
+    return requested;
   }
 
   // Pemilik NULL berarti data tanpa pemilik (mis. akun pembuatnya dihapus):
@@ -85,16 +195,23 @@ export class ProfilesService {
   }
 
   async createBandwidth(actor: Actor, dto: CreateBandwidthDto) {
-    await this.assertBandwidthNameFree(actor.userId, dto.name);
+    const ownerId = await this.resolveOwner(actor, dto.owner_id);
+    await this.assertBandwidthNameFree(ownerId, dto.name);
     this.assertBandwidthValues({
       min_upload_kbps: dto.min_upload_kbps ?? 0,
       min_download_kbps: dto.min_download_kbps ?? 0,
       max_upload_kbps: dto.max_upload_kbps,
       max_download_kbps: dto.max_download_kbps,
+      burst_enabled: dto.burst_enabled === true,
+      burst_upload_kbps: dto.burst_upload_kbps ?? null,
+      burst_download_kbps: dto.burst_download_kbps ?? null,
+      burst_threshold_upload_kbps: dto.burst_threshold_upload_kbps ?? null,
+      burst_threshold_download_kbps: dto.burst_threshold_download_kbps ?? null,
     });
 
     const id = await this.bandwidths.create({
-      owner_id: actor.userId,
+      owner_id: ownerId,
+      created_by: actor.userId,
       name: dto.name.trim(),
       min_upload_kbps: dto.min_upload_kbps ?? 0,
       min_download_kbps: dto.min_download_kbps ?? 0,
@@ -106,7 +223,9 @@ export class ProfilesService {
       burst_threshold_upload_kbps: dto.burst_enabled ? (dto.burst_threshold_upload_kbps ?? null) : null,
       burst_threshold_download_kbps: dto.burst_enabled ? (dto.burst_threshold_download_kbps ?? null) : null,
       burst_time_sec: dto.burst_enabled ? (dto.burst_time_sec ?? null) : null,
-      priority: dto.priority ?? 1,
+      // 8 = prioritas paling rendah (RouterOS: 1 tertinggi). Pelanggan biasa
+      // tidak boleh otomatis mendapat prioritas tertinggi.
+      priority: dto.priority ?? 8,
     });
     await this.audit(actor, 'bandwidth.create', { id, name: dto.name });
     return this.bandwidths.findById(id);
@@ -123,7 +242,38 @@ export class ProfilesService {
       max_upload_kbps: dto.max_upload_kbps ?? Number(current.max_upload_kbps),
       max_download_kbps: dto.max_download_kbps ?? Number(current.max_download_kbps),
     };
-    this.assertBandwidthValues(merged);
+    // Burst ikut divalidasi memakai nilai gabungan: patch parsial (mis. hanya
+    // max dinaikkan) tidak boleh diam-diam menyisakan burst yang jadi lebih kecil.
+    const burstEnabled =
+      dto.burst_enabled !== undefined ? dto.burst_enabled : Number(current.burst_enabled) === 1;
+    this.assertBandwidthValues({
+      ...merged,
+      burst_enabled: burstEnabled,
+      burst_upload_kbps:
+        dto.burst_upload_kbps !== undefined
+          ? dto.burst_upload_kbps
+          : current.burst_upload_kbps === null
+            ? null
+            : Number(current.burst_upload_kbps),
+      burst_download_kbps:
+        dto.burst_download_kbps !== undefined
+          ? dto.burst_download_kbps
+          : current.burst_download_kbps === null
+            ? null
+            : Number(current.burst_download_kbps),
+      burst_threshold_upload_kbps:
+        dto.burst_threshold_upload_kbps !== undefined
+          ? dto.burst_threshold_upload_kbps
+          : current.burst_threshold_upload_kbps === null
+            ? null
+            : Number(current.burst_threshold_upload_kbps),
+      burst_threshold_download_kbps:
+        dto.burst_threshold_download_kbps !== undefined
+          ? dto.burst_threshold_download_kbps
+          : current.burst_threshold_download_kbps === null
+            ? null
+            : Number(current.burst_threshold_download_kbps),
+    });
 
     const data: Record<string, unknown> = {
       name: dto.name?.trim() ?? current.name,
@@ -183,6 +333,11 @@ export class ProfilesService {
     min_download_kbps: number;
     max_upload_kbps: number;
     max_download_kbps: number;
+    burst_enabled?: boolean;
+    burst_upload_kbps?: number | null;
+    burst_download_kbps?: number | null;
+    burst_threshold_upload_kbps?: number | null;
+    burst_threshold_download_kbps?: number | null;
   }) {
     if (v.max_upload_kbps < 1 || v.max_download_kbps < 1) {
       throw new BadRequestException('Max upload dan max download wajib lebih dari 0.');
@@ -192,6 +347,36 @@ export class ProfilesService {
     }
     if (v.min_download_kbps > v.max_download_kbps) {
       throw new BadRequestException('Min download tidak boleh melebihi max download.');
+    }
+
+    // RouterOS menolak burst yang lebih kecil dari max
+    // ("download-burst-limit less than download-max-limit"), dan login pelanggan
+    // ikut gagal. Tolak di sini supaya operator tahu sebelum tersimpan.
+    if (!v.burst_enabled) return;
+
+    const pairs: Array<[string, number | null | undefined, number, number | null | undefined]> = [
+      ['Burst upload', v.burst_upload_kbps, v.max_upload_kbps, v.burst_threshold_upload_kbps],
+      ['Burst download', v.burst_download_kbps, v.max_download_kbps, v.burst_threshold_download_kbps],
+    ];
+    for (const [label, burst, max, threshold] of pairs) {
+      if (burst !== null && burst !== undefined && burst > 0 && burst < max) {
+        throw new BadRequestException(
+          `${label} (${burst} kbps) tidak boleh lebih kecil dari max (${max} kbps). ` +
+            'RouterOS akan menolak queue dan pelanggan gagal login.',
+        );
+      }
+      // Batas atas: burst hanya boleh naik sampai 2x max.
+      if (burst !== null && burst !== undefined && burst > max * BURST_FACTOR) {
+        throw new BadRequestException(
+          `${label} (${burst} kbps) melebihi batas ${BURST_FACTOR}x max (${max * BURST_FACTOR} kbps). ` +
+            'Burst maksimal 2x dari max-limit.',
+        );
+      }
+      if (burst && threshold !== null && threshold !== undefined && threshold > burst) {
+        throw new BadRequestException(
+          `Threshold ${label.toLowerCase()} (${threshold} kbps) tidak boleh melebihi burst (${burst} kbps).`,
+        );
+      }
     }
   }
 
@@ -211,17 +396,41 @@ export class ProfilesService {
   }
 
   async createGroup(actor: Actor, dto: CreateGroupProfileDto) {
-    await this.assertGroupNameFree(actor.userId, dto.type, dto.name);
+    const ownerId = await this.resolveOwner(actor, dto.owner_id);
+    await this.assertGroupNameFree(ownerId, dto.type, dto.name);
     await this.assertRouterExists(dto.router_id);
-    this.assertPool(dto.pool_mode ?? 'mikrotik-pool', dto.mikrotik_pool_name);
+    const poolMode = dto.pool_mode ?? 'mikrotik-pool';
+    this.assertPool({
+      mode: poolMode,
+      type: dto.type,
+      poolName: dto.mikrotik_pool_name,
+      localAddress: dto.pool_local_address,
+      rangeStart: dto.pool_range_start,
+      rangeEnd: dto.pool_range_end,
+    });
+
+    // Nama pool yang dibuat panel: deterministik dari nama grup, sehingga
+    // penghapusan tahu persis objek mana yang miliknya. GROUP ONLY tidak punya
+    // pool sama sekali.
+    const poolName =
+      poolMode === 'router-pool'
+        ? poolNameFor(dto.name.trim())
+        : poolMode === 'group-pool'
+          ? null
+          : (dto.mikrotik_pool_name ?? null);
 
     const id = await this.groups.create({
-      owner_id: actor.userId,
+      owner_id: ownerId,
+      created_by: actor.userId,
       router_id: dto.router_id,
       name: dto.name.trim(),
       type: dto.type,
-      pool_mode: dto.pool_mode ?? 'mikrotik-pool',
-      mikrotik_pool_name: dto.mikrotik_pool_name ?? null,
+      pool_mode: poolMode,
+      mikrotik_pool_name: poolName,
+      pool_local_address: poolMode === 'router-pool' ? (dto.pool_local_address ?? null) : null,
+      pool_range_start: poolMode === 'router-pool' ? (dto.pool_range_start ?? null) : null,
+      pool_range_end: poolMode === 'router-pool' ? (dto.pool_range_end ?? null) : null,
+      pool_created: 0,
       dns_primary: dto.dns_primary ?? null,
       dns_secondary: dto.dns_secondary ?? null,
       parent_queue: dto.parent_queue ?? null,
@@ -236,7 +445,11 @@ export class ProfilesService {
       type: dto.type,
       name: dto.name.trim(),
       parentQueue: dto.parent_queue ?? null,
-      poolName: dto.pool_mode === 'mikrotik-pool' ? (dto.mikrotik_pool_name ?? null) : null,
+      poolName: poolName,
+      poolMode: poolMode,
+      poolLocalAddress: dto.pool_local_address ?? null,
+      poolRangeStart: dto.pool_range_start ?? null,
+      poolRangeEnd: dto.pool_range_end ?? null,
       dnsPrimary: dto.dns_primary ?? null,
       dnsSecondary: dto.dns_secondary ?? null,
       useRouterDefault: Boolean(dto.use_router_default),
@@ -262,6 +475,10 @@ export class ProfilesService {
     name: string;
     parentQueue: string | null;
     poolName: string | null;
+    poolMode: string;
+    poolLocalAddress: string | null;
+    poolRangeStart: string | null;
+    poolRangeEnd: string | null;
     dnsPrimary: string | null;
     dnsSecondary: string | null;
     useRouterDefault: boolean;
@@ -275,12 +492,36 @@ export class ProfilesService {
         command: '',
       };
     }
+    // GROUP ONLY (Hotspot Only): RADIUS memakai profil hotspot bawaan router,
+    // jadi tidak ada IP pool maupun profil user hotspot yang ditulis.
+    if (input.poolMode === 'group-pool') {
+      return {
+        ok: true,
+        action: 'skipped' as const,
+        device: `#${input.deviceId}`,
+        message:
+          'Mode GROUP ONLY: tidak ada IP pool atau profil hotspot yang ditulis. ' +
+          'RADIUS memakai profil hotspot bawaan router.',
+        command: '',
+      };
+    }
     return this.mikrotik.provisionGroupProfile({
       deviceId: input.deviceId,
       type: input.type,
       name: input.name,
       parentQueue: input.parentQueue,
       poolName: input.poolName,
+      // Pool hanya dibuat panel pada mode router-pool (PPP); mode lain memakai
+      // pool yang sudah ada di router.
+      createPool:
+        input.poolMode === 'router-pool'
+          ? {
+              name: input.poolName as string,
+              rangeStart: input.poolRangeStart as string,
+              rangeEnd: input.poolRangeEnd as string,
+            }
+          : null,
+      localAddress: input.type === 'ppp' ? input.poolLocalAddress : null,
       dnsPrimary: input.dnsPrimary,
       dnsSecondary: input.dnsSecondary,
       sharedUsers: null,
@@ -297,8 +538,21 @@ export class ProfilesService {
     if (dto.router_id !== undefined) await this.assertRouterExists(dto.router_id);
 
     const poolMode = dto.pool_mode ?? current.pool_mode;
-    const poolName = dto.mikrotik_pool_name ?? current.mikrotik_pool_name;
-    this.assertPool(poolMode, poolName);
+    // Pada mode router-pool nama pool mengikuti nama grup, bukan input bebas.
+    const poolName =
+      poolMode === 'router-pool'
+        ? poolNameFor(name)
+        : poolMode === 'group-pool'
+          ? null
+          : (dto.mikrotik_pool_name ?? current.mikrotik_pool_name);
+    this.assertPool({
+      mode: poolMode,
+      type,
+      poolName,
+      localAddress: dto.pool_local_address ?? current.pool_local_address,
+      rangeStart: dto.pool_range_start ?? current.pool_range_start,
+      rangeEnd: dto.pool_range_end ?? current.pool_range_end,
+    });
 
     // Tipe grup tidak boleh diubah bila sudah dipakai profil: profil hotspot
     // tidak bisa menempel ke grup PPP.
@@ -316,7 +570,15 @@ export class ProfilesService {
       type,
       router_id: dto.router_id ?? current.router_id,
       pool_mode: poolMode,
-      mikrotik_pool_name: poolMode === 'mikrotik-pool' ? poolName : null,
+      mikrotik_pool_name: poolMode === 'sql-ippool' ? null : poolName,
+      pool_local_address:
+        poolMode === 'router-pool'
+          ? (dto.pool_local_address ?? current.pool_local_address)
+          : null,
+      pool_range_start:
+        poolMode === 'router-pool' ? (dto.pool_range_start ?? current.pool_range_start) : null,
+      pool_range_end:
+        poolMode === 'router-pool' ? (dto.pool_range_end ?? current.pool_range_end) : null,
       dns_primary: dto.dns_primary ?? current.dns_primary,
       dns_secondary: dto.dns_secondary ?? current.dns_secondary,
       parent_queue: dto.parent_queue ?? current.parent_queue,
@@ -339,8 +601,11 @@ export class ProfilesService {
       type: type,
       name: name,
       parentQueue: (data.parent_queue as string | null) ?? null,
-      poolName:
-        data.pool_mode === 'mikrotik-pool' ? ((data.mikrotik_pool_name as string | null) ?? null) : null,
+      poolName: (data.mikrotik_pool_name as string | null) ?? null,
+      poolMode: String(data.pool_mode),
+      poolLocalAddress: (data.pool_local_address as string | null) ?? null,
+      poolRangeStart: (data.pool_range_start as string | null) ?? null,
+      poolRangeEnd: (data.pool_range_end as string | null) ?? null,
       dnsPrimary: (data.dns_primary as string | null) ?? null,
       dnsSecondary: (data.dns_secondary as string | null) ?? null,
       useRouterDefault: Number(data.use_router_default) === 1,
@@ -393,12 +658,8 @@ export class ProfilesService {
     }
   }
 
-  private assertPool(mode: string, poolName: string | null | undefined) {
-    if (mode === 'mikrotik-pool' && !poolName) {
-      throw new BadRequestException(
-        'Mode pool mikrotik-pool wajib menyebutkan nama IP pool di router.',
-      );
-    }
+  private assertPool(input: Parameters<typeof assertPoolSource>[0]) {
+    assertPoolSource(input);
   }
 
   // -------------------------------------------------------------------------
@@ -417,13 +678,15 @@ export class ProfilesService {
   }
 
   async createProfile(actor: Actor, type: ProfileType, dto: CreateServiceProfileDto) {
-    await this.assertProfileNameFree(actor.userId, type, dto.name);
+    const ownerId = await this.resolveOwner(actor, dto.owner_id);
+    await this.assertProfileNameFree(ownerId, type, dto.name);
     const group = await this.resolveGroup(actor, type, dto.group_profile_id);
     await this.getBandwidth(actor, dto.bandwidth_id);
     const normalized = this.normalizeProfile(type, dto, group);
 
     const id = await this.profiles.create(type, {
-      owner_id: actor.userId,
+      owner_id: ownerId,
+      created_by: actor.userId,
       group_profile_id: dto.group_profile_id,
       bandwidth_id: dto.bandwidth_id,
       name: dto.name.trim(),
@@ -475,6 +738,19 @@ export class ProfilesService {
       login_start: dto.login_start ?? current.login_start,
       login_end: dto.login_end ?? current.login_end,
       is_active: dto.is_active ?? Number(current.is_active) === 1,
+      // Limitasi grup PPP: ikut digabung agar patch parsial tidak menghapusnya.
+      time_limit_value:
+        dto.time_limit_value ??
+        (Number(current.time_limit_seconds ?? 0) > 0
+          ? Math.round(Number(current.time_limit_seconds) / 3600)
+          : null),
+      time_limit_unit: dto.time_limit_unit ?? 'hour',
+      quota_limit_value:
+        dto.quota_limit_value ??
+        (Number(current.quota_limit_bytes ?? 0) > 0
+          ? Math.round(Number(current.quota_limit_bytes) / 1_000_000_000)
+          : null),
+      quota_limit_unit: dto.quota_limit_unit ?? 'GB',
     };
 
     const normalized = this.normalizeProfile(type, merged, group);
@@ -536,13 +812,16 @@ export class ProfilesService {
     dto: CreateServiceProfileDto,
     group: GroupProfileRow,
   ): Record<string, unknown> {
-    const cost = Number(dto.cost_price);
-    const sell = Number(dto.sell_price);
+    // Harga kosong = gratis (0). Profil gratisan harus bisa disimpan tanpa
+    // memaksa operator mengetik angka apa pun.
+    const cost = Number(dto.cost_price ?? 0);
+    const sell = Number(dto.sell_price ?? 0);
     const promo = Number(dto.promo_price ?? 0);
     const tax = Number(dto.tax_percent ?? 0);
 
-    if (cost < 0) throw new BadRequestException('Harga modal tidak boleh negatif.');
-    if (sell <= 0) throw new BadRequestException('Harga jual wajib lebih dari 0.');
+    if (!Number.isFinite(cost) || cost < 0) throw new BadRequestException('Harga modal tidak boleh negatif.');
+    if (!Number.isFinite(sell) || sell < 0) throw new BadRequestException('Harga jual tidak boleh negatif.');
+    if (!Number.isFinite(promo)) throw new BadRequestException('Harga promo tidak valid.');
     if (promo < 0) throw new BadRequestException('Harga promo tidak boleh negatif.');
     if (promo > sell) throw new BadRequestException('Harga promo tidak boleh melebihi harga jual.');
     if (tax < 0 || tax > 100) throw new BadRequestException('PPN harus antara 0 dan 100%.');
@@ -573,7 +852,17 @@ export class ProfilesService {
           'Shared user lebih dari 1 tidak diizinkan saat Group Profile memakai SQL-IP-POOL.',
         );
       }
-      return base;
+
+      // Limitasi GRUP untuk PPP: disimpan dalam satuan pasti (detik/byte) agar
+      // radgroupreply tidak bergantung pada satuan yang dipilih operator.
+      const timeValue = Number(dto.time_limit_value ?? 0);
+      const quotaValue = Number(dto.quota_limit_value ?? 0);
+      return {
+        ...base,
+        time_limit_seconds:
+          timeValue > 0 ? unitToSeconds(timeValue, dto.time_limit_unit ?? 'hour') : null,
+        quota_limit_bytes: quotaValue > 0 ? quotaToBytes(quotaValue, dto.quota_limit_unit ?? 'GB') : null,
+      };
     }
 
     const quotaType = dto.quota_type ?? 'unlimited';
@@ -693,7 +982,13 @@ export class ProfilesService {
     return groupName;
   }
 
-  /** Pratinjau: atribut RADIUS + perintah MikroTik untuk satu profil. */
+  /**
+   * Pratinjau atribut RADIUS untuk satu profil.
+   *
+   * Profil hotspot/PPP TIDAK menulis apa pun ke MikroTik: yang disimpan di sini
+   * hanyalah penetapan grup, bandwidth, dan limitasi — seluruhnya atribut AAA.
+   * Profil lokal di router hanya dibuat sekali oleh Group Profile.
+   */
   async preview(actor: Actor, type: ProfileType, id: number) {
     const profile = await this.getProfile(actor, type, id);
     const group = await this.groups.findById(Number(profile.group_profile_id));
@@ -704,7 +999,25 @@ export class ProfilesService {
       profile: { id: profile.id, name: profile.name, type },
       groupname: profile.name,
       radius: toRadiusMapping(profile, group, bandwidth),
-      mikrotik: toMikrotikCommands(profile, group, bandwidth),
+      writes_to_router: false,
+      group: {
+        id: group.id,
+        name: group.name,
+        type: group.type,
+        router_id: group.router_id,
+        pool_mode: group.pool_mode,
+        pool_name: group.mikrotik_pool_name,
+        pool_range:
+          group.pool_range_start && group.pool_range_end
+            ? `${group.pool_range_start}-${group.pool_range_end}`
+            : null,
+        parent_queue: group.parent_queue,
+        dns: [group.dns_primary, group.dns_secondary].filter(Boolean).join(','),
+        // GROUP ONLY tidak membuat profil lokal, jadi tidak ada nama profil
+        // yang bisa ditunjuk Mikrotik-Group.
+        local_profile:
+          group.use_router_default === 1 || group.pool_mode === 'group-pool' ? null : group.name,
+      },
       price: finalPrice(profile),
       validity_seconds:
         Number(profile.validity_value) > 0
@@ -716,22 +1029,31 @@ export class ProfilesService {
   // -------------------------------------------------------------------------
   // Voucher
   // -------------------------------------------------------------------------
-  listVouchers(filters: {
-    profileType?: string;
-    profileId?: number;
-    status?: string;
-    userType?: string;
-    search?: string;
-    createdBy?: number;
-    dateFrom?: string;
-    dateTo?: string;
-    limit?: number;
-  }) {
-    return this.vouchers.list(filters);
+  /**
+   * Daftar voucher. Reseller dipaksa melihat voucher miliknya saja — dipaksa
+   * di server, bukan disaring di UI, supaya tidak bisa dilewati lewat query.
+   */
+  listVouchers(
+    actor: Actor,
+    filters: {
+      profileType?: string;
+      profileId?: number;
+      status?: string;
+      userType?: string;
+      search?: string;
+      createdBy?: number;
+      ownerId?: number;
+      dateFrom?: string;
+      dateTo?: string;
+      limit?: number;
+    },
+  ) {
+    const scoped = isResellerRole(actor.role) ? { ...filters, ownerId: actor.userId } : filters;
+    return this.vouchers.list(scoped);
   }
 
-  async voucherCounts() {
-    return this.vouchers.counts();
+  voucherCounts(actor: Actor) {
+    return this.vouchers.counts(isResellerRole(actor.role) ? actor.userId : undefined);
   }
 
   async generateVouchers(actor: Actor, dto: GenerateVoucherDto) {
@@ -806,6 +1128,9 @@ export class ProfilesService {
         price: price.base,
         tax_amount: price.tax,
         created_by: actor.userId,
+        // Voucher mewarisi pemilik PROFIL-nya: reseller harus bisa mencetak
+        // voucher dari profilnya sendiri walau yang mencetak operator.
+        owner_id: profile.owner_id ?? null,
       });
     }
 
@@ -936,16 +1261,146 @@ export class ProfilesService {
     return this.vouchers.findById(id);
   }
 
+  /**
+   * Ambil voucher berdasarkan id, TERBATAS pada cakupan akun.
+   *
+   * Semua aksi massal (ubah status, hapus, cetak, ekspor, kirim WhatsApp)
+   * lewat sini supaya reseller tidak bisa menyentuh voucher milik akun lain
+   * hanya dengan menebak id.
+   */
+  private async vouchersForAction(actor: Actor, ids: number[]) {
+    const unique = [...new Set(ids.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
+    if (unique.length === 0) {
+      throw new BadRequestException('Tidak ada voucher yang dipilih.');
+    }
+    const rows = await this.vouchers.list({
+      limit: 500,
+      ownerId: isResellerRole(actor.role) ? actor.userId : undefined,
+    });
+    const picked = rows.filter((row) => unique.includes(row.id));
+    if (picked.length === 0) {
+      throw new NotFoundException('Voucher yang dipilih tidak ditemukan pada akun Anda.');
+    }
+    return picked;
+  }
+
   async removeVouchers(actor: Actor, ids: number[]) {
+    const picked = await this.vouchersForAction(actor, ids);
     // Cabut dulu akun RADIUS-nya supaya tidak ada user "hantu" yang masih bisa
     // login padahal barisnya sudah dihapus dari panel.
-    const targets = await this.vouchers.list({ limit: 500 });
-    for (const row of targets.filter((item) => ids.includes(item.id))) {
+    for (const row of picked) {
       await this.removeRadiusAccount(row.username);
     }
-    const removed = await this.vouchers.removeByIds(ids);
-    await this.audit(actor, 'voucher.delete', { ids, removed });
+    const removed = await this.vouchers.removeByIds(picked.map((row) => row.id));
+    await this.audit(actor, 'voucher.delete', { ids: picked.map((row) => row.id), removed });
     return { removed };
+  }
+
+  /** Ubah status banyak voucher sekaligus (aktifkan / tandai kedaluwarsa). */
+  async bulkVoucherStatus(actor: Actor, ids: number[], status: string) {
+    const picked = await this.vouchersForAction(actor, ids);
+    let changed = 0;
+    for (const row of picked) {
+      await this.setVoucherStatus(actor, row.id, status);
+      changed += 1;
+    }
+    return { changed, status };
+  }
+
+  /** Baris voucher untuk ekspor CSV/PDF & pengiriman WhatsApp. */
+  async voucherRowsForExport(actor: Actor, ids?: number[]) {
+    if (ids && ids.length > 0) return this.vouchersForAction(actor, ids);
+    return this.vouchers.list({
+      limit: 500,
+      ownerId: isResellerRole(actor.role) ? actor.userId : undefined,
+    });
+  }
+
+  /** Kartu voucher untuk PDF: satu kartu per akun. */
+  static toCards(rows: Array<{ profile_name: string; username: string; password: string; user_type: string; status: string }>): VoucherCard[] {
+    return rows.map((row) => ({
+      profile: row.profile_name,
+      username: row.username,
+      password: row.password,
+      meta: `${row.user_type === 'member' ? 'member' : 'voucher'} · ${row.status}`,
+    }));
+  }
+
+  buildVoucherPdf(cards: VoucherCard[]): Buffer {
+    return buildVoucherPdf(cards);
+  }
+
+  /**
+   * Kirim voucher terpilih ke WhatsApp.
+   *
+   * Nomor diambil dari: parameter `phone` bila diisi, kalau tidak dari nomor
+   * pelanggan akun member. Voucher lepas tanpa nomor akan dilewati dan
+   * dilaporkan — tidak dikirim ke nomor tebakan.
+   */
+  async sendVouchersWhatsApp(actor: Actor, ids: number[], phone?: string) {
+    const picked = await this.vouchersForAction(actor, ids);
+    if (picked.length > 50) {
+      throw new BadRequestException(
+        `Maksimal 50 voucher sekali kirim (dipilih ${picked.length}). Persempit pilihan.`,
+      );
+    }
+
+    // Nomor pelanggan untuk akun member, supaya satu pelanggan satu pesan.
+    const customers = await this.db.query<{ id: number; phone: string | null; name: string }>(
+      'SELECT id, phone, name FROM customers WHERE id IN (?)',
+      [picked.map((row) => row.customer_id).filter((id): id is number => Boolean(id)).concat([0])],
+    );
+    const phoneByCustomer = new Map(customers.map((row) => [Number(row.id), row.phone ?? '']));
+
+    const sent: string[] = [];
+    const skipped: string[] = [];
+    let pdfAttached = false;
+    let note: string | undefined;
+
+    for (const row of picked) {
+      const target =
+        (phone ?? '').trim() ||
+        (row.customer_id ? phoneByCustomer.get(Number(row.customer_id)) ?? '' : '');
+      if (!target) {
+        skipped.push(row.username);
+        continue;
+      }
+
+      const caption =
+        `Voucher ${row.profile_name}\n` +
+        `Username: ${row.username}\n` +
+        `Password: ${row.password}\n` +
+        `Berlaku: mulai login pertama.`;
+
+      const result = await this.whatsapp.sendDocument({
+        phone: target,
+        caption,
+        filename: `voucher-${row.username}.pdf`,
+        pdf: buildVoucherPdf(ProfilesService.toCards([row])),
+      });
+      pdfAttached = result.pdf_attached;
+      note = result.note;
+      sent.push(row.username);
+    }
+
+    await this.audit(actor, 'voucher.send_whatsapp', {
+      ids: picked.map((row) => row.id),
+      sent: sent.length,
+      skipped: skipped.length,
+    });
+
+    return {
+      sent: sent.length,
+      skipped: skipped.length,
+      skipped_usernames: skipped.slice(0, 20),
+      pdf_attached: pdfAttached,
+      note,
+      message:
+        `${sent.length} voucher dikirim` +
+        (skipped.length > 0
+          ? `, ${skipped.length} dilewati karena tidak ada nomor WhatsApp (isi nomor pelanggan atau kirim satu per satu dengan nomor).`
+          : '.'),
+    };
   }
 
   /** Menandai voucher yang masa aktifnya lewat sebagai expired. */
@@ -973,4 +1428,26 @@ export class ProfilesService {
         );
       });
   }
+}
+
+/** IPv4 bertitik → bilangan bulat; null bila tidak valid. */
+export function ipToInt(value: string): number | null {
+  const parts = value.trim().split('.');
+  if (parts.length !== 4) return null;
+  const nums = parts.map((part) => Number(part));
+  if (nums.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+  return ((nums[0] << 24) | (nums[1] << 16) | (nums[2] << 8) | nums[3]) >>> 0;
+}
+
+/**
+ * Nama IP pool yang dibuat panel untuk sebuah grup. Deterministik supaya
+ * penghapusan dan penyiapan ulang selalu menunjuk objek yang sama.
+ * RouterOS membatasi nama objek 64 karakter.
+ */
+export function poolNameFor(groupName: string): string {
+  const slug = groupName
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return `jw-${slug || 'pool'}`.slice(0, 64);
 }

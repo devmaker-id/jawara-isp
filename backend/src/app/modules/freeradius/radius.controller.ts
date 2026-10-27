@@ -11,6 +11,7 @@ import {
   PreconditionFailedException,
   Patch,
   Post,
+  Put,
   Query,
   Req,
   UseGuards,
@@ -20,12 +21,14 @@ import {
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { Roles } from '../auth/roles.decorator';
+import { PermissionGuard, RequirePermission } from '../permissions/permission.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import {
   CreateNasDto,
   ListNasQueryDto,
   ListAuthLogQueryDto,
   UpdateNasDto,
+  UsageLookupQueryDto,
 } from './dto/radius.dto';
 import {
   InstallConflictError,
@@ -42,6 +45,13 @@ import {
   RadiusConfigService,
 } from './radius-config.service';
 import { RadiusEnforcementService } from './radius-enforcement.service';
+import { IsolirService } from './isolir.service';
+import {
+  IsolateUserDto,
+  ProvisionIsolirDto,
+  ReleaseUserDto,
+  UpdateIsolirDto,
+} from './dto/isolir.dto';
 import { RadiusService } from './radius.service';
 
 const radiusValidation = new ValidationPipe({
@@ -64,7 +74,7 @@ const actorOf = (request: Request): Actor => {
 // Semua operasi baca admin/operator; mutasi admin saja. Bila tabel rad*
 // belum ada, setiap endpoint mengembalikan 503 dengan pesan yang jelas.
 @Controller('freeradius')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionGuard)
 @UsePipes(radiusValidation)
 export class RadiusController {
   constructor(
@@ -73,6 +83,7 @@ export class RadiusController {
     private readonly config: RadiusConfigService,
     private readonly mikrotik: MikrotikService,
     private readonly enforcement: RadiusEnforcementService,
+    private readonly isolir: IsolirService,
   ) {}
 
   @Get('status')
@@ -257,6 +268,65 @@ export class RadiusController {
   @Roles('admin', 'operator')
   accounting(@Query('limit') limit?: string) {
     return this.radius.accounting(limit);
+  }
+
+  // Cek pemakaian user — terbuka untuk semua role (admin, operator, reseller)
+  // karena hanya membaca identitas layanan + angka pemakaian dari radacct.
+  @Get('usage')
+  @Roles('admin', 'operator', 'resseler')
+  usage(@Query() query: UsageLookupQueryDto) {
+    return this.radius.usageLookup(query);
+  }
+
+  // ---- Profil isolir -------------------------------------------------------
+  // Dipakai PPPoE yang kehabisan batas waktu/kuota atau menunggak: grup RADIUS
+  // dipindah ke ISOLIR sehingga ia mendapat IP 10.127.0.0/18 dan hanya bisa
+  // membuka halaman isolir.
+  @Get('isolir')
+  @Roles('admin', 'operator')
+  statusIsolir() {
+    return this.isolir.status();
+  }
+
+  @Put('isolir')
+  @Roles('admin')
+  saveIsolir(@Body() dto: UpdateIsolirDto) {
+    return this.isolir.saveConfig(dto);
+  }
+
+  // Menulis atribut grup ISOLIR ke radgroupreply (Framed-Pool, rate limit, DNS).
+  @Post('isolir/sync')
+  @Roles('admin')
+  syncIsolir() {
+    return this.isolir.syncGroupAttributes();
+  }
+
+  // Menyiapkan /ip/pool + /ppp/profile isolir di satu perangkat.
+  @Post('isolir/provision')
+  @Roles('admin')
+  async provisionIsolir(@Body() dto: ProvisionIsolirDto) {
+    const group = await this.isolir.ensureGroupRow(dto.device_id);
+    const provisioning = await this.isolir.provisionDevice(dto.device_id);
+    return { group_profile_id: group, provisioning };
+  }
+
+  // Perintah firewall/redirect untuk dipasang operator (tidak dijalankan panel).
+  @Get('isolir/commands')
+  @Roles('admin', 'operator')
+  isolirCommands() {
+    return this.isolir.deviceCommands();
+  }
+
+  @Post('isolir/isolate')
+  @Roles('admin', 'operator')
+  isolate(@Body() dto: IsolateUserDto) {
+    return this.isolir.isolate(dto.username, dto.reason ?? 'bill');
+  }
+
+  @Post('isolir/release')
+  @Roles('admin', 'operator')
+  release(@Body() dto: ReleaseUserDto) {
+    return this.isolir.release(dto.username);
   }
 
   // ---- Grup RADIUS ---------------------------------------------------------

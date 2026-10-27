@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import api from '../services/api';
+import { useBackgroundRefresh } from '../hooks/useBackgroundRefresh';
 import { useAuth } from '../contexts/AuthContext';
 
 interface PackageItem {
@@ -57,6 +58,9 @@ const Packages: React.FC = () => {
 
   const [packages, setPackages] = useState<PackageItem[]>([]);
   const [loading, setLoading] = useState(true);
+  // Pemuatan pertama menampilkan spinner; pemuatan berikutnya berjalan
+  // di belakang layar tanpa mengosongkan data yang sudah tampil.
+  const loadedOnce = useRef(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast>(null);
 
@@ -72,7 +76,8 @@ const Packages: React.FC = () => {
   const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    if (!loadedOnce.current) setLoading(true);
+    loadedOnce.current = true;
     setLoadError(null);
     try {
       const response = await api.get('/api/packages');
@@ -87,6 +92,8 @@ const Packages: React.FC = () => {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useBackgroundRefresh(load, { intervalMs: 60000 });
 
   useEffect(() => {
     if (!toast) return;

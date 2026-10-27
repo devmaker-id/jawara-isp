@@ -20,6 +20,7 @@ import { AdminService } from './admin.service';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
+import { PermissionGuard, RequirePermission } from '../permissions/permission.guard';
 
 // Manajemen akun adalah area administratif: hanya admin.
 // Operator/resseler ditolak 403 oleh RolesGuard, bukan sekadar disembunyikan
@@ -34,7 +35,7 @@ const adminValidation = new ValidationPipe({
 });
 
 @Controller('admin/users')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionGuard)
 @Roles('admin')
 @UsePipes(adminValidation)
 export class AdminController {

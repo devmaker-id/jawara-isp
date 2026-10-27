@@ -91,17 +91,6 @@ const Routing: React.FC = () => {
       <PageHeader
         title="MikroTik — Routing & ARP"
         subtitle="Tabel routing IPv4, tetangga MNDP, dan entri ARP. Semua data dibaca langsung dari perangkat (read-only)."
-        actions={
-          <Button
-            onClick={() => {
-              routes.reload();
-              neighbors.reload();
-              arp.reload();
-            }}
-          >
-            Muat ulang
-          </Button>
-        }
       />
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

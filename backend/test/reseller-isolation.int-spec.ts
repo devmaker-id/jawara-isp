@@ -57,12 +57,12 @@ describe('Isolasi reseller (integrasi, DB sekali-pakai)', () => {
     // Kolom hasil migrasi 003 harus ada; kalau tidak, tes ini tidak bermakna.
     const [columnRows] = await db.query<mysql.RowDataPacket[]>(
       `SELECT COLUMN_NAME FROM information_schema.COLUMNS
-        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'customers' AND COLUMN_NAME = 'reseller_id'`,
+        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'customers' AND COLUMN_NAME = 'owner_id'`,
       [target.name],
     );
     if (columnRows.length === 0) {
       throw new Error(
-        'Kolom customers.reseller_id tidak ada di database uji. Jalankan 003_customer_reseller_ownership.sql pada database disposable lebih dulu.',
+        'Kolom customers.owner_id tidak ada di database uji. Jalankan 003_customer_reseller_ownership.sql pada database disposable lebih dulu.',
       );
     }
     const [paymentRows] = await db.query<mysql.RowDataPacket[]>(
@@ -91,7 +91,7 @@ describe('Isolasi reseller (integrasi, DB sekali-pakai)', () => {
     );
 
     await db.query(
-      `INSERT INTO customers (id, name, email, phone, address, is_active, reseller_id) VALUES
+      `INSERT INTO customers (id, name, email, phone, address, is_active, owner_id) VALUES
         (?, 'Pelanggan R1', 'c1@uji.test', '0811', '', 1, ?),
         (?, 'Pelanggan R2', 'c2@uji.test', '0812', '', 1, ?),
         (?, 'Pelanggan Tanpa Pemilik', 'c3@uji.test', '0813', '', 1, NULL),
@@ -198,9 +198,9 @@ describe('Isolasi reseller (integrasi, DB sekali-pakai)', () => {
       expect(res.body.total).toBe(0);
     });
 
-    it('reseller_id dari query tidak dipakai sebagai dasar otorisasi', async () => {
+    it('owner_id dari query tidak dipakai sebagai dasar otorisasi', async () => {
       const res = await auth(
-        http().get(`/api/customers?page=1&limit=50&reseller_id=${USERS.r2}`),
+        http().get(`/api/customers?page=1&limit=50&owner_id=${USERS.r2}`),
         'r1',
       );
       // DTO menolak field asing (400) — bukan mengalihkan cakupan ke r2.
@@ -333,7 +333,7 @@ describe('Isolasi reseller (integrasi, DB sekali-pakai)', () => {
   describe('mutasi dan akun nonaktif', () => {
     it('reseller tidak boleh mengubah kepemilikan pelanggan', async () => {
       await auth(http().patch(`/api/customers/${CUSTOMERS.c1}/owner`), 'r1')
-        .send({ reseller_id: USERS.r2 })
+        .send({ owner_id: USERS.r2 })
         .expect(403);
     });
 
@@ -357,10 +357,10 @@ describe('Isolasi reseller (integrasi, DB sekali-pakai)', () => {
 
     it('pelanggan milik reseller nonaktif tetap tercatat sebagai pemiliknya', async () => {
       const [rows] = await db.query<mysql.RowDataPacket[]>(
-        'SELECT reseller_id FROM customers WHERE id = ?',
+        'SELECT owner_id FROM customers WHERE id = ?',
         [CUSTOMERS.inactiveOwner],
       );
-      expect(rows[0].reseller_id).toBe(USERS.inactive);
+      expect(rows[0].owner_id).toBe(USERS.inactive);
     });
   });
 

@@ -102,27 +102,27 @@ describe('Customers Fase 0 (e2e)', () => {
       expect(res.body).toEqual({ owner_assignment: false });
     });
 
-    it('menolak penetapan pemilik dengan 503 saat kolom reseller_id belum ada', async () => {
+    it('menolak penetapan pemilik dengan 503 saat kolom owner_id belum ada', async () => {
       const res = await call('patch', '/api/customers/1/owner', tokens.admin)
-        .send({ reseller_id: 3 })
+        .send({ owner_id: 3 })
         .expect(503);
       expect(res.body.message).toMatch(/003_customer_reseller_ownership/i);
       // Tidak ada perubahan data maupun audit palsu.
-      expect(customers.items.get(1)?.reseller_id).toBeNull();
+      expect(customers.items.get(1)?.owner_id).toBeNull();
       expect(customers.audit).toHaveLength(0);
     });
 
     it('operator dan reseller ditolak 403 (tidak boleh mengubah pemilik)', async () => {
       await call('patch', '/api/customers/1/owner', tokens.operator)
-        .send({ reseller_id: 3 })
+        .send({ owner_id: 3 })
         .expect(403);
       await call('patch', '/api/customers/1/owner', tokens.reseller)
-        .send({ reseller_id: 3 })
+        .send({ owner_id: 3 })
         .expect(403);
     });
 
     it('tanpa token 401', async () => {
-      await call('patch', '/api/customers/1/owner').send({ reseller_id: 3 }).expect(401);
+      await call('patch', '/api/customers/1/owner').send({ owner_id: 3 }).expect(401);
     });
 
     describe('setelah kolom tersedia (simulasi pasca-migrasi)', () => {
@@ -132,7 +132,7 @@ describe('Customers Fase 0 (e2e)', () => {
 
       it('admin dapat menetapkan pemilik dan audit mencatat aktor + pemilik lama/baru', async () => {
         const res = await call('patch', '/api/customers/1/owner', tokens.admin)
-          .send({ reseller_id: 3 })
+          .send({ owner_id: 3 })
           .expect(200);
 
         expect(res.body).toMatchObject({
@@ -141,7 +141,7 @@ describe('Customers Fase 0 (e2e)', () => {
           previous_owner_id: null,
           owner_id: 3,
         });
-        expect(customers.items.get(1)?.reseller_id).toBe(3);
+        expect(customers.items.get(1)?.owner_id).toBe(3);
         expect(customers.audit).toHaveLength(1);
         expect(customers.audit[0]).toMatchObject({
           user_id: 1,
@@ -152,7 +152,7 @@ describe('Customers Fase 0 (e2e)', () => {
 
       it('memindahkan pemilik mencatat pemilik sebelumnya', async () => {
         const res = await call('patch', '/api/customers/1/owner', tokens.admin)
-          .send({ reseller_id: null })
+          .send({ owner_id: null })
           .expect(200);
         expect(res.body.previous_owner_id).toBe(3);
         expect(res.body.owner_id).toBeNull();
@@ -162,22 +162,22 @@ describe('Customers Fase 0 (e2e)', () => {
         });
       });
 
-      it('menolak reseller ID yang bukan reseller / tidak aktif / tidak ada', async () => {
-        // id 2 = operator
-        const notReseller = await call('patch', '/api/customers/1/owner', tokens.admin)
-          .send({ reseller_id: 2 })
-          .expect(400);
-        expect(notReseller.body.message).toMatch(/bukan reseller/i);
+      it('menerima operator sebagai pemilik, menolak akun nonaktif/tidak ada', async () => {
+        // Operator kini sah menjadi pemilik: batasannya hanya akun harus ada
+        // dan aktif, bukan lagi role-nya.
+        await call('patch', '/api/customers/1/owner', tokens.admin)
+          .send({ owner_id: 2 })
+          .expect(200);
 
         const ghost = await call('patch', '/api/customers/1/owner', tokens.admin)
-          .send({ reseller_id: 999 })
+          .send({ owner_id: 999 })
           .expect(400);
         expect(ghost.body.message).toMatch(/tidak ditemukan/i);
 
         const reseller = users.accounts.get(3)!;
         users.accounts.set(3, { ...reseller, is_active: false });
         const inactive = await call('patch', '/api/customers/1/owner', tokens.admin)
-          .send({ reseller_id: 3 })
+          .send({ owner_id: 3 })
           .expect(400);
         expect(inactive.body.message).toMatch(/tidak aktif/i);
         users.accounts.set(3, reseller);
@@ -185,13 +185,15 @@ describe('Customers Fase 0 (e2e)', () => {
 
       it('menolak customer ID yang tidak ada dan payload tidak valid', async () => {
         await call('patch', '/api/customers/999/owner', tokens.admin)
-          .send({ reseller_id: 3 })
+          .send({ owner_id: 3 })
           .expect(404);
         await call('patch', '/api/customers/1/owner', tokens.admin)
-          .send({ reseller_id: 'abc' })
+          .send({ owner_id: 'abc' })
           .expect(400);
         await call('patch', '/api/customers/1/owner', tokens.admin)
-          .send({ reseller_id: 3, owner_id: 1 })
+          // Kolom lama sudah berganti nama: `reseller_id` kini field asing dan
+          // harus ditolak, bukan diterima diam-diam.
+          .send({ owner_id: 3, reseller_id: 1 })
           .expect(400);
       });
     });
@@ -209,10 +211,13 @@ describe('Customers Fase 0 (e2e)', () => {
       expect(customers.items.has(3)).toBe(false);
     });
 
-    it('operator tidak boleh menghapus pelanggan', async () => {
-      await call('delete', '/api/customers/2', tokens.operator).expect(403);
-      expect(customers.items.has(2)).toBe(true);
+    it('operator boleh menghapus pelanggan (memegang customer.delete)', async () => {
+      await call('delete', '/api/customers/2', tokens.operator).expect(200);
+      expect(customers.items.has(2)).toBe(false);
     });
+
+    // Alur antrean hapus reseller diuji terhadap server nyata (skrip t20_rbac.js),
+    // karena repository pelanggan di suite ini dibuat tanpa kolom pemilik.
   });
 
   describe('penonaktifan tidak menghapus riwayat', () => {

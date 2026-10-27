@@ -2,7 +2,6 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import {
   Badge,
-  Button,
   Card,
   ErrorNote,
   InfoNote,
@@ -69,19 +68,16 @@ const Ringkasan: React.FC = () => {
         title="MikroTik — Ringkasan"
         subtitle="Status perangkat lewat RouterOS API (TCP). Halaman ini hanya membaca; tidak ada perubahan konfigurasi."
         actions={
-          <>
-            <Button onClick={() => { status.reload(); resources.reload(); }}>Muat ulang</Button>
-            {data?.gui_url && (
-              <a
-                href={data.gui_url}
-                target="_blank"
-                rel="noreferrer"
-                className="rounded-lg border border-cyan-500 bg-cyan-600 px-3 py-2 text-sm font-medium text-white hover:bg-cyan-500"
-              >
-                Buka WebFig
-              </a>
-            )}
-          </>
+          data?.gui_url ? (
+            <a
+              href={data.gui_url}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-lg border border-cyan-500 bg-cyan-600 px-3 py-2 text-sm font-medium text-white hover:bg-cyan-500"
+            >
+              Buka WebFig
+            </a>
+          ) : undefined
         }
       />
 

@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import api from '../../services/api';
+import { useBackgroundRefresh } from '../../hooks/useBackgroundRefresh';
 import { useAuth } from '../../contexts/AuthContext';
 import {
   Badge,
@@ -80,6 +81,9 @@ const Grup: React.FC = () => {
   const [groups, setGroups] = useState<GroupRow[]>([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  // Pemuatan pertama menampilkan spinner; pemuatan berikutnya berjalan
+  // di belakang layar tanpa mengosongkan data yang sudah tampil.
+  const loadedOnce = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -93,7 +97,8 @@ const Grup: React.FC = () => {
   const [parityError, setParityError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    if (!loadedOnce.current) setLoading(true);
+    loadedOnce.current = true;
     setError(null);
     try {
       const { data } = await api.get<GroupRow[]>('/api/freeradius/groups');
@@ -126,6 +131,8 @@ const Grup: React.FC = () => {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useBackgroundRefresh(load, { intervalMs: 60000 });
 
   useEffect(() => {
     void loadParity(tab);
@@ -295,7 +302,7 @@ const Grup: React.FC = () => {
             Perbandingan dengan profil MikroTik
           </p>
           <Button onClick={() => void loadParity(tab)} disabled={parityLoading}>
-            {parityLoading ? 'Memuat…' : 'Muat ulang'}
+            {parityLoading ? 'Memuat…' : 'Hitung ulang'}
           </Button>
         </div>
 

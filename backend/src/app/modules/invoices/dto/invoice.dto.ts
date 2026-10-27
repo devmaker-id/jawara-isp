@@ -43,6 +43,13 @@ export class CreateInvoiceDto {
   @Matches(DATE_ONLY, { message: DATE_MESSAGE })
   due_date: string;
 
+  // Akun RADIUS yang ditagih. Opsional: tagihan non-layanan tetap boleh ada,
+  // tetapi tanpa username pembayaran tidak bisa mengaktifkan akun.
+  @IsOptional()
+  @IsString()
+  @MaxLength(64, { message: 'username maksimal 64 karakter' })
+  username?: string | null;
+
   @IsOptional()
   @IsString()
   @MaxLength(255, { message: 'description maksimal 255 karakter' })
@@ -70,6 +77,11 @@ export class UpdateInvoiceDto {
   @IsDateString({ strict: true }, { message: DATE_MESSAGE })
   @Matches(DATE_ONLY, { message: DATE_MESSAGE })
   due_date?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64, { message: 'username maksimal 64 karakter' })
+  username?: string | null;
 
   @IsOptional()
   @IsString()

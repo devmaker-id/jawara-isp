@@ -96,7 +96,7 @@ export class ExportsService {
     } catch (error) {
       if (isMissingOwnerColumn(error)) {
         throw new ServiceUnavailableException(
-          'Ekspor untuk reseller belum dapat difilter: kolom customers.reseller_id belum ada ' +
+          'Ekspor untuk reseller belum dapat difilter: kolom customers.owner_id belum ada ' +
             '(migrasi 003_customer_reseller_ownership.sql belum dijalankan).',
         );
       }

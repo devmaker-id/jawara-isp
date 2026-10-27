@@ -24,6 +24,8 @@ function makeRepo(): CustomersRepository {
     findByEmail: vi.fn(),
     hasOwnerColumn: vi.fn().mockResolvedValue(false),
     countRelations: vi.fn().mockResolvedValue({ invoices: 0, services: 0 }),
+    // Akun RADIUS milik pelanggan; kosong bila pelanggan belum punya akun.
+    findAccounts: vi.fn().mockResolvedValue([]),
     assignOwner: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),

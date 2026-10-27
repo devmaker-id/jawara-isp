@@ -17,6 +17,7 @@ import {
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { Roles } from '../auth/roles.decorator';
+import { PermissionGuard, RequirePermission } from '../permissions/permission.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { CreateDeviceDto, UpdateDeviceDto } from './dto/device.dto';
 import {
@@ -56,7 +57,7 @@ const actorOf = (request: Request): Actor => {
 // menerima ?device=<id> untuk memilih router. Tanpa parameter itu dipakai
 // perangkat aktif pertama, atau konfigurasi tunggal lama bila daftar kosong.
 @Controller('mikrotik')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionGuard)
 @UsePipes(mikrotikValidation)
 export class MikrotikController {
   constructor(private readonly mikrotik: MikrotikService) {}
@@ -76,6 +77,7 @@ export class MikrotikController {
 
   @Post('devices')
   @Roles('admin')
+  @RequirePermission('device.create')
   @HttpCode(HttpStatus.CREATED)
   createDevice(@Body() dto: CreateDeviceDto, @Req() request: Request) {
     return this.mikrotik.createDevice(dto, actorOf(request));
@@ -83,12 +85,14 @@ export class MikrotikController {
 
   @Patch('devices/:id')
   @Roles('admin')
+  @RequirePermission('device.update')
   updateDevice(@Param('id') id: string, @Body() dto: UpdateDeviceDto, @Req() request: Request) {
     return this.mikrotik.updateDevice(this.deviceId(id) as number, dto, actorOf(request));
   }
 
   @Delete('devices/:id')
   @Roles('admin')
+  @RequirePermission('device.delete')
   deleteDevice(@Param('id') id: string, @Req() request: Request) {
     return this.mikrotik.deleteDevice(this.deviceId(id) as number, actorOf(request));
   }
@@ -290,6 +294,24 @@ export class MikrotikController {
   @Roles('admin', 'operator')
   pppActive(@Query('device') device?: string) {
     return this.mikrotik.runWithDevice(this.deviceId(device), () => this.mikrotik.pppActive());
+  }
+
+  // ===== log aktivitas =====
+  @Get('logs')
+  @Roles('admin', 'operator')
+  logs(
+    @Query('device') device?: string,
+    @Query('topics') topics?: string,
+    @Query('search') search?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.mikrotik.runWithDevice(this.deviceId(device), () =>
+      this.mikrotik.logs({
+        topics,
+        search,
+        limit: limit ? Number(limit) : undefined,
+      }),
+    );
   }
 
   // ===== routing =====

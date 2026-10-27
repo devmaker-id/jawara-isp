@@ -103,6 +103,8 @@ describe('InvoicesRepository', () => {
       expect(insertParams).toEqual([
         'INV-2026-0005',
         3,
+        // username: tagihan tanpa akun RADIUS (migrasi 014).
+        null,
         'Pelanggan Uji',
         29700.25,
         'unpaid',

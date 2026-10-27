@@ -127,18 +127,24 @@ describe('RBAC (e2e)', () => {
       // Tidak boleh membocorkan pelanggan yang bukan miliknya.
       expect(res.body.length).toBeLessThanOrEqual(own.body.length);
       for (const customer of res.body) {
-        expect(customer.reseller_id).toBe(resellerId);
+        expect(customer.owner_id).toBe(resellerId);
       }
     });
 
-    it('operator tidak boleh menghapus pelanggan', async () => {
-      await call('delete', '/api/customers/999999', tokens.operator).expect(403);
+    // Operator kini memegang izin customer.delete (keputusan pemilik: penuh di
+    // sisi operasional). Yang tersisa adalah pemeriksaan keberadaan data.
+    it('operator boleh menghapus pelanggan (data tidak ada → 404)', async () => {
+      await call('delete', '/api/customers/999999', tokens.operator).expect(404);
     });
 
-    it('reseller tidak boleh menambah pelanggan', async () => {
-      await call('post', '/api/customers', tokens.resseler)
+    // Reseller BOLEH menambah pelanggan; pemiliknya dipaksa menjadi dirinya.
+    // Akun reseller di suite ini hanya ada di UsersRepository palsu (id 3),
+    // sehingga lapisan data menolak dengan 400 yang jelas — bukan 403 izin.
+    it('reseller boleh menambah pelanggan (pemilik dipaksa dari token)', async () => {
+      const res = await call('post', '/api/customers', tokens.resseler)
         .send({ name: 'Y', email: 'y@uji.test', phone: '081234567' })
-        .expect(403);
+        .expect(400);
+      expect(res.body.message).toMatch(/akun pemilik/i);
     });
   });
 

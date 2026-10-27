@@ -10,6 +10,7 @@ import Settings from './pages/Settings';
 import Payments from './pages/Payments';
 import Reports from './pages/Reports';
 import Users from './pages/Users';
+import Persetujuan from './pages/Persetujuan';
 import Profile from './pages/Profile';
 import NotFound from './pages/NotFound';
 import MikrotikRingkasan from './pages/mikrotik/Ringkasan';
@@ -18,17 +19,21 @@ import MikrotikInterfaces from './pages/mikrotik/Interfaces';
 import MikrotikHotspot from './pages/mikrotik/Hotspot';
 import MikrotikPpp from './pages/mikrotik/Ppp';
 import MikrotikRouting from './pages/mikrotik/Routing';
+import MikrotikLog from './pages/mikrotik/Log';
 import RadiusRingkasan from './pages/freeradius/Ringkasan';
 import RadiusNas from './pages/freeradius/Nas';
 import RadiusSesi from './pages/freeradius/Sesi';
 import RadiusAuthLog from './pages/freeradius/AuthLog';
 import RadiusKonfigurasi from './pages/freeradius/Konfigurasi';
 import RadiusGrup from './pages/freeradius/Grup';
+import RadiusIsolir from './pages/freeradius/Isolir';
 import LayananBandwidth from './pages/layanan/Bandwidth';
 import LayananGroup from './pages/layanan/GroupProfile';
 import LayananHotspot from './pages/layanan/ServiceProfile';
 import LayananPpp from './pages/layanan/ServiceProfile';
-import LayananVoucher from './pages/layanan/Voucher';
+import VoucherManagement from './pages/voucher/VoucherManagement';
+import ToolsImport from './pages/tools/Import';
+import ToolsExport from './pages/tools/Export';
 
 const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading } = useAuth();
@@ -74,6 +79,22 @@ const AppContent: React.FC = () => {
             }
           />
           <Route
+            path="/customers/hotspot"
+            element={
+              <PrivateRoute>
+                <Customers profileType="hotspot" />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/customers/pppoe"
+            element={
+              <PrivateRoute>
+                <Customers profileType="ppp" />
+              </PrivateRoute>
+            }
+          />
+          <Route
             path="/invoices"
             element={
               <PrivateRoute>
@@ -102,6 +123,14 @@ const AppContent: React.FC = () => {
             element={
               <PrivateRoute>
                 <Users />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/persetujuan"
+            element={
+              <PrivateRoute>
+                <Persetujuan />
               </PrivateRoute>
             }
           />
@@ -170,6 +199,14 @@ const AppContent: React.FC = () => {
             }
           />
           <Route
+            path="/mikrotik/log"
+            element={
+              <PrivateRoute>
+                <MikrotikLog />
+              </PrivateRoute>
+            }
+          />
+          <Route
             path="/freeradius"
             element={
               <PrivateRoute>
@@ -217,11 +254,17 @@ const AppContent: React.FC = () => {
               </PrivateRoute>
             }
           />
+          <Route path="/freeradius/isolir" element={<PrivateRoute><RadiusIsolir /></PrivateRoute>} />
           <Route path="/layanan/bandwidth" element={<PrivateRoute><LayananBandwidth /></PrivateRoute>} />
           <Route path="/layanan/group" element={<PrivateRoute><LayananGroup /></PrivateRoute>} />
           <Route path="/layanan/hotspot" element={<PrivateRoute><LayananHotspot type="hotspot" /></PrivateRoute>} />
           <Route path="/layanan/ppp" element={<PrivateRoute><LayananPpp type="ppp" /></PrivateRoute>} />
-          <Route path="/layanan/voucher" element={<PrivateRoute><LayananVoucher /></PrivateRoute>} />
+          <Route path="/tools/import" element={<PrivateRoute><ToolsImport /></PrivateRoute>} />
+          <Route path="/tools/export" element={<PrivateRoute><ToolsExport /></PrivateRoute>} />
+          <Route path="/voucher/hotspot" element={<PrivateRoute><VoucherManagement type="hotspot" /></PrivateRoute>} />
+          <Route path="/voucher/ppp" element={<PrivateRoute><VoucherManagement type="ppp" /></PrivateRoute>} />
+          {/* URL lama tetap hidup agar bookmark tidak putus. */}
+          <Route path="/layanan/voucher" element={<Navigate to="/voucher/hotspot" replace />} />
           <Route path="*" element={<NotFound />} />
         </Route>
       </Routes>

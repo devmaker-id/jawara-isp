@@ -467,4 +467,143 @@ export class RadiusRepository {
       [Math.min(Math.max(limit, 1), 500)],
     );
   }
+
+  // ---- Cek pemakaian (dialog, dipakai semua role) ------------------------
+  // Read-only: identitas layanan dari radius_vouchers + angka pemakaian dari
+  // radacct. Tidak menyentuh password dan tidak menulis apa pun.
+  async usageLookup(input: {
+    userType: 'customer' | 'voucher';
+    username?: string;
+    mac?: string;
+  }): Promise<UsageLookupResult> {
+    const userTypes = input.userType === 'customer' ? ['customer', 'member'] : ['voucher'];
+    const where: string[] = ['v.user_type IN (?)'];
+    const params: unknown[] = [userTypes];
+
+    if (input.username) {
+      where.push('v.username = ?');
+      params.push(input.username);
+    }
+    if (input.mac) {
+      where.push(
+        'v.username IN (SELECT DISTINCT username FROM radacct WHERE callingstationid LIKE ?)',
+      );
+      params.push(`%${input.mac}%`);
+    }
+
+    const accounts = await this.db.query<UsageAccountRow>(
+      `SELECT v.username, v.user_type, v.profile_type, v.profile_name, v.status,
+              v.expires_at, v.quota_used_bytes, v.online_seconds, v.customer_id,
+              c.name AS customer_name, c.phone AS customer_phone, c.status AS customer_status
+         FROM radius_vouchers v
+         LEFT JOIN customers c ON c.id = v.customer_id
+        WHERE ${where.join(' AND ')}
+        ORDER BY v.username LIMIT 10`,
+      params,
+    );
+
+    // Username yang hanya dikenal radacct (akun lama / belum terdaftar di
+    // radius_vouchers) tetap dicari pemakaiannya lewat username maupun MAC.
+    let usernames = accounts.map((row) => row.username);
+    if (input.username || input.mac) {
+      const conditions: string[] = ['username IS NOT NULL'];
+      const radacctParams: unknown[] = [];
+      if (input.username) {
+        conditions.push('username = ?');
+        radacctParams.push(input.username);
+      }
+      if (input.mac) {
+        conditions.push('callingstationid LIKE ?');
+        radacctParams.push(`%${input.mac}%`);
+      }
+      const byRadacct = await this.db.query<{ username: string }>(
+        `SELECT DISTINCT username FROM radacct
+          WHERE ${conditions.join(' AND ')} LIMIT 10`,
+        radacctParams,
+      );
+      usernames = [...new Set([...usernames, ...byRadacct.map((row) => row.username)])];
+    }
+
+    // Jangan campur bucket: di mode voucher jangan tampilkan akun pelanggan
+    // (dan sebaliknya) hanya karena punya jejak radacct.
+    if (usernames.length > 0) {
+      const opposite = input.userType === 'customer' ? ['voucher'] : ['customer', 'member'];
+      const foreign = await this.db.query<{ username: string }>(
+        `SELECT username FROM radius_vouchers WHERE username IN (?) AND user_type IN (?)`,
+        [usernames, opposite],
+      );
+      const foreignSet = new Set(foreign.map((row) => row.username));
+      usernames = usernames.filter((name) => !foreignSet.has(name));
+    }
+    usernames = usernames.slice(0, 5);
+
+    if (usernames.length === 0) {
+      return { results: [] };
+    }
+
+    const sessions = await this.db.query<UsageSessionRow>(
+      `SELECT username, nasipaddress, framedipaddress, acctstarttime, acctstoptime,
+              acctsessiontime, acctinputoctets, acctoutputoctets, callingstationid
+         FROM radacct WHERE username IN (?)
+        ORDER BY acctstarttime DESC LIMIT 500`,
+      [usernames],
+    );
+
+    const results = usernames.map((username) => {
+      const rows = sessions.filter((row) => row.username === username);
+      const sum = (pick: (row: UsageSessionRow) => number | null) =>
+        rows.reduce((total, row) => total + Number(pick(row) ?? 0), 0);
+      return {
+        account: accounts.find((row) => row.username === username) ?? null,
+        username,
+        usage: {
+          sessions: rows.length,
+          in_bytes: sum((row) => row.acctinputoctets),
+          out_bytes: sum((row) => row.acctoutputoctets),
+          last_seen: rows[0]?.acctstarttime ?? null,
+        },
+        active: rows.filter((row) => row.acctstoptime === null).slice(0, 5),
+        recent: rows.slice(0, 5),
+      };
+    });
+
+    return { results };
+  }
+}
+
+export interface UsageAccountRow {
+  username: string;
+  user_type: 'voucher' | 'customer' | 'member';
+  profile_type: string | null;
+  profile_name: string | null;
+  status: string;
+  expires_at: string | null;
+  quota_used_bytes: number;
+  online_seconds: number;
+  customer_id: number | null;
+  customer_name: string | null;
+  customer_phone: string | null;
+  customer_status: string | null;
+}
+
+export interface UsageSessionRow {
+  username: string;
+  nasipaddress: string;
+  framedipaddress: string;
+  acctstarttime: string | null;
+  acctstoptime: string | null;
+  acctsessiontime: number | null;
+  acctinputoctets: number | null;
+  acctoutputoctets: number | null;
+  callingstationid: string;
+}
+
+export interface UsageLookupResult {
+  results: Array<{
+    account: UsageAccountRow | null;
+    username: string;
+    usage: { sessions: number; in_bytes: number; out_bytes: number; last_seen: string | null };
+    active: UsageSessionRow[];
+    recent: UsageSessionRow[];
+  }>;
 }

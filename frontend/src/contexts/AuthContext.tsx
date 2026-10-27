@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import api, { classifySessionFailure } from '../services/api';
+import api, { AUTH_EXPIRED_EVENT, classifySessionFailure } from '../services/api';
 
 interface User {
   id: number;
@@ -81,8 +81,19 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     localStorage.removeItem('user');
     setUser(null);
     setToken(null);
-    window.location.href = '/login';
+    // Tidak ada window.location di sini: PrivateRoute mengarahkan ke /login
+    // lewat router, jadi panel tidak perlu dimuat ulang.
   };
+
+  // 401 dari request mana pun: akhiri sesi tanpa memuat ulang halaman.
+  useEffect(() => {
+    const onExpired = () => {
+      setUser(null);
+      setToken(null);
+    };
+    window.addEventListener(AUTH_EXPIRED_EVENT, onExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onExpired);
+  }, []);
 
   return (
     <AuthContext.Provider value={{ user, token, login, logout, loading }}>

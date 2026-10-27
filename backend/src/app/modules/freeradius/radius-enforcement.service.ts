@@ -1,44 +1,54 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import type { RowDataPacket } from 'mysql2/promise';
 import { DatabaseService } from '../../database/database.service';
 import { probeCoa } from './coa-probe';
+import { IsolirService } from './isolir.service';
 
 /**
- * Penegak batas akun.
+ * Penegak batas akun — TOTAL kumulatif, bukan per sesi.
  *
- * Atribut RADIUS hanya membatasi SATU sesi: `Session-Timeout` dan
- * `Mikrotik-Total-Limit` dihitung router per sesi. Voucher "5 jam" yang dipakai
- * tiga kali masing-masing 2 jam tetap lolos. Karena itu total lintas sesi harus
- * dijumlahkan dari `radacct`, lalu akun dicabut + sesi diputus lewat CoA.
+ * `Session-Timeout` dan `Mikrotik-Total-Limit` dihitung router per sesi, jadi
+ * voucher "6 jam" yang dipakai tiga kali @2 jam tetap lolos. Karena itu total
+ * lintas sesi dijumlahkan dari `radacct`, lalu:
  *
- * Dijalankan berkala dari proses ini (tanpa dependensi scheduler tambahan).
+ *   - Hotspot : akun ditolak dengan `Reply-Message` yang menjelaskan sebabnya
+ *               ("Waktu online habis" / "Kuota habis" / "User expired").
+ *   - PPPoE   : grup RADIUS dipindah ke ISOLIR (IP 10.127.0.0/18), sesi diputus
+ *               lewat CoA sehingga klien masuk ulang sebagai pelanggan isolir.
+ *
+ * Masa aktif dihitung dari LOGIN PERTAMA, bukan tanggal dibuat. Saat login
+ * pertama terdeteksi, `Expiration` ditulis ke radcheck agar FreeRADIUS sendiri
+ * menolak walau proses ini sedang mati.
  */
 export interface EnforcementReport {
   checked: number;
   activated: number;
-  expired: number;
+  blocked_hotspot: number;
+  isolated_ppp: number;
   disconnected: number;
   errors: string[];
 }
 
-interface AccountRow {
+interface AccountRow extends RowDataPacket {
   id: number;
   username: string;
+  password: string;
   user_type: string;
   status: string;
   profile_type: 'hotspot' | 'ppp';
   first_login_at: string | null;
   expires_at: string | null;
+  block_reason: string | null;
+  // Batas dari GRUP (profil layanan), bukan dari akun.
   validity_value: number | null;
   validity_unit: string | null;
-  timebase_value: number | null;
-  timebase_unit: string | null;
-  quotabase_value: number | null;
-  quotabase_unit: string | null;
-  online_seconds: number | string | null;
-  quota_used_bytes: number | string | null;
+  hotspot_seconds: number | null;
+  hotspot_bytes: number | null;
+  ppp_seconds: number | null;
+  ppp_bytes: number | null;
 }
 
-interface UsageRow {
+interface UsageRow extends RowDataPacket {
   username: string;
   seconds: number | string;
   octets: number | string;
@@ -53,10 +63,50 @@ const UNIT_SECONDS: Record<string, number> = {
   month: 2592000,
 };
 
+// Basis 1000: sama dengan cara ISP menjual kuota dan sama dengan panel.
 const UNIT_BYTES: Record<string, number> = {
-  MB: 1024 * 1024,
-  GB: 1024 * 1024 * 1024,
+  MB: 1_000_000,
+  GB: 1_000_000_000,
 };
+
+/** Pesan yang muncul di halaman login hotspot (Reply-Message pada Access-Reject). */
+export const BLOCK_MESSAGE: Record<string, string> = {
+  time: 'Waktu online habis',
+  quota: 'Kuota habis',
+  validity: 'User expired',
+};
+
+/** Format tanggal FreeRADIUS: "26 Okt 2026 15:04:05". */
+export function freeRadiusDate(date: Date): string {
+  const bulan = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+  const two = (n: number) => String(n).padStart(2, '0');
+  return (
+    `${two(date.getDate())} ${bulan[date.getMonth()]} ${date.getFullYear()} ` +
+    `${two(date.getHours())}:${two(date.getMinutes())}:${two(date.getSeconds())}`
+  );
+}
+
+/** Batas waktu total (detik) dari profil grup; null = tanpa batas. */
+export function totalTimeLimit(account: {
+  profile_type: string;
+  hotspot_seconds?: number | null;
+  ppp_seconds?: number | null;
+}): number | null {
+  const value = account.profile_type === 'hotspot' ? account.hotspot_seconds : account.ppp_seconds;
+  const seconds = Number(value ?? 0);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+}
+
+/** Batas kuota total (byte) dari profil grup; null = tanpa batas. */
+export function totalQuotaLimit(account: {
+  profile_type: string;
+  hotspot_bytes?: number | null;
+  ppp_bytes?: number | null;
+}): number | null {
+  const value = account.profile_type === 'hotspot' ? account.hotspot_bytes : account.ppp_bytes;
+  const bytes = Number(value ?? 0);
+  return Number.isFinite(bytes) && bytes > 0 ? bytes : null;
+}
 
 @Injectable()
 export class RadiusEnforcementService implements OnModuleInit, OnModuleDestroy {
@@ -67,7 +117,10 @@ export class RadiusEnforcementService implements OnModuleInit, OnModuleDestroy {
   /** Interval pemeriksaan; 0 mematikan penegakan otomatis. */
   private readonly intervalMs = Number(process.env.RADIUS_ENFORCE_INTERVAL_MS ?? 60_000);
 
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly isolir: IsolirService,
+  ) {}
 
   onModuleInit() {
     if (!this.intervalMs || this.intervalMs < 10_000) return;
@@ -86,9 +139,12 @@ export class RadiusEnforcementService implements OnModuleInit, OnModuleDestroy {
     this.running = true;
     try {
       const report = await this.enforce();
-      if (report.expired > 0 || report.errors.length > 0) {
+      const changed =
+        report.blocked_hotspot + report.isolated_ppp + report.activated > 0;
+      if (changed || report.errors.length > 0) {
         this.logger.log(
-          `Penegakan: ${report.checked} akun, ${report.expired} kedaluwarsa, ` +
+          `Penegakan: ${report.checked} akun, ${report.activated} aktivasi, ` +
+            `${report.blocked_hotspot} blokir hotspot, ${report.isolated_ppp} isolir, ` +
             `${report.disconnected} sesi diputus` +
             (report.errors.length ? `, ${report.errors.length} galat` : ''),
         );
@@ -107,16 +163,24 @@ export class RadiusEnforcementService implements OnModuleInit, OnModuleDestroy {
     const report: EnforcementReport = {
       checked: 0,
       activated: 0,
-      expired: 0,
+      blocked_hotspot: 0,
+      isolated_ppp: 0,
       disconnected: 0,
       errors: [],
     };
 
     const accounts = await this.db.query<AccountRow>(`
-      SELECT v.id, v.username, v.user_type, v.status, v.profile_type,
-             v.first_login_at, v.expires_at, v.online_seconds, v.quota_used_bytes,
-             h.validity_value, h.validity_unit, h.timebase_value, h.timebase_unit,
-             h.quotabase_value, h.quotabase_unit
+      SELECT v.id, v.username, v.password, v.user_type, v.status, v.profile_type,
+             v.first_login_at, v.expires_at, v.block_reason,
+             COALESCE(h.validity_value, p.validity_value) AS validity_value,
+             COALESCE(h.validity_unit,  p.validity_unit)  AS validity_unit,
+             h.timebase_value * CASE h.timebase_unit
+               WHEN 'minute' THEN 60 WHEN 'hour' THEN 3600
+               WHEN 'day' THEN 86400 WHEN 'month' THEN 2592000 ELSE 0 END AS hotspot_seconds,
+             h.quotabase_value * CASE h.quotabase_unit
+               WHEN 'MB' THEN 1000000 WHEN 'GB' THEN 1000000000 ELSE 0 END AS hotspot_bytes,
+             p.time_limit_seconds AS ppp_seconds,
+             p.quota_limit_bytes  AS ppp_bytes
         FROM radius_vouchers v
         LEFT JOIN hotspot_profiles h ON v.profile_type = 'hotspot' AND h.id = v.profile_id
         LEFT JOIN ppp_profiles p     ON v.profile_type = 'ppp'     AND p.id = v.profile_id
@@ -160,8 +224,8 @@ export class RadiusEnforcementService implements OnModuleInit, OnModuleDestroy {
         [seconds, octets, account.id],
       );
 
-      const limitSeconds = this.timeLimit(account);
-      const limitBytes = this.quotaLimit(account);
+      const limitSeconds = totalTimeLimit(account);
+      const limitBytes = totalQuotaLimit(account);
       const pastExpiry =
         account.expires_at !== null && new Date(account.expires_at).getTime() <= Date.now();
       const overTime = limitSeconds !== null && seconds >= limitSeconds;
@@ -169,12 +233,20 @@ export class RadiusEnforcementService implements OnModuleInit, OnModuleDestroy {
 
       if (!pastExpiry && !overTime && !overQuota) continue;
 
-      const reason = pastExpiry ? 'masa aktif habis' : overTime ? 'batas waktu habis' : 'kuota habis';
+      // Urutan sebab menentukan pesan: masa aktif lebih dulu karena itu yang
+      // paling tidak bisa diperbaiki pelanggan sendiri.
+      const reason = pastExpiry ? 'validity' : overTime ? 'time' : 'quota';
+
       try {
-        await this.expire(account, reason);
-        report.expired += 1;
+        if (account.profile_type === 'ppp') {
+          await this.isolir.isolate(account.username, reason);
+          report.isolated_ppp += 1;
+        } else {
+          await this.blockHotspot(account, reason);
+          report.blocked_hotspot += 1;
+        }
         if (openSessions > 0 && used?.nas) {
-          const sent = await this.disconnect(used.nas, account.username);
+          const sent = await this.disconnect(String(used.nas), account.username);
           if (sent) report.disconnected += 1;
         }
       } catch (error) {
@@ -187,47 +259,77 @@ export class RadiusEnforcementService implements OnModuleInit, OnModuleDestroy {
     return report;
   }
 
-  private timeLimit(account: AccountRow): number | null {
-    const value = Number(account.timebase_value ?? 0);
-    const unit = account.timebase_unit ?? '';
-    if (!value || !unit || !UNIT_SECONDS[unit]) return null;
-    return value * UNIT_SECONDS[unit];
-  }
-
-  private quotaLimit(account: AccountRow): number | null {
-    const value = Number(account.quotabase_value ?? 0);
-    const unit = account.quotabase_unit ?? '';
-    if (!value || !unit || !UNIT_BYTES[unit]) return null;
-    return value * UNIT_BYTES[unit];
-  }
-
+  /**
+   * Login pertama: mulai masa aktif DAN tulis `Expiration` ke radcheck.
+   *
+   * `Expiration` membuat FreeRADIUS menolak sendiri setelah masa aktif habis,
+   * sehingga penegakan tidak bergantung pada proses ini tetap hidup.
+   */
   private async activate(account: AccountRow) {
     const value = Number(account.validity_value ?? 0);
     const unit = account.validity_unit ?? '';
     const seconds = value > 0 && UNIT_SECONDS[unit] ? value * UNIT_SECONDS[unit] : 0;
+    const expiresAt = seconds > 0 ? new Date(Date.now() + seconds * 1000) : null;
+
     await this.db.execute(
       `UPDATE radius_vouchers
           SET status = 'active', first_login_at = NOW(), expires_at = ?
         WHERE id = ?`,
-      [seconds > 0 ? new Date(Date.now() + seconds * 1000) : null, account.id],
+      [expiresAt, account.id],
     );
+
+    if (expiresAt) {
+      await this.db.execute(
+        'DELETE FROM radcheck WHERE username = ? AND attribute = ?',
+        [account.username, 'Expiration'],
+      );
+      await this.db.execute(
+        'INSERT INTO radcheck (username, attribute, op, value) VALUES (?, ?, ?, ?)',
+        [account.username, 'Expiration', ':=', freeRadiusDate(expiresAt)],
+      );
+    }
+
     // audit_logs.user_id NOT NULL, dan tindakan ini tidak punya aktor manusia.
-    // Dicatat di log proses saja supaya tidak mengarang user_id.
     this.logger.log(`Aktivasi otomatis ${account.username} (masa aktif ${seconds} detik)`);
   }
 
-  /** Mencabut akun dari RADIUS: itu yang benar-benar menolak login berikutnya. */
-  private async expire(account: AccountRow, reason: string) {
+  /**
+   * Blokir hotspot: tolak login TAPI sertakan alasannya.
+   *
+   * Akun tidak dihapus — password dan grup tetap ada supaya bisa diaktifkan
+   * kembali, dan `Reply-Message` yang tampil di halaman login memberi tahu
+   * pelanggan apa yang terjadi.
+   */
+  private async blockHotspot(account: AccountRow, reason: string) {
+    const message = BLOCK_MESSAGE[reason] ?? 'Akun tidak dapat digunakan';
+
     await this.db.withTransaction(async (connection) => {
       await connection.query('DELETE FROM radcheck WHERE username = ?', [account.username]);
       await connection.query('DELETE FROM radreply WHERE username = ?', [account.username]);
-      await connection.query('DELETE FROM radusergroup WHERE username = ?', [account.username]);
+
       await connection.query(
-        "UPDATE radius_vouchers SET status = 'expired' WHERE id = ?",
-        [account.id],
+        `INSERT INTO radcheck (username, attribute, op, value)
+         VALUES (?, 'Cleartext-Password', ':=', ?)`,
+        [account.username, account.password],
+      );
+      await connection.query(
+        `INSERT INTO radcheck (username, attribute, op, value)
+         VALUES (?, 'Auth-Type', ':=', 'Reject')`,
+        [account.username],
+      );
+      await connection.query(
+        `INSERT INTO radreply (username, attribute, op, value)
+         VALUES (?, 'Reply-Message', ':=', ?)`,
+        [account.username, message],
+      );
+      await connection.query(
+        `UPDATE radius_vouchers
+            SET status = 'expired', block_reason = ?
+          WHERE id = ?`,
+        [reason, account.id],
       );
     });
-    this.logger.log(`Kedaluwarsa otomatis ${account.username}: ${reason}`);
+    this.logger.log(`Blokir hotspot ${account.username}: ${message}`);
   }
 
   /** CoA Disconnect ke NAS pemilik sesi, memakai secret dari tabel `nas`. */

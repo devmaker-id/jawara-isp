@@ -13,6 +13,12 @@
 //   rx = UPLOAD   (klien → router)
 //   tx = DOWNLOAD (router → klien)
 
+/**
+ * Burst maksimal = 2x max-limit. Nilai ini juga yang dipakai UI sebagai
+ * pratinjau, jadi konstanta-nya diekspor supaya tidak ada dua angka berbeda.
+ */
+export const BURST_FACTOR = 2;
+
 export interface BandwidthSpec {
   minUploadKbps: number;
   minDownloadKbps: number;
@@ -57,23 +63,47 @@ function kbps(value: number): string {
 }
 
 // String rate-limit siap pakai untuk MikroTik maupun RADIUS.
+//
+// PENTING — RouterOS membaca bagian ini secara POSISIONAL:
+//   max  burst  threshold  burst-time  priority  min-rate
+// Kalau salah satu bagian sebelumnya dilewati, token berikutnya bergeser dan
+// dibaca sebagai burst. Contoh bug nyata: "5000k/5000k 8 3000k/3000k" membuat
+// RouterOS membaca burst=8k (< max 5000k) sehingga login pelanggan gagal:
+//   "failed to add queue: download-burst-limit less than download-max-limit".
+// Karena itu kepala burst SELALU ditulis. Saat burst dimatikan, burst dan
+// threshold diisi sama dengan max — nilai netral, tidak menaikkan kecepatan,
+// tetapi membuat posisi priority dan min-rate tetap benar.
 export function buildRateLimit(spec: BandwidthSpec): string {
-  const parts = [`${kbps(spec.maxUploadKbps)}/${kbps(spec.maxDownloadKbps)}`];
+  const maxUp = Math.max(1, Math.round(spec.maxUploadKbps));
+  const maxDown = Math.max(1, Math.round(spec.maxDownloadKbps));
 
-  if (spec.burstEnabled) {
-    // Burst tanpa nilai threshold/time tidak sah di RouterOS; pakai nilai wajar
-    // supaya string tetap valid, bukan mengirim bagian kosong.
-    const burstUp = spec.burstUploadKbps ?? spec.maxUploadKbps;
-    const burstDown = spec.burstDownloadKbps ?? spec.maxDownloadKbps;
-    const thrUp = spec.burstThresholdUploadKbps ?? Math.round(spec.maxUploadKbps * 0.75);
-    const thrDown = spec.burstThresholdDownloadKbps ?? Math.round(spec.maxDownloadKbps * 0.75);
-    const time = spec.burstTimeSec ?? 8;
-    parts.push(`${kbps(burstUp)}/${kbps(burstDown)}`);
-    parts.push(`${kbps(thrUp)}/${kbps(thrDown)}`);
-    parts.push(`${time}/${time}`);
-  }
+  const parts = [`${kbps(maxUp)}/${kbps(maxDown)}`];
 
-  parts.push(String(spec.priority ?? 1));
+  // Model burst: DIHITUNG dari max-limit, bukan diketik manual.
+  //   burst     = 2x max (batas atas yang diizinkan)
+  //   threshold = max (baru boleh naik kalau pemakaian di bawah max)
+  //   time      = 8 detik
+  // Nilai burst dari database tetap dihormati HANYA kalau lebih kecil dari 2x
+  // dan tidak di bawah max — jadi data lama yang salah tidak bisa lolos, dan
+  // kenaikan tidak pernah melebihi 2x.
+  const burstOn = spec.burstEnabled === true;
+  const ceilingUp = maxUp * BURST_FACTOR;
+  const ceilingDown = maxDown * BURST_FACTOR;
+  const burstUp = burstOn
+    ? Math.min(Math.max(spec.burstUploadKbps ?? ceilingUp, maxUp), ceilingUp)
+    : maxUp;
+  const burstDown = burstOn
+    ? Math.min(Math.max(spec.burstDownloadKbps ?? ceilingDown, maxDown), ceilingDown)
+    : maxDown;
+  const thrUp = Math.min(burstOn ? (spec.burstThresholdUploadKbps ?? maxUp) : maxUp, burstUp);
+  const thrDown = Math.min(burstOn ? (spec.burstThresholdDownloadKbps ?? maxDown) : maxDown, burstDown);
+  const time = Math.max(1, Math.round(spec.burstTimeSec ?? 8));
+
+  parts.push(`${kbps(burstUp)}/${kbps(burstDown)}`);
+  parts.push(`${kbps(thrUp)}/${kbps(thrDown)}`);
+  parts.push(`${time}/${time}`);
+  // 8 = prioritas paling rendah; angka terbesar, bukan terkecil.
+  parts.push(String(spec.priority ?? 8));
 
   if (spec.minUploadKbps > 0 || spec.minDownloadKbps > 0) {
     parts.push(`${kbps(spec.minUploadKbps)}/${kbps(spec.minDownloadKbps)}`);
@@ -207,4 +237,44 @@ export function buildLoginTime(
 
   const codes = [...new Set(picked.map(dayCode))];
   return `${codes.join('|')}${window}`;
+}
+
+/** Satu nilai 32-bit; MikroTik memecah kuota besar ke Gigawords. */
+const UINT32 = 4_294_967_296;
+
+export interface RadiusAttrRow {
+  attribute: string;
+  op: string;
+  value: string;
+}
+
+/**
+ * Atribut balasan untuk limitasi sebuah GRUP (profil layanan).
+ *
+ * - `Session-Timeout` = batas DURASI SATU SESI (detik), bukan akumulasi.
+ * - `Mikrotik-Total-Limit` (+`-Gigawords`) = batas TOTAL pemakaian data.
+ *
+ * Ditulis ke radgroupreply, jadi berlaku untuk semua user dalam grup itu.
+ */
+export function limitReplyAttributes(input: {
+  timeLimitSeconds?: number | null;
+  quotaLimitBytes?: number | null;
+}): RadiusAttrRow[] {
+  const rows: RadiusAttrRow[] = [];
+
+  const seconds = Math.trunc(Number(input.timeLimitSeconds ?? 0));
+  if (Number.isFinite(seconds) && seconds > 0) {
+    rows.push({ attribute: 'Session-Timeout', op: ':=', value: String(seconds) });
+  }
+
+  const bytes = Math.trunc(Number(input.quotaLimitBytes ?? 0));
+  if (Number.isFinite(bytes) && bytes > 0) {
+    const gigawords = Math.floor(bytes / UINT32);
+    rows.push({ attribute: 'Mikrotik-Total-Limit', op: ':=', value: String(bytes % UINT32) });
+    if (gigawords > 0) {
+      rows.push({ attribute: 'Mikrotik-Total-Limit-Gigawords', op: ':=', value: String(gigawords) });
+    }
+  }
+
+  return rows;
 }

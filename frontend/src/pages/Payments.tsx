@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import api from '../services/api';
+import { useBackgroundRefresh } from '../hooks/useBackgroundRefresh';
 import { useAuth } from '../contexts/AuthContext';
 import { downloadCsv } from '../utils/csv';
 
@@ -116,6 +117,9 @@ const Payments: React.FC = () => {
   const [method, setMethod] = useState<'' | PaymentMethod>('');
   const [status, setStatus] = useState<'all' | 'valid' | 'void'>('all');
   const [loading, setLoading] = useState(true);
+  // Pemuatan pertama menampilkan spinner; pemuatan berikutnya berjalan
+  // di belakang layar tanpa mengosongkan data yang sudah tampil.
+  const loadedOnce = useRef(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast>(null);
 
@@ -159,7 +163,8 @@ const Payments: React.FC = () => {
   }, [period.from, period.to]);
 
   const loadRows = useCallback(async () => {
-    setLoading(true);
+    if (!loadedOnce.current) setLoading(true);
+    loadedOnce.current = true;
     setLoadError(null);
     try {
       const [list] = await Promise.all([
@@ -195,6 +200,8 @@ const Payments: React.FC = () => {
   useEffect(() => {
     void loadRows();
   }, [loadRows]);
+
+  useBackgroundRefresh(loadRows, { intervalMs: 60000 });
 
   useEffect(() => {
     if (!toast) return;

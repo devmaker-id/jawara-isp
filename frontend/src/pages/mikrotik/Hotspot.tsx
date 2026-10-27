@@ -103,13 +103,6 @@ const Hotspot: React.FC = () => {
   const users = useNet<UserRow[]>('/api/mikrotik/hotspot/users' + deviceSel.query);
   const active = useNet<ActiveRow[]>('/api/mikrotik/hotspot/active' + deviceSel.query);
 
-  const reloadAll = () => {
-    servers.reload();
-    profiles.reload();
-    users.reload();
-    active.reload();
-  };
-
   const filteredUsers = useMemo(() => {
     const needle = search.trim().toLowerCase();
     if (!needle) return users.data ?? [];
@@ -171,7 +164,6 @@ const Hotspot: React.FC = () => {
       <PageHeader
         title="MikroTik — Hotspot"
         subtitle="Server, profil, user voucer, dan sesi hotspot yang sedang aktif di perangkat."
-        actions={<Button onClick={reloadAll}>Muat ulang</Button>}
       />
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

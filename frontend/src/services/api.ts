@@ -43,6 +43,15 @@ export function classifySessionFailure(error: unknown): SessionFailureKind {
   return 'other';
 }
 
+// Sesi berakhir. Disiarkan sebagai peristiwa, BUKAN dengan memuat ulang
+// halaman: AuthContext mengosongkan sesi dan router mengarahkan ke /login
+// tanpa memuat ulang seluruh panel.
+export const AUTH_EXPIRED_EVENT = 'auth:expired';
+
+export function broadcastAuthExpired(): void {
+  window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
+}
+
 // Response interceptor - hanya menangani sesi yang benar-benar tidak sah
 api.interceptors.response.use(
   (response) => response,
@@ -53,7 +62,7 @@ api.interceptors.response.use(
         localStorage.removeItem('token');
         localStorage.removeItem('user');
         if (window.location.pathname !== '/login') {
-          window.location.href = '/login';
+          broadcastAuthExpired();
         }
       }
     }

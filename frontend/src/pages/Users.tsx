@@ -1,5 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import api from '../services/api';
+import { useBackgroundRefresh } from '../hooks/useBackgroundRefresh';
+import PermissionMatrix from './users/PermissionMatrix';
 
 type Role = 'admin' | 'operator' | 'resseler';
 
@@ -68,6 +70,9 @@ const Users: React.FC = () => {
   const [roleFilter, setRoleFilter] = useState<'' | Role>('');
   const [statusFilter, setStatusFilter] = useState<'' | 'active' | 'inactive'>('');
   const [loading, setLoading] = useState(true);
+  // Pemuatan pertama menampilkan spinner; pemuatan berikutnya berjalan
+  // di belakang layar tanpa mengosongkan data yang sudah tampil.
+  const loadedOnce = useRef(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
 
@@ -77,6 +82,7 @@ const Users: React.FC = () => {
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  const [permTarget, setPermTarget] = useState<UserRow | null>(null);
   const [passwordTarget, setPasswordTarget] = useState<UserRow | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [confirmTarget, setConfirmTarget] = useState<{ user: UserRow; nextState: boolean } | null>(null);
@@ -86,7 +92,8 @@ const Users: React.FC = () => {
   const [ownerAssignment, setOwnerAssignment] = useState<boolean | null>(null);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    if (!loadedOnce.current) setLoading(true);
+    loadedOnce.current = true;
     setLoadError(null);
     try {
       const res = await api.get('/api/admin/users', {
@@ -107,6 +114,8 @@ const Users: React.FC = () => {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useBackgroundRefresh(load, { intervalMs: 60000 });
 
   useEffect(() => {
     api
@@ -398,6 +407,13 @@ const Users: React.FC = () => {
                           </button>
                           <button
                             type="button"
+                            onClick={() => setPermTarget(user)}
+                            className="px-2.5 py-1.5 rounded-lg text-xs text-white bg-indigo-500/20 hover:bg-indigo-500/30 transition"
+                          >
+                            Hak akses
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => {
                               setPasswordTarget(user);
                               setNewPassword('');
@@ -530,9 +546,10 @@ const Users: React.FC = () => {
             </div>
 
             {form.role === 'resseler' && (
-              <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">
-                Identitas reseller belum bisa dihubungkan: belum ada relasi reseller–pelanggan di
-                skema. Akun reseller dibuat tanpa cakupan data.
+              <p className="text-xs text-slate-300 bg-slate-700/40 border border-slate-600/60 rounded-lg px-3 py-2">
+                Reseller hanya melihat pelanggan miliknya. Izin awalnya: tambah/ubah pelanggan,
+                CRUD profil, buat &amp; cetak voucher — <strong>tanpa</strong> hapus. Permintaan
+                hapusnya masuk menu Persetujuan. Sesuaikan lewat tombol Hak akses.
               </p>
             )}
 
@@ -575,6 +592,16 @@ const Users: React.FC = () => {
             </div>
           </form>
         </div>
+      )}
+
+      {permTarget && (
+        <PermissionMatrix
+          userId={permTarget.id}
+          userName={permTarget.name}
+          isSelf={permTarget.id === currentUserId}
+          onClose={() => setPermTarget(null)}
+          onSaved={(text) => setNotice({ kind: 'ok', text })}
+        />
       )}
 
       {passwordTarget && (

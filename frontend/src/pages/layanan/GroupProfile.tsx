@@ -1,6 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import api from '../../services/api';
+import { useBackgroundRefresh } from '../../hooks/useBackgroundRefresh';
 import { useAuth } from '../../contexts/AuthContext';
+import OwnerSelect from '../../components/OwnerSelect';
 import {
   Badge,
   Button,
@@ -28,10 +30,17 @@ interface Provisioning {
 interface GroupRow {
   id: number;
   name: string;
+  owner_id?: number | null;
+  owner_name?: string | null;
+  created_by?: number | null;
+  created_by_name?: string | null;
   type: 'hotspot' | 'ppp';
   router_id: number;
-  pool_mode: 'mikrotik-pool' | 'sql-ippool';
+  pool_mode: 'mikrotik-pool' | 'sql-ippool' | 'group-pool' | 'router-pool';
   mikrotik_pool_name: string | null;
+  pool_local_address: string | null;
+  pool_range_start: string | null;
+  pool_range_end: string | null;
   dns_primary: string | null;
   dns_secondary: string | null;
   parent_queue: string | null;
@@ -46,22 +55,40 @@ interface Device {
 
 interface FormState {
   name: string;
+  /** Pemilik data (admin saja). '' = dirinya sendiri. */
+  owner_id: string;
   type: 'hotspot' | 'ppp';
   router_id: string;
-  pool_mode: 'mikrotik-pool' | 'sql-ippool';
+  pool_mode: 'mikrotik-pool' | 'sql-ippool' | 'group-pool' | 'router-pool';
   mikrotik_pool_name: string;
+  pool_local_address: string;
+  pool_range_start: string;
+  pool_range_end: string;
   dns_primary: string;
   dns_secondary: string;
   parent_queue: string;
   use_router_default: boolean;
 }
 
+/** Penanda objek buatan panel di router — harus sama dengan OWNER_COMMENT di backend. */
+const OWNER_COMMENT = 'created by jawara-isp';
+
+/** Nama pool yang akan dibuat panel; cermin dari poolNameFor() di backend. */
+const poolNameFor = (name: string) => {
+  const slug = name.trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  return `jw-${slug || 'pool'}`.slice(0, 64);
+};
+
 const EMPTY: FormState = {
   name: '',
+  owner_id: '',
   type: 'hotspot',
   router_id: '',
-  pool_mode: 'mikrotik-pool',
+  pool_mode: 'group-pool',
   mikrotik_pool_name: '',
+  pool_local_address: '',
+  pool_range_start: '',
+  pool_range_end: '',
   dns_primary: '8.8.8.8',
   dns_secondary: '1.1.1.1',
   parent_queue: '',
@@ -75,6 +102,9 @@ const GroupProfile: React.FC = () => {
   const [rows, setRows] = useState<GroupRow[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
   const [loading, setLoading] = useState(true);
+  // Pemuatan pertama menampilkan spinner; pemuatan berikutnya berjalan
+  // di belakang layar tanpa mengosongkan data yang sudah tampil.
+  const loadedOnce = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -84,7 +114,8 @@ const GroupProfile: React.FC = () => {
   const [confirm, setConfirm] = useState<GroupRow | null>(null);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    if (!loadedOnce.current) setLoading(true);
+    loadedOnce.current = true;
     setError(null);
     try {
       const [groups, deviceList] = await Promise.all([
@@ -105,6 +136,8 @@ const GroupProfile: React.FC = () => {
     void load();
   }, [load]);
 
+  useBackgroundRefresh(load, { intervalMs: 60000 });
+
   const openCreate = () => {
     setEditId(null);
     setForm({ ...EMPTY, router_id: devices[0] ? String(devices[0].id) : '' });
@@ -113,11 +146,16 @@ const GroupProfile: React.FC = () => {
   const openEdit = (row: GroupRow) => {
     setEditId(row.id);
     setForm({
+      ...EMPTY,
       name: row.name,
+      owner_id: row.owner_id ? String(row.owner_id) : '',
       type: row.type,
       router_id: String(row.router_id),
       pool_mode: row.pool_mode,
       mikrotik_pool_name: row.mikrotik_pool_name ?? '',
+      pool_local_address: row.pool_local_address ?? '',
+      pool_range_start: row.pool_range_start ?? '',
+      pool_range_end: row.pool_range_end ?? '',
       dns_primary: row.dns_primary ?? '',
       dns_secondary: row.dns_secondary ?? '',
       parent_queue: row.parent_queue ?? '',
@@ -125,11 +163,19 @@ const GroupProfile: React.FC = () => {
     });
   };
 
+  // Nama pool yang akan dibuat panel, ditampilkan sebagai pratinjau.
+  const poolPreview = form ? `"${poolNameFor(form.name)}"` : '';
+
   const invalid =
     !form ||
     form.name.trim() === '' ||
     form.router_id === '' ||
-    (!form.use_router_default && form.pool_mode === 'mikrotik-pool' && form.mikrotik_pool_name.trim() === '');
+    (!form.use_router_default && form.pool_mode === 'mikrotik-pool' && form.mikrotik_pool_name.trim() === '') ||
+    (!form.use_router_default &&
+      form.pool_mode === 'router-pool' &&
+      (form.pool_range_start.trim() === '' ||
+        form.pool_range_end.trim() === '' ||
+        form.pool_local_address.trim() === ''));
 
   const save = async () => {
     if (!form) return;
@@ -141,6 +187,9 @@ const GroupProfile: React.FC = () => {
       router_id: Number(form.router_id),
       pool_mode: form.pool_mode,
       mikrotik_pool_name: form.pool_mode === 'mikrotik-pool' ? form.mikrotik_pool_name.trim() : null,
+      pool_local_address: form.pool_mode === 'router-pool' ? form.pool_local_address.trim() || null : null,
+      pool_range_start: form.pool_mode === 'router-pool' ? form.pool_range_start.trim() || null : null,
+      pool_range_end: form.pool_mode === 'router-pool' ? form.pool_range_end.trim() || null : null,
       dns_primary: form.dns_primary.trim() || null,
       dns_secondary: form.dns_secondary.trim() || null,
       parent_queue: form.parent_queue.trim() || null,
@@ -149,7 +198,14 @@ const GroupProfile: React.FC = () => {
     try {
       const { data } = editId
         ? await api.patch<{ provisioning?: Provisioning }>(`/api/profiles/groups/${editId}`, payload)
-        : await api.post<{ provisioning?: Provisioning }>('/api/profiles/groups', payload);
+        : await api.post<{ provisioning?: Provisioning }>('/api/profiles/groups', {
+            ...payload,
+            ...(form.owner_id === 'none'
+              ? { owner_id: null }
+              : form.owner_id !== ''
+                ? { owner_id: Number(form.owner_id) }
+                : {}),
+          });
       const prov = data?.provisioning;
       if (prov) {
         // Hasil penyiapan di perangkat dilaporkan apa adanya: berhasil, ditolak,
@@ -189,7 +245,7 @@ const GroupProfile: React.FC = () => {
   return (
     <div className="page-container">
       <PageHeader
-        title="Layanan — Group Profile"
+        title="Profile Group — Group Profile"
         subtitle="Satu grup menempel pada satu router. Nama grup dipakai sebagai nama profil di MikroTik dan nama grup RADIUS."
         actions={isAdmin ? <Button variant="primary" onClick={openCreate}>Tambah grup</Button> : undefined}
       />
@@ -232,7 +288,7 @@ const GroupProfile: React.FC = () => {
           <Loading label="Memuat group profile…" />
         ) : (
           <Table
-            columns={['Nama', 'Tipe', 'Router', 'Pool', 'DNS', 'Parent Queue', isAdmin ? 'Aksi' : '']}
+            columns={['Nama', 'Tipe', 'Router', 'Pool', 'DNS', 'Parent Queue', 'Pemilik', 'Dibuat oleh', isAdmin ? 'Aksi' : '']}
             isEmpty={rows.length === 0}
             empty="Belum ada group profile."
           >
@@ -247,7 +303,17 @@ const GroupProfile: React.FC = () => {
                   {row.pool_mode === 'sql-ippool' ? (
                     <Badge tone="mute">sql-ippool</Badge>
                   ) : (
-                    <span className="font-mono text-[11px]">{row.mikrotik_pool_name}</span>
+                    <div>
+                      <span className="font-mono text-[11px]">
+                        {row.pool_mode === 'group-pool' ? 'bawaan router' : row.mikrotik_pool_name}
+                      </span>
+                      {row.pool_mode === 'router-pool' && (
+                        <p className="font-mono text-[10px] text-slate-500">
+                          {row.pool_range_start}-{row.pool_range_end}
+                          {row.pool_local_address ? ` · gw ${row.pool_local_address}` : ''}
+                        </p>
+                      )}
+                    </div>
                   )}
                 </td>
                 <td className="px-3 py-2 font-mono text-[11px] text-slate-400">
@@ -256,6 +322,10 @@ const GroupProfile: React.FC = () => {
                 <td className="px-3 py-2 font-mono text-[11px] text-slate-400">
                   {row.parent_queue ?? '-'}
                 </td>
+                <td className="px-3 py-2 text-xs text-slate-400">
+                  {row.owner_name ?? <span className="text-slate-500">Tanpa pemilik</span>}
+                </td>
+                <td className="px-3 py-2 text-xs text-slate-400">{row.created_by_name ?? '—'}</td>
                 {isAdmin && (
                   <td className="px-3 py-2">
                     <div className="flex gap-1">
@@ -288,10 +358,26 @@ const GroupProfile: React.FC = () => {
                 </p>
               </div>
 
+              {!editId && (
+                <OwnerSelect
+                  value={form.owner_id}
+                  onChange={(value) => setForm((f) => (f ? { ...f, owner_id: value } : f))}
+                  label="Pemilik grup (admin boleh membuat atas nama akun lain)"
+                />
+              )}
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="mb-1 block text-xs text-slate-400">Tipe *</label>
-                  <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as 'hotspot' | 'ppp' })}
+                  <select value={form.type} onChange={(e) => setForm({
+                    ...form,
+                    type: e.target.value as 'hotspot' | 'ppp',
+                    // Mode awal mengikuti tipe: group-pool khusus hotspot,
+                    // router-pool khusus PPP. Isian pool lama dibuang.
+                    pool_mode: e.target.value === 'hotspot' ? 'group-pool' : 'router-pool',
+                    mikrotik_pool_name: '',
+                    pool_local_address: '',
+                  })}
                     className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100">
                     <option value="hotspot">HOTSPOT</option>
                     <option value="ppp">PPP</option>
@@ -312,11 +398,31 @@ const GroupProfile: React.FC = () => {
               <div>
                 <label className="mb-1 block text-xs text-slate-400">Modul IP pool</label>
                 <select value={form.pool_mode}
-                  onChange={(e) => setForm({ ...form, pool_mode: e.target.value as 'mikrotik-pool' | 'sql-ippool' })}
+                  onChange={(e) => setForm({ ...form, pool_mode: e.target.value as FormState['pool_mode'] })}
                   className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100">
-                  <option value="mikrotik-pool">IP pool MikroTik (per router)</option>
-                  <option value="sql-ippool">SQL-IP-POOL RADIUS (global)</option>
+                  {form.type === 'hotspot' ? (
+                    <>
+                      <option value="group-pool">GROUP ONLY (Hotspot Only)</option>
+                      <option value="mikrotik-pool">Pakai IP pool yang sudah ada di router</option>
+                      <option value="sql-ippool">SQL-IP-POOL RADIUS (global)</option>
+                    </>
+                  ) : (
+                    <>
+                      <option value="router-pool">IP pool MikroTik (per router)</option>
+                      <option value="mikrotik-pool">Pakai IP pool yang sudah ada di router</option>
+                      <option value="sql-ippool">SQL-IP-POOL RADIUS (global)</option>
+                    </>
+                  )}
                 </select>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  {form.pool_mode === 'group-pool'
+                    ? 'RADIUS memakai profil hotspot bawaan router. Tidak ada IP pool maupun profil hotspot yang ditulis ke MikroTik.'
+                    : form.pool_mode === 'router-pool'
+                      ? `Panel membuat pool ${poolPreview} di router (komentar "${OWNER_COMMENT}") lalu profil PPP yang menunjuknya.`
+                      : form.pool_mode === 'mikrotik-pool'
+                        ? 'Pool tidak dibuat panel — pilih pool yang sudah ada di router.'
+                        : 'Alamat diberikan RADIUS; tidak ada pool di router.'}
+                </p>
               </div>
 
               {form.pool_mode === 'mikrotik-pool' && (
@@ -327,6 +433,39 @@ const GroupProfile: React.FC = () => {
                     className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100"
                     placeholder="hs-nanggela" />
                 </div>
+              )}
+
+              {form.pool_mode === 'router-pool' && (
+                <>
+                  {(
+                    <div>
+                      <label className="mb-1 block text-xs text-slate-400">IP local (gateway sesi) *</label>
+                      <input value={form.pool_local_address}
+                        onChange={(e) => setForm({ ...form, pool_local_address: e.target.value })}
+                        className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100"
+                        placeholder="172.10.0.1" />
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        Ditulis sebagai <code>local-address</code> pada profil PPP. Tidak boleh masuk ke rentang pool.
+                      </p>
+                    </div>
+                  )}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="mb-1 block text-xs text-slate-400">IP awal pool *</label>
+                      <input value={form.pool_range_start}
+                        onChange={(e) => setForm({ ...form, pool_range_start: e.target.value })}
+                        className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100"
+                        placeholder="172.10.0.2" />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs text-slate-400">IP akhir pool *</label>
+                      <input value={form.pool_range_end}
+                        onChange={(e) => setForm({ ...form, pool_range_end: e.target.value })}
+                        className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100"
+                        placeholder="172.10.0.254" />
+                    </div>
+                  </div>
+                </>
               )}
 
               <div className="grid grid-cols-2 gap-3">
@@ -391,9 +530,18 @@ const GroupProfile: React.FC = () => {
               profil atau voucher tidak bisa dihapus.
             </p>
             <p className="mt-2 text-xs text-amber-400">
-              Profil dengan nama ini di perangkat MikroTik TIDAK ikut terhapus. Hapus manual di
-              perangkat bila memang tidak dipakai lagi:
-              {' '}<code className="text-slate-200">/ppp/profile remove [find name=&quot;{confirm.name}&quot;]</code>
+              Objek di perangkat TIDAK ikut terhapus. Hapus manual bila memang tidak dipakai lagi:
+            </p>
+            <pre className="mt-1 overflow-x-auto rounded bg-slate-900/70 p-2 text-[11px] text-cyan-200">
+              {[
+                `${confirm.type === 'hotspot' ? '/ip/hotspot/user/profile' : '/ppp/profile'} remove [find name="${confirm.name}"]`,
+                confirm.pool_mode === 'router-pool' && confirm.mikrotik_pool_name
+                  ? `/ip/pool remove [find name="${confirm.mikrotik_pool_name}"]`
+                  : `/ip/pool print where comment="${OWNER_COMMENT}"`,
+              ].join('\n')}
+            </pre>
+            <p className="mt-1 text-[11px] text-slate-500">
+              Pool buatan panel ditandai komentar <code>{OWNER_COMMENT}</code>.
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <Button onClick={() => setConfirm(null)}>Batal</Button>

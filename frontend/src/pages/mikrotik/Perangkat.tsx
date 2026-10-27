@@ -225,9 +225,6 @@ const Perangkat: React.FC = () => {
       <Card>
         <Toolbar>
           <span className="text-sm text-slate-400">Kredensial disimpan per perangkat, bukan di file konfigurasi.</span>
-          <Button onClick={list.reload} className="ml-auto">
-            Muat ulang
-          </Button>
         </Toolbar>
 
         {list.loading && rows.length === 0 ? (

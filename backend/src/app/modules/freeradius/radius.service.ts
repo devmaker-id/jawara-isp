@@ -10,6 +10,7 @@ import { ConfigService } from '../../config/config.service';
 import { DatabaseService } from '../../database/database.service';
 import { MikrotikService } from '../mikrotik/mikrotik.service';
 import { probeCoa } from './coa-probe';
+import { IsolirService } from './isolir.service';
 import { RadiusConfigService } from './radius-config.service';
 import {
   CreateNasDto,
@@ -53,6 +54,7 @@ export class RadiusService {
     private readonly db: DatabaseService,
     private readonly mikrotik: MikrotikService,
     private readonly configService: RadiusConfigService,
+    private readonly isolir: IsolirService,
   ) {}
 
   private async schemaState() {
@@ -240,6 +242,24 @@ export class RadiusService {
       this.logger.warn(`Restart FreeRADIUS setelah menambah NAS gagal: ${restart_message}`);
     }
 
+    // Profil isolir disiapkan bersama NAS: pelanggan PPPoE yang menunggak atau
+    // kehabisan batas harus punya tempat mendarat (IP 10.127.0.0/18), dan
+    // atribut grupnya ditulis ke radgroupreply. Kegagalan di sini tidak
+    // membatalkan NAS — dilaporkan supaya bisa diulang dari panel.
+    let isolir_setup: { group: string; attributes: number; provisioning?: unknown } | null = null;
+    let isolir_error: string | null = null;
+    try {
+      const group = await this.isolir.syncGroupAttributes();
+      const provisioning = preflight?.device_id
+        ? await this.isolir.provisionDevice(preflight.device_id)
+        : undefined;
+      if (preflight?.device_id) await this.isolir.ensureGroupRow(preflight.device_id);
+      isolir_setup = { ...group, provisioning };
+    } catch (error) {
+      isolir_error = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Penyiapan profil isolir gagal: ${isolir_error}`);
+    }
+
     return {
       id,
       nasname,
@@ -250,6 +270,8 @@ export class RadiusService {
       coa: { status: coa.status, detail: coa.detail, elapsed_ms: coa.elapsed_ms },
       radius_restarted,
       restart_message: restart_message || undefined,
+      isolir: isolir_setup,
+      isolir_error: isolir_error || undefined,
     };
   }
 
@@ -467,6 +489,17 @@ export class RadiusService {
   async accounting(limit?: string) {
     await this.ensureReady();
     return this.radius.accounting(limit ? Number(limit) : 100);
+  }
+
+  // Cek pemakaian user: dipakai dialog untuk semua role (admin/operator/resseler).
+  async usageLookup(query: { type: 'customer' | 'voucher'; username?: string; mac?: string }) {
+    const username = query.username?.trim() || undefined;
+    const mac = query.mac?.trim() || undefined;
+    if (!username && !mac) {
+      throw new BadRequestException('Isi username atau MAC address terlebih dahulu');
+    }
+    await this.ensureReady();
+    return this.radius.usageLookup({ userType: query.type, username, mac });
   }
 
   // ---- Grup RADIUS -------------------------------------------------------

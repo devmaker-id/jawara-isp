@@ -1,5 +1,7 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../../services/api';
+import { useBackgroundRefresh } from '../../hooks/useBackgroundRefresh';
 
 // ===== helper tampilan bersama untuk halaman jaringan =====
 
@@ -36,18 +38,30 @@ export const errorMessage = (error: unknown): string => {
 
 export interface NetFetch<T> {
   data: T | null;
+  /** Hanya true pada pemuatan PERTAMA; pemuatan latar tidak mengosongkan layar. */
   loading: boolean;
+  /** True saat data sedang diambil ulang di belakang layar. */
+  refreshing: boolean;
   error: string | null;
   reload: () => void;
 }
 
 // GET sederhana dengan status loading/error yang eksplisit supaya halaman
 // tidak pernah menampilkan angka nol palsu saat data belum/tidak terbaca.
-export function useNet<T>(path: string, enabled = true): NetFetch<T> {
+export function useNet<T>(
+  path: string,
+  enabled = true,
+  options: { refreshMs?: number } = {},
+): NetFetch<T> {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(enabled);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
+
+  // Pemuatan ulang mengikuti pola yang sama di seluruh panel: spinner penuh
+  // hanya saat belum ada data, selebihnya data lama tetap tampil.
+  const hasData = useRef(false);
 
   const reload = useCallback(() => setNonce((value) => value + 1), []);
 
@@ -57,28 +71,41 @@ export function useNet<T>(path: string, enabled = true): NetFetch<T> {
       return;
     }
     let alive = true;
-    setLoading(true);
+    if (!hasData.current) setLoading(true);
+    else setRefreshing(true);
     setError(null);
     api
       .get<T>(path)
       .then((response) => {
-        if (alive) setData(response.data);
+        if (alive) {
+          setData(response.data);
+          hasData.current = true;
+        }
       })
       .catch((requestError) => {
         if (alive) {
-          setData(null);
+          // Data lama dipertahankan: gangguan sesaat tidak boleh menghapus
+          // angka yang sudah terbaca benar.
+          if (!hasData.current) setData(null);
           setError(errorMessage(requestError));
         }
       })
       .finally(() => {
-        if (alive) setLoading(false);
+        if (alive) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       });
     return () => {
       alive = false;
     };
   }, [path, enabled, nonce]);
 
-  return { data, loading, error, reload };
+  // Pemuatan latar: saat tab kembali aktif. Interval sengaja 0 (mati) karena
+  // halaman ini membaca perangkat jaringan — jangan membanjiri router.
+  useBackgroundRefresh(reload, { intervalMs: options.refreshMs ?? 0 });
+
+  return { data, loading, refreshing, error, reload };
 }
 
 export const PageHeader: React.FC<{
@@ -391,9 +418,10 @@ export const DeviceBar: React.FC<{ selection: DeviceSelection }> = ({ selection 
     return (
       <InfoNote tone="warn">
         Belum ada perangkat MikroTik terdaftar.{' '}
-        <a className="font-semibold underline" href="/mikrotik/perangkat">
+        {/* Tautan router, bukan <a href>: <a> memuat ulang seluruh panel. */}
+        <Link className="font-semibold underline" to="/mikrotik/perangkat">
           Tambahkan perangkat
-        </a>{' '}
+        </Link>{' '}
         agar data bisa dibaca lewat API.
       </InfoNote>
     );

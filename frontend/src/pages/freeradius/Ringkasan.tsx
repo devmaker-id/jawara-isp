@@ -2,7 +2,6 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import {
   Badge,
-  Button,
   Card,
   ErrorNote,
   InfoNote,
@@ -47,7 +46,6 @@ const Ringkasan: React.FC = () => {
       <PageHeader
         title="FreeRADIUS — Ringkasan"
         subtitle="Status integrasi RADIUS: skema database, NAS terdaftar, user, dan sesi akuntansi."
-        actions={<Button onClick={status.reload}>Muat ulang</Button>}
       />
 
       {status.loading && <Loading />}

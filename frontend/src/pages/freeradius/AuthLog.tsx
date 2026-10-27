@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import api from '../../services/api';
+import { useBackgroundRefresh } from '../../hooks/useBackgroundRefresh';
 import {
   Badge,
   Button,
@@ -52,6 +53,9 @@ const emptyFacets = { nas: [], interfaces: [], replies: [] };
 const AuthLog: React.FC = () => {
   const [data, setData] = useState<AuthLogPayload | null>(null);
   const [loading, setLoading] = useState(true);
+  // Pemuatan pertama menampilkan spinner; pemuatan berikutnya berjalan di
+  // belakang layar tanpa mengosongkan data yang sudah tampil.
+  const loadedOnce = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
   const [search, setSearch] = useState('');
@@ -63,7 +67,8 @@ const AuthLog: React.FC = () => {
   const [page, setPage] = useState(1);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    if (!loadedOnce.current) setLoading(true);
+    loadedOnce.current = true;
     setError(null);
     try {
       const response = await api.get<AuthLogPayload>('/api/freeradius/auth-log', {
@@ -92,6 +97,9 @@ const AuthLog: React.FC = () => {
     return () => clearTimeout(timer);
   }, [load]);
 
+  // Log autentikasi ikut menyegarkan diri di belakang layar.
+  useBackgroundRefresh(load, { intervalMs: 30000 });
+
   // Setiap perubahan filter kembali ke halaman pertama.
   useEffect(() => {
     setPage(1);
@@ -119,7 +127,6 @@ const AuthLog: React.FC = () => {
       <PageHeader
         title="FreeRADIUS — Log Autentikasi"
         subtitle="Hasil autentikasi terakhir beserta IP NAS, MAC, interface, dan station."
-        actions={<Button onClick={() => void load()}>Muat ulang</Button>}
       />
 
       {error && (

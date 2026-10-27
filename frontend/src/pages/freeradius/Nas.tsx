@@ -175,10 +175,9 @@ const Nas: React.FC = () => {
         title="FreeRADIUS — NAS"
         subtitle="Daftar perangkat (biasanya MikroTik) yang diizinkan mengirim permintaan autentikasi ke FreeRADIUS."
         actions={
-          <>
-            <Button onClick={nas.reload}>Muat ulang</Button>
-            {isAdmin && <Button variant="primary" onClick={() => setForm({ ...emptyForm })}>+ Tambah NAS</Button>}
-          </>
+          isAdmin ? (
+            <Button variant="primary" onClick={() => setForm({ ...emptyForm })}>+ Tambah NAS</Button>
+          ) : undefined
         }
       />
 

@@ -7,6 +7,8 @@ import { describe, expect, it, vi } from 'vitest';
 //     tetap menempel karena `set` tidak menyentuh field yang tidak dikirim.
 const calls: Array<Record<string, string>> = [];
 const sent: string[][] = [];
+/** Perintah yang menyentuh /ip/pool (dibuat/diubah panel). */
+const poolCalls: Array<{ command: string; attrs: Record<string, string> }> = [];
 
 vi.mock('../src/app/modules/mikrotik/routeros.client', () => ({
   RouterOsClient: class {
@@ -18,6 +20,10 @@ vi.mock('../src/app/modules/mikrotik/routeros.client', () => ({
       for (const word of words[0].slice(1)) {
         const match = /^=([^=]+)=(.*)$/.exec(word);
         if (match) attrs[match[1]] = match[2];
+      }
+      if (command.startsWith('/ip/pool/')) {
+        poolCalls.push({ command, attrs });
+        return { records: [] as Record<string, string>[] };
       }
       calls.push(attrs);
       return { records: [] as Record<string, string>[] };
@@ -146,5 +152,87 @@ describe('provisionGroupProfile', () => {
     expect(result.action).toBe('skipped');
     // Perintah manual harus memakai bentuk yang benar: <path>/add
     expect(result.command.startsWith('/ppp/profile/add ')).toBe(true);
+  });
+});
+
+describe('router-pool: pool dibuat panel di router', () => {
+  const comment = 'created by jawara-isp';
+
+  it('PPP membuat /ip/pool lalu profil dengan local-address dan remote-address', async () => {
+    calls.length = 0;
+    poolCalls.length = 0;
+    const service = makeService();
+    const result = await service.provisionGroupProfile({
+      deviceId: 3,
+      type: 'ppp',
+      name: 'RUMAHAN',
+      parentQueue: 'A.CLIENT-PPP',
+      poolName: 'jw-RUMAHAN',
+      createPool: { name: 'jw-RUMAHAN', rangeStart: '172.10.0.2', rangeEnd: '172.10.0.254' },
+      localAddress: '172.10.0.1',
+      dnsPrimary: '8.8.8.8',
+      dnsSecondary: '1.1.1.1',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(poolCalls[0].command).toBe('/ip/pool/add');
+    expect(poolCalls[0].attrs).toEqual({
+      name: 'jw-RUMAHAN',
+      ranges: '172.10.0.2-172.10.0.254',
+      comment,
+    });
+    // Gateway TIDAK ikut ke dalam ranges.
+    expect(poolCalls[0].attrs.ranges).not.toContain('172.10.0.1-');
+    expect(calls[0]).toMatchObject({
+      name: 'RUMAHAN',
+      'local-address': '172.10.0.1',
+      'remote-address': 'jw-RUMAHAN',
+      'dns-server': '8.8.8.8,1.1.1.1',
+      'parent-queue': 'A.CLIENT-PPP',
+      comment,
+    });
+  });
+
+  it('hotspot memakai address-pool, tanpa comment (ditolak RouterOS 6.49)', async () => {
+    calls.length = 0;
+    poolCalls.length = 0;
+    const service = makeService();
+    await service.provisionGroupProfile({
+      deviceId: 3,
+      type: 'hotspot',
+      name: 'hs-warkop',
+      parentQueue: 'B.HOTSPOT',
+      poolName: 'jw-hs-warkop',
+      createPool: { name: 'jw-hs-warkop', rangeStart: '10.10.0.2', rangeEnd: '10.10.0.254' },
+      dnsPrimary: '8.8.8.8',
+      dnsSecondary: '1.1.1.1',
+    });
+
+    expect(poolCalls[0].attrs).toEqual({
+      name: 'jw-hs-warkop',
+      ranges: '10.10.0.2-10.10.0.254',
+      comment,
+    });
+    // comment pada /ip/hotspot/user/profile membuat RouterOS menolak perintah.
+    expect(calls[0]).not.toHaveProperty('comment');
+    expect(calls[0]).not.toHaveProperty('dns-server');
+    expect(calls[0]).toMatchObject({ 'address-pool': 'jw-hs-warkop' });
+  });
+
+  it('perintah manual menulis pool lebih dulu, lalu profil', async () => {
+    const service = makeService({ write_enabled: 0 });
+    const result = await service.provisionGroupProfile({
+      deviceId: 3,
+      type: 'ppp',
+      name: 'X',
+      poolName: 'jw-X',
+      createPool: { name: 'jw-X', rangeStart: '172.10.0.2', rangeEnd: '172.10.0.254' },
+      localAddress: '172.10.0.1',
+    });
+
+    expect(result.action).toBe('skipped');
+    const [poolPart, profilePart] = result.command.split(' ; ');
+    expect(poolPart.startsWith('/ip/pool/add ')).toBe(true);
+    expect(profilePart.startsWith('/ppp/profile/add ')).toBe(true);
   });
 });

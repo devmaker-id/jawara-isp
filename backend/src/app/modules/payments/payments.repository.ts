@@ -578,6 +578,84 @@ export class PaymentsRepository {
       paidDate,
       invoiceId,
     ]);
+
+    await this.syncAccountState(conn, invoiceId, status);
+  }
+
+  /**
+   * Menyambungkan uang ke akun RADIUS.
+   *
+   * Tagihan yang menunjuk `username` mengendalikan status akun itu:
+   *   lunas            → 'new-created' menjadi 'ready-to-use' (voucher) atau
+   *                      'active' (customer/member)
+   *   tidak lagi lunas → kembali 'new-created' HANYA bila akun belum pernah
+   *                      login; akun yang sudah dipakai tidak dicabut mundur.
+   *
+   * Status lain ('expired', atau yang sudah dipakai) tidak pernah diturunkan
+   * di sini — pembatalan masa aktif bukan urusan pembayaran.
+   */
+  private async syncAccountState(
+    conn: PoolConnection,
+    invoiceId: number,
+    status: string,
+  ): Promise<void> {
+    const [rows] = await conn.query<RowDataPacket[]>(
+      'SELECT username FROM invoices WHERE id = ?',
+      [invoiceId],
+    );
+    const username = (rows[0]?.username as string | null) ?? null;
+    if (!username) return;
+
+    if (status === 'paid') {
+      await conn.query(
+        `UPDATE radius_vouchers
+            SET status = IF(user_type = 'voucher', 'ready-to-use', 'active')
+          WHERE username = ? AND status = 'new-created'`,
+        [username],
+      );
+
+      // Lunas = keluar dari isolir. Grup dikembalikan ke profil aslinya supaya
+      // pelanggan PPPoE tidak tertahan di 10.127.0.0/18 setelah membayar.
+      // Blokir waktu/kuota TIDAK dilepas di sini: kalau batasnya memang habis,
+      // penegak akan mengisolasinya lagi pada putaran berikutnya.
+      const [isolir] = await conn.query<RowDataPacket[]>(
+        'SELECT isolir_at FROM radius_vouchers WHERE username = ?',
+        [username],
+      );
+      if (isolir[0]?.isolir_at) {
+        const [target] = await conn.query<RowDataPacket[]>(
+          `SELECT COALESCE(h.radius_group, h.name, p.radius_group, p.name) AS groupname
+             FROM radius_vouchers v
+             LEFT JOIN hotspot_profiles h ON v.profile_type = 'hotspot' AND h.id = v.profile_id
+             LEFT JOIN ppp_profiles p     ON v.profile_type = 'ppp'     AND p.id = v.profile_id
+            WHERE v.username = ?`,
+          [username],
+        );
+        const groupname = (target[0]?.groupname as string | null) ?? null;
+        if (groupname) {
+          await conn.query('DELETE FROM radusergroup WHERE username = ?', [username]);
+          await conn.query(
+            'INSERT INTO radusergroup (username, groupname, priority) VALUES (?, ?, 1)',
+            [username, groupname],
+          );
+          await conn.query(
+            `UPDATE radius_vouchers
+                SET status = 'active', block_reason = NULL, isolir_at = NULL
+              WHERE username = ?`,
+            [username],
+          );
+        }
+      }
+      return;
+    }
+
+    await conn.query(
+      `UPDATE radius_vouchers
+          SET status = 'new-created'
+        WHERE username = ? AND status IN ('ready-to-use','active')
+          AND first_login_at IS NULL`,
+      [username],
+    );
   }
 
   private async lockInvoice(

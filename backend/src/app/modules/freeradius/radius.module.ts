@@ -6,6 +6,7 @@ import { RadiusController } from './radius.controller';
 import { RadiusInstallService } from './radius-install.service';
 import { RadiusConfigService } from './radius-config.service';
 import { RadiusEnforcementService } from './radius-enforcement.service';
+import { IsolirService } from './isolir.service';
 import { RadiusRepository } from './radius.repository';
 import { RadiusService } from './radius.service';
 
@@ -18,8 +19,9 @@ import { RadiusService } from './radius.service';
     RadiusInstallService,
     RadiusConfigService,
     RadiusEnforcementService,
+    IsolirService,
     ConfigService,
   ],
-  exports: [RadiusService, RadiusEnforcementService],
+  exports: [RadiusService, RadiusEnforcementService, IsolirService],
 })
 export class RadiusModule {}

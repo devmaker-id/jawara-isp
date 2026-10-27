@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import api from '../services/api';
+import { useBackgroundRefresh } from '../hooks/useBackgroundRefresh';
 import TablePagination from '../components/TablePagination';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -8,6 +9,8 @@ interface InvoiceItem {
   invoice_number: string;
   customer_id: number;
   customer_name: string;
+  /** Akun RADIUS yang ditagih; null untuk tagihan non-layanan. */
+  username: string | null;
   amount: number;
   status: 'unpaid' | 'paid' | 'overdue' | 'partial';
   due_date: string;
@@ -28,8 +31,16 @@ interface CustomerOption {
   name: string;
 }
 
+interface CustomerAccount {
+  username: string;
+  profile_type: 'hotspot' | 'ppp';
+  profile_name: string;
+  status: string;
+}
+
 interface InvoiceForm {
   customer_id: string;
+  username: string;
   amount: string;
   due_date: string;
   description: string;
@@ -66,7 +77,7 @@ const today = () => {
   ).padStart(2, '0')}`;
 };
 
-const EMPTY_FORM: InvoiceForm = { customer_id: '', amount: '', due_date: today(), description: '' };
+const EMPTY_FORM: InvoiceForm = { customer_id: '', username: '', amount: '', due_date: today(), description: '' };
 
 // DECIMAL(12,2): tampilkan maksimal 2 desimal tanpa membuang nilainya.
 const formatRupiah = (value: number): string =>
@@ -133,6 +144,9 @@ const Invoices: React.FC = () => {
   const [invoices, setInvoices] = useState<InvoiceItem[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
+  // Pemuatan pertama menampilkan spinner; pemuatan berikutnya berjalan
+  // di belakang layar tanpa mengosongkan data yang sudah tampil.
+  const loadedOnce = useRef(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | InvoiceItem['status']>('all');
@@ -145,6 +159,8 @@ const Invoices: React.FC = () => {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<InvoiceItem | null>(null);
   const [form, setForm] = useState<InvoiceForm>(EMPTY_FORM);
+  // Akun RADIUS milik pelanggan yang dipilih di form.
+  const [customerAccounts, setCustomerAccounts] = useState<CustomerAccount[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -177,7 +193,8 @@ const Invoices: React.FC = () => {
   const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    if (!loadedOnce.current) setLoading(true);
+    loadedOnce.current = true;
     setLoadError(null);
     try {
       const [list, stats] = await Promise.all([
@@ -212,6 +229,8 @@ const Invoices: React.FC = () => {
     void load();
   }, [load]);
 
+  useBackgroundRefresh(load, { intervalMs: 60000 });
+
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(null), 4000);
@@ -237,6 +256,7 @@ const Invoices: React.FC = () => {
     setEditing(invoice);
     setForm({
       customer_id: String(invoice.customer_id),
+      username: invoice.username ?? '',
       amount: String(invoice.amount),
       due_date: invoice.due_date.slice(0, 10),
       description: invoice.description ?? '',
@@ -244,6 +264,26 @@ const Invoices: React.FC = () => {
     setFormError(null);
     setFormOpen(true);
   };
+
+  // Daftar akun mengikuti pelanggan terpilih; tanpa pelanggan, daftarnya kosong.
+  useEffect(() => {
+    if (!formOpen || !form.customer_id) {
+      setCustomerAccounts([]);
+      return;
+    }
+    let alive = true;
+    api
+      .get<CustomerAccount[]>(`/api/customers/${form.customer_id}/accounts`)
+      .then(({ data }) => {
+        if (alive) setCustomerAccounts(data);
+      })
+      .catch(() => {
+        if (alive) setCustomerAccounts([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [formOpen, form.customer_id]);
 
   const closeForm = () => {
     if (saving) return;
@@ -283,6 +323,8 @@ const Invoices: React.FC = () => {
       } else {
         await api.post('/api/invoices', {
           customer_id: Number(form.customer_id),
+          // Akun RADIUS yang ditagih: pembayaran lunas akan mengaktifkannya.
+          username: form.username || null,
           amount: parseAmount(form.amount),
           due_date: form.due_date,
           description: form.description.trim(),
@@ -581,6 +623,7 @@ const Invoices: React.FC = () => {
                 <tr className="bg-slate-700/30">
                   <th className="px-4 py-3 text-left font-medium text-slate-400">Nomor</th>
                   <th className="px-4 py-3 text-left font-medium text-slate-400">Pelanggan</th>
+                  <th className="px-4 py-3 text-left font-medium text-slate-400">Akun RADIUS</th>
                   <th className="px-4 py-3 text-right font-medium text-slate-400">Jumlah</th>
                   <th className="px-4 py-3 text-left font-medium text-slate-400">Status</th>
                   <th className="px-4 py-3 text-left font-medium text-slate-400">Jatuh Tempo</th>
@@ -595,6 +638,13 @@ const Invoices: React.FC = () => {
                       {invoice.invoice_number}
                     </td>
                     <td className="px-4 py-3 text-slate-300">{invoice.customer_name}</td>
+                    <td className="px-4 py-3">
+                      {invoice.username ? (
+                        <span className="font-mono text-xs text-slate-200">{invoice.username}</span>
+                      ) : (
+                        <span className="text-[11px] text-slate-500">tanpa akun</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-right text-white whitespace-nowrap">
                       {formatRupiah(invoice.amount)}
                     </td>
@@ -692,7 +742,7 @@ const Invoices: React.FC = () => {
                   <select
                     id="i-customer"
                     value={form.customer_id}
-                    onChange={(e) => setForm((f) => ({ ...f, customer_id: e.target.value }))}
+                    onChange={(e) => setForm((f) => ({ ...f, customer_id: e.target.value, username: '' }))}
                     className={inputClass}
                     required
                   >
@@ -703,6 +753,34 @@ const Invoices: React.FC = () => {
                       </option>
                     ))}
                   </select>
+                </div>
+              )}
+
+              {!editing && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-1" htmlFor="i-username">
+                    Akun RADIUS (opsional)
+                  </label>
+                  <select
+                    id="i-username"
+                    value={form.username}
+                    onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
+                    className={inputClass}
+                  >
+                    <option value="">Tanpa akun (tagihan non-layanan)</option>
+                    {customerAccounts.map((a) => (
+                      <option key={a.username} value={a.username}>
+                        {a.username} · {a.profile_type}/{a.profile_name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {form.customer_id === ''
+                      ? 'Pilih pelanggan lebih dulu untuk melihat akunnya.'
+                      : customerAccounts.length === 0
+                        ? 'Pelanggan ini belum punya akun RADIUS.'
+                        : 'Bila tagihan lunas, akun ini diaktifkan otomatis.'}
+                  </p>
                 </div>
               )}
 

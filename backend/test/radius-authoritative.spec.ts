@@ -95,8 +95,12 @@ describe('effectiveParentQueue', () => {
 describe('toRadiusMapping (Model A)', () => {
   it('selalu mengirim rate-limit dari bandwidth', () => {
     const { reply } = toRadiusMapping(profile(), group(), bandwidth);
-    // Tanpa burst: format posisional "rx/tx priority".
-    expect(valueOf(reply, 'Mikrotik-Rate-Limit')).toBe('10240k/10240k 8 10240k/10240k');
+    // Format posisional RouterOS: max burst threshold burst-time priority min.
+    // Kepala burst wajib ada; kalau tidak, priority bergeser ke posisi burst
+    // dan router menolak queue ("burst-limit less than max-limit").
+    expect(valueOf(reply, 'Mikrotik-Rate-Limit')).toBe(
+      '10240k/10240k 10240k/10240k 10240k/10240k 8/8 8 10240k/10240k',
+    );
   });
 
   it('TIDAK mengirim Mikrotik-Group saat parent queue DEFAULT', () => {

@@ -2,7 +2,7 @@ import { CustomersRepository, Customer, CustomerRelations, CustomerQuery } from 
 
 // Repository pelanggan in-memory untuk e2e Fase 0: tidak menyentuh tabel
 // customers nyata. `ownerColumn` mensimulasikan ada/tidaknya kolom
-// reseller_id (migrasi 003).
+// owner_id (migrasi 003).
 export interface FakeAuditEntry {
   user_id: number;
   action: string;
@@ -12,7 +12,7 @@ export interface FakeAuditEntry {
 
 export interface FakeCustomers {
   repo: CustomersRepository;
-  items: Map<number, Customer & { reseller_id: number | null }>;
+  items: Map<number, Customer & { owner_id: number | null }>;
   relations: Map<number, CustomerRelations>;
   audit: FakeAuditEntry[];
   setOwnerColumn(value: boolean): void;
@@ -27,10 +27,10 @@ const base = {
 
 export function createFakeCustomers(options: { ownerColumn?: boolean } = {}): FakeCustomers {
   let ownerColumn = options.ownerColumn ?? false;
-  const items = new Map<number, Customer & { reseller_id: number | null }>([
-    [1, { id: 1, name: 'Budi Santoso', email: 'budi@uji.test', ...base, reseller_id: null }],
-    [2, { id: 2, name: 'Siti Aminah', email: 'siti@uji.test', ...base, reseller_id: null }],
-    [3, { id: 3, name: 'Tanpa Riwayat', email: 'baru@uji.test', ...base, reseller_id: null }],
+  const items = new Map<number, Customer & { owner_id: number | null }>([
+    [1, { id: 1, name: 'Budi Santoso', email: 'budi@uji.test', ...base, owner_id: null }],
+    [2, { id: 2, name: 'Siti Aminah', email: 'siti@uji.test', ...base, owner_id: null }],
+    [3, { id: 3, name: 'Tanpa Riwayat', email: 'baru@uji.test', ...base, owner_id: null }],
   ]);
   const relations = new Map<number, CustomerRelations>([
     [1, { invoices: 2, services: 1 }],
@@ -61,20 +61,21 @@ export function createFakeCustomers(options: { ownerColumn?: boolean } = {}): Fa
       [...items.values()].find((c) => c.email.toLowerCase() === email.trim().toLowerCase()) ?? null,
     hasOwnerColumn: async () => ownerColumn,
     countRelations: async (id: number) => relations.get(id) ?? { invoices: 0, services: 0 },
+    // Akun RADIUS pelanggan. Fake ini tidak punya tabel RADIUS, jadi kosong.
     assignOwner: async (
       customerId: number,
       newOwnerId: number | null,
       actor: { userId: number; ip: string },
     ) => {
-      if (!ownerColumn) throw new Error('kolom reseller_id tidak ada');
+      if (!ownerColumn) throw new Error('kolom owner_id tidak ada');
       const current = items.get(customerId);
       if (!current) {
         const missing = new Error('Pelanggan tidak ditemukan');
         (missing as { code?: string }).code = 'CUSTOMER_NOT_FOUND';
         throw missing;
       }
-      const previousOwnerId = current.reseller_id;
-      items.set(customerId, { ...current, reseller_id: newOwnerId });
+      const previousOwnerId = current.owner_id;
+      items.set(customerId, { ...current, owner_id: newOwnerId });
       audit.push({
         user_id: actor.userId,
         action: 'CUSTOMER_OWNER_ASSIGNED',
@@ -88,7 +89,16 @@ export function createFakeCustomers(options: { ownerColumn?: boolean } = {}): Fa
       });
       return { previousOwnerId };
     },
-    create: async (dto: { name: string; email: string; phone: string; address: string; is_active?: boolean }) => {
+    // Kontrak repository: create() mengembalikan ID, bukan objek pelanggan —
+    // service membaca ulang lewat findOne agar akun RADIUS ikut terbawa.
+    create: async (dto: {
+      name: string;
+      email: string;
+      phone: string;
+      address: string;
+      is_active?: boolean;
+      owner_id?: number | null;
+    }, options?: { status?: string }) => {
       const created = {
         id: nextId++,
         name: dto.name,
@@ -96,16 +106,22 @@ export function createFakeCustomers(options: { ownerColumn?: boolean } = {}): Fa
         phone: dto.phone,
         address: dto.address,
         is_active: dto.is_active !== false,
+        status: options?.status ?? (dto.is_active === false ? 'disable' : 'active'),
         created_at: new Date(),
-        reseller_id: null,
+        owner_id: dto.owner_id ?? null,
       };
       items.set(created.id, created);
-      return created;
+      return created.id;
     },
+    // Akun RADIUS: fake ini tidak punya tabel RADIUS.
+    findAccounts: async () => [],
+    findProfile: async () => null,
+    findAccountByUsername: async () => null,
+    updateAccount: async () => 0,
     update: async (id: number, dto: Record<string, unknown>) => {
       const current = items.get(id);
       if (!current) return null;
-      const updated = { ...current, ...dto } as Customer & { reseller_id: number | null };
+      const updated = { ...current, ...dto } as Customer & { owner_id: number | null };
       items.set(id, updated);
       return updated;
     },
