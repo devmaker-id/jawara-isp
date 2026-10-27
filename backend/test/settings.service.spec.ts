@@ -28,8 +28,39 @@ describe('SettingsService', () => {
     const view = await service.get();
 
     expect(view.values.brand_name).toBe('BibitNet Nanggela');
-    expect(view.values.brand_tagline).toBe('Internet Cepat & Stabil');
+    expect(view.values.brand_tagline).toBe('BibitNet ISP');
     expect(Object.keys(view.groups)).toEqual(['branding', 'payment', 'telegram', 'whatsapp', 'integrasi']);
+  });
+
+  it('branding publik hanya berisi lima nilai identitas, tanpa rahasia', async () => {
+    const { service } = makeService({
+      findValues: vi.fn().mockResolvedValue({
+        brand_name: 'BibitNet Nanggela',
+        telegram_bot_token: '123456:rahasia',
+        mikrotik_password: 'sandi-perangkat',
+      }),
+    });
+    const brand = await service.branding();
+
+    expect(Object.keys(brand).sort()).toEqual([
+      'footer_text',
+      'logo_url',
+      'name',
+      'primary_color',
+      'tagline',
+    ]);
+    expect(brand.name).toBe('BibitNet Nanggela');
+    expect(JSON.stringify(brand)).not.toContain('rahasia');
+    expect(JSON.stringify(brand)).not.toContain('sandi-perangkat');
+  });
+
+  it('logo bawaan dipakai bila belum diatur', async () => {
+    const { service } = makeService();
+    const brand = await service.branding();
+
+    expect(brand.logo_url).toBe('/branding/logo-default.png');
+    expect(brand.name).toBe('JAWARA-ISP');
+    expect(brand.primary_color).toBe('#06b6d4');
   });
 
   it('tidak pernah mengirim nilai rahasia, hanya status terisi', async () => {

@@ -10,6 +10,8 @@
   --text: #e2e8f0;
   --text-muted: #94a3b8;
   --primary: #22d3ee;
+  /* Warna utama panel; ditimpa dari Pengaturan -> Branding saat runtime. */
+  --brand-primary: #06b6d4;
   --primary-dark: #0e7490;
   --ok: #34d399;
   --warn: #fbbf24;

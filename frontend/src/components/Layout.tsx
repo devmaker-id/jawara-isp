@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { NavLink, Link, useLocation, Outlet } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useBranding } from '../contexts/BrandingContext';
 import { menuItems, MenuItemConfig } from '../config/menu';
 import UsageLookupDialog from './net/UsageLookupDialog';
 
@@ -17,33 +18,50 @@ const CloseIcon: React.FC = () => (
 );
 
 /**
- * Identitas panel: ikon + nama. Dipakai di navbar dan di kepala drawer mobile,
- * supaya nama panel tetap terlihat di layar kecil — di sana navbar hanya
- * menampilkan ikon karena ruangnya sempit.
+ * Identitas panel: logo + nama + tagline, semuanya dari Pengaturan → Branding.
+ * Dipakai di navbar dan di kepala drawer mobile, supaya tidak ada teks yang
+ * ditulis ulang di dua tempat.
  */
 const BrandMark: React.FC<{ onClick?: () => void; compact?: boolean }> = ({
   onClick,
   compact = false,
-}) => (
-  <Link
-    to="/"
-    onClick={onClick}
-    className="flex items-center gap-2.5 rounded-lg transition hover:opacity-90"
-    aria-label="Jawara ISP — ke dashboard"
-  >
-    <div className="w-9 h-9 shrink-0 rounded-lg bg-cyan-500 flex items-center justify-center text-white">
-      <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-      </svg>
-    </div>
-    {!compact && (
-      <div className="min-w-0">
-        <p className="text-sm font-bold leading-tight text-white">JAWARA-ISP</p>
-        <p className="text-[11px] leading-tight text-slate-400">BibitNet ISP</p>
-      </div>
-    )}
-  </Link>
-);
+}) => {
+  const brand = useBranding();
+
+  return (
+    <Link
+      to="/"
+      onClick={onClick}
+      className="flex items-center gap-2.5 rounded-lg transition hover:opacity-90"
+      aria-label={`${brand.name} — ke dashboard`}
+    >
+      {/* Logo dari pengaturan; bila gagal dimuat, kotak warna utama dengan
+          inisial menjadi cadangan supaya ruangnya tidak kosong. */}
+      <span
+        className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg text-sm font-bold text-white"
+        style={{ backgroundColor: 'var(--brand-primary)' }}
+      >
+        <img
+          src={brand.logo_url}
+          alt=""
+          className="h-full w-full object-contain"
+          onError={(event) => {
+            event.currentTarget.style.display = 'none';
+          }}
+        />
+        {!brand.logo_url && (brand.name.charAt(0) || 'J').toUpperCase()}
+      </span>
+      {!compact && (
+        <div className="min-w-0">
+          <p className="truncate text-sm font-bold leading-tight text-white">{brand.name}</p>
+          {brand.tagline && (
+            <p className="truncate text-[11px] leading-tight text-slate-400">{brand.tagline}</p>
+          )}
+        </div>
+      )}
+    </Link>
+  );
+};
 
 const MenuItem: React.FC<{ item: MenuItemConfig; onNavigate: () => void }> = ({ item, onNavigate }) => {
   const location = useLocation();
@@ -194,6 +212,7 @@ const Layout: React.FC = () => {
   const accountRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
   const { user, logout } = useAuth();
+  const brand = useBranding();
 
   // Filter kosmetik berbasis role. Penegakan akses tetap di RolesGuard backend.
   const visibleMenu = menuItems.filter(
@@ -382,12 +401,17 @@ const Layout: React.FC = () => {
           {/* Footer: kredit pembuat panel. Ikut tergulung bersama konten, jadi
               tidak pernah menutupi tabel panjang di layar kecil. */}
           <footer className="mt-8 border-t border-slate-700/50 py-4 text-center text-[11px] text-slate-500">
+            {/* Teks footer dari Pengaturan → Branding (mis. "© 2026 BibitNet").
+                Kosong berarti baris ini tidak tampil sama sekali. */}
+            {brand.footer_text && (
+              <p className="mb-1 text-slate-400">{brand.footer_text}</p>
+            )}
             Created by{' '}
             <a
               href="https://github.com/devmaker-id/jawara-isp"
               target="_blank"
               rel="noreferrer"
-              className="font-medium text-slate-400 transition hover:text-cyan-300"
+              className="font-medium text-slate-400 transition hover:text-[var(--brand-primary)]"
             >
               JAWARA-ISP
             </a>
@@ -396,7 +420,7 @@ const Layout: React.FC = () => {
               href="https://github.com/devmaker-id"
               target="_blank"
               rel="noreferrer"
-              className="transition hover:text-cyan-300"
+              className="transition hover:text-[var(--brand-primary)]"
             >
               devmaker
             </a>

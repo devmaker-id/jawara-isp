@@ -226,7 +226,7 @@ const Settings: React.FC = () => {
           value={values.brand_name ?? ''}
           onChange={(v) => set('brand_name', v)}
           disabled={!isAdmin}
-          placeholder="BibitNet"
+          placeholder="JAWARA-ISP"
         />
         <TextField
           id="brand_tagline"
@@ -234,7 +234,7 @@ const Settings: React.FC = () => {
           value={values.brand_tagline ?? ''}
           onChange={(v) => set('brand_tagline', v)}
           disabled={!isAdmin}
-          placeholder="Internet Cepat & Stabil"
+          placeholder="BibitNet ISP"
         />
         <TextField
           id="brand_logo_url"
@@ -242,7 +242,7 @@ const Settings: React.FC = () => {
           value={values.brand_logo_url ?? ''}
           onChange={(v) => set('brand_logo_url', v)}
           disabled={!isAdmin}
-          placeholder="https://…/logo.png"
+          placeholder="/branding/logo-default.png"
           mono
         />
         <div>

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useBranding } from '../contexts/BrandingContext';
 
 const Login: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -8,6 +9,7 @@ const Login: React.FC = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
+  const brand = useBranding();
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -27,13 +29,17 @@ const Login: React.FC = () => {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800">
       <div className="w-full max-w-md p-8 space-y-6 bg-slate-800/50 rounded-2xl border border-slate-700 shadow-2xl">
         <div className="text-center">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-xl bg-cyan-500/20 border border-cyan-500/30 mb-4">
-            <svg className="w-7 h-7 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-          </div>
-          <h1 className="text-2xl font-bold text-slate-100">Login Admin</h1>
-          <p className="text-slate-400 text-sm mt-1">Masuk ke panel administrasi jawara-billing</p>
+          {/* Identitas panel dari Pengaturan -> Branding; halaman login harus
+              menampilkannya sebelum ada token. */}
+          <img
+            src={brand.logo_url}
+            alt=""
+            className="mx-auto mb-4 h-14 w-14 rounded-xl object-contain"
+          />
+          <h1 className="text-2xl font-bold text-slate-100">{brand.name}</h1>
+          <p className="text-slate-400 text-sm mt-1">
+            {brand.tagline || 'Masuk ke panel administrasi'}
+          </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">

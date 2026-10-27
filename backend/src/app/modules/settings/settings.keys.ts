@@ -42,10 +42,12 @@ export const SETTING_KEYS = [
 export type SettingKey = (typeof SETTING_KEYS)[number];
 
 export const SETTING_DEFAULTS: Record<SettingKey, string> = {
-  brand_name: 'BibitNet',
-  brand_tagline: 'Internet Cepat & Stabil',
+  brand_name: 'JAWARA-ISP',
+  brand_tagline: 'BibitNet ISP',
   brand_primary_color: '#06b6d4',
-  brand_logo_url: '',
+  // Logo bawaan ikut repo: frontend/public/branding/logo-default.png.
+  // Boleh diganti URL lain dari Pengaturan -> Branding.
+  brand_logo_url: '/branding/logo-default.png',
   brand_footer_text: '',
   payment_mode: 'manual',
   payment_methods: 'cash,transfer,qris',

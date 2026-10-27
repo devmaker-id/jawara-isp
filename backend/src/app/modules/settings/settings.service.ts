@@ -19,6 +19,15 @@ const DB_UNAVAILABLE = [
   'ER_NO_SUCH_TABLE',
 ];
 
+// Identitas panel yang boleh dibaca tanpa login. Tidak memuat rahasia.
+export interface PublicBranding {
+  name: string;
+  tagline: string;
+  logo_url: string;
+  primary_color: string;
+  footer_text: string;
+}
+
 export interface SettingsView {
   groups: Record<string, SettingKey[]>;
   values: Record<SettingKey, string>;
@@ -48,6 +57,26 @@ export class SettingsService {
   async rawValue(key: SettingKey): Promise<string> {
     const stored = await this.repository.findValues().catch((error) => this.rethrow(error));
     return stored[key] ?? SETTING_DEFAULTS[key] ?? '';
+  }
+
+  /**
+   * Identitas panel untuk halaman publik (login) dan untuk semua peran.
+   *
+   * Hanya lima kunci `brand_*` yang dikirim — tidak ada rahasia, tidak ada
+   * konfigurasi integrasi. Dipisah dari `get()` karena endpoint `settings`
+   * dibatasi admin/operator, sedangkan reseller dan halaman login juga perlu
+   * tahu nama dan logo panel.
+   */
+  async branding(): Promise<PublicBranding> {
+    const view = await this.get();
+    const pick = (key: SettingKey) => view.values[key] ?? SETTING_DEFAULTS[key] ?? '';
+    return {
+      name: pick('brand_name'),
+      tagline: pick('brand_tagline'),
+      logo_url: pick('brand_logo_url'),
+      primary_color: pick('brand_primary_color'),
+      footer_text: pick('brand_footer_text'),
+    };
   }
 
   async get(): Promise<SettingsView> {
