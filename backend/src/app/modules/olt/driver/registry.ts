@@ -20,11 +20,9 @@ import { HisfocusAdapter } from '../vendors/hisfocus/hisfocus.adapter';
 const DRIVERS: Record<string, OltAdapterFactory> = {
   vsol: (connection) => new VsolAdapter(connection),
   global: (connection) => new VsolAdapter(connection),
-  // HiFocus dan Hioso memakai CLI yang sama; "hiso" diterima karena itu nama
-  // yang sering ditulis operator di lapangan.
+  // HiFocus dan Hioso memakai CLI yang sama; keduanya nama merek yang nyata.
   hisfocus: (connection) => new HisfocusAdapter(connection),
   hioso: (connection) => new HisfocusAdapter(connection),
-  hiso: (connection) => new HisfocusAdapter(connection),
 };
 
 export const supportedVendors = (): string[] => Object.keys(DRIVERS).sort();
