@@ -21,6 +21,8 @@ import MikrotikHotspot from './pages/mikrotik/Hotspot';
 import MikrotikPpp from './pages/mikrotik/Ppp';
 import MikrotikRouting from './pages/mikrotik/Routing';
 import MikrotikLog from './pages/mikrotik/Log';
+import OltDevices from './pages/olt/Devices';
+import OltOnu from './pages/olt/Onu';
 import RadiusRingkasan from './pages/freeradius/Ringkasan';
 import RadiusNas from './pages/freeradius/Nas';
 import RadiusSesi from './pages/freeradius/Sesi';
@@ -204,6 +206,22 @@ const AppContent: React.FC = () => {
             element={
               <PrivateRoute>
                 <MikrotikLog />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/olt"
+            element={
+              <PrivateRoute>
+                <OltDevices />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/olt/onu"
+            element={
+              <PrivateRoute>
+                <OltOnu />
               </PrivateRoute>
             }
           />

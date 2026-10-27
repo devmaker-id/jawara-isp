@@ -39,6 +39,17 @@ export const menuItems: MenuItemConfig[] = [
     ],
   },
   {
+    path: '/olt',
+    label: 'OLT',
+    icon: 'M5 12h14M5 12a7 7 0 0114 0M5 12v6a1 1 0 001 1h12a1 1 0 001-1v-6',
+    available: true,
+    roles: ['admin', 'operator', 'resseler'],
+    children: [
+      { path: '/olt', label: 'Perangkat OLT' },
+      { path: '/olt/onu', label: 'Inventori ONU' },
+    ],
+  },
+  {
     path: '/freeradius',
     label: 'FreeRADIUS',
     icon: 'M12 3v18M3 12h18M7 7l10 10M17 7L7 17',

@@ -16,6 +16,7 @@ import { ServicesModule } from './app/services/services.module';
 import { DatabaseModule } from './app/database/database.module';
 import { UsersModule } from './app/modules/users/users.module';
 import { MikrotikModule } from './app/modules/mikrotik/mikrotik.module';
+import { OltModule } from './app/modules/olt/olt.module';
 import { RadiusModule } from './app/modules/freeradius/radius.module';
 import { ProfilesModule } from './app/modules/profiles/profiles.module';
 import { DashboardModule } from './app/modules/dashboard/dashboard.module';
@@ -41,6 +42,7 @@ import { PermissionsModule } from './app/modules/permissions/permissions.module'
     AdminModule,
     ServicesModule,
     MikrotikModule,
+    OltModule,
     RadiusModule,
     ProfilesModule,
     DashboardModule,
