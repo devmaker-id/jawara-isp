@@ -16,6 +16,35 @@ const CloseIcon: React.FC = () => (
   </svg>
 );
 
+/**
+ * Identitas panel: ikon + nama. Dipakai di navbar dan di kepala drawer mobile,
+ * supaya nama panel tetap terlihat di layar kecil — di sana navbar hanya
+ * menampilkan ikon karena ruangnya sempit.
+ */
+const BrandMark: React.FC<{ onClick?: () => void; compact?: boolean }> = ({
+  onClick,
+  compact = false,
+}) => (
+  <Link
+    to="/"
+    onClick={onClick}
+    className="flex items-center gap-2.5 rounded-lg transition hover:opacity-90"
+    aria-label="Jawara ISP — ke dashboard"
+  >
+    <div className="w-9 h-9 shrink-0 rounded-lg bg-cyan-500 flex items-center justify-center text-white">
+      <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+      </svg>
+    </div>
+    {!compact && (
+      <div className="min-w-0">
+        <p className="text-sm font-bold leading-tight text-white">JAWARA-ISP</p>
+        <p className="text-[11px] leading-tight text-slate-400">BibitNet ISP</p>
+      </div>
+    )}
+  </Link>
+);
+
 const MenuItem: React.FC<{ item: MenuItemConfig; onNavigate: () => void }> = ({ item, onNavigate }) => {
   const location = useLocation();
 
@@ -224,14 +253,11 @@ const Layout: React.FC = () => {
             {open ? <CloseIcon /> : <MenuIcon />}
           </button>
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-lg bg-cyan-500 flex items-center justify-center text-white">
-              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-              </svg>
+            <div className="sm:hidden">
+              <BrandMark compact />
             </div>
             <div className="hidden sm:block">
-              <p className="text-sm font-bold leading-tight text-white">jawara-billing</p>
-              <p className="text-xs text-slate-500 leading-tight">BibitNet ISP</p>
+              <BrandMark />
             </div>
           </div>
         </div>
@@ -315,12 +341,13 @@ const Layout: React.FC = () => {
           {/* flex-1 + min-h-0: wajib, agar nav di dalamnya benar-benar scroll
               dan bukan mendorong footer keluar layar. */}
           <div className="flex flex-1 min-h-0 flex-col">
-            {/* Drawer header: hanya tombol tutup (mobile). Akun & logout
-                sekarang ada di navbar kanan. */}
-            <div className="flex items-center justify-end border-b border-slate-700/50 px-4 py-3 md:hidden">
+            {/* Drawer header: identitas panel + tombol tutup (mobile). Akun dan logout
+                ada di navbar kanan. */}
+            <div className="flex items-center justify-between gap-3 border-b border-slate-700/50 px-4 py-3 md:hidden">
+              <BrandMark onClick={() => setOpen(false)} />
               <button
                 onClick={() => setOpen(false)}
-                className="p-2 rounded-lg text-slate-400 hover:bg-slate-700/50 hover:text-white transition"
+                className="shrink-0 rounded-lg p-2 text-slate-400 transition hover:bg-slate-700/50 hover:text-white"
                 aria-label="Tutup menu"
               >
                 <CloseIcon />
