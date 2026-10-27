@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { TablePager, useTablePager } from '../../components/TablePager';
 import api from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 import {
@@ -102,6 +103,10 @@ const Ppp: React.FC = () => {
     );
   }, [active.data, search]);
 
+  // Secret PPP sering ratusan; tampilkan sebagian per halaman.
+  const secretPager = useTablePager(filteredSecrets, 25);
+  const activePager = useTablePager(filteredActive, 25);
+
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!form) return;
@@ -180,7 +185,7 @@ const Ppp: React.FC = () => {
               isEmpty={filteredActive.length === 0}
               empty="Tidak ada sesi PPP aktif."
             >
-              {filteredActive.map((row) => (
+              {activePager.pageRows.map((row) => (
                 <tr key={row.id} className="hover:bg-slate-700/30">
                   <td className="px-3 py-2 font-medium text-slate-100">{row.name}</td>
                   <td className="px-3 py-2 text-slate-400">{row.service}</td>
@@ -191,6 +196,9 @@ const Ppp: React.FC = () => {
                 </tr>
               ))}
             </Table>
+          )}
+          {filteredActive.length > 0 && (
+            <TablePager unit="sesi" {...activePager.pagerProps} />
           )}
         </>
       )}
@@ -213,7 +221,7 @@ const Ppp: React.FC = () => {
               isEmpty={filteredSecrets.length === 0}
               empty={search ? 'Tidak ada secret yang cocok.' : 'Belum ada PPP secret di perangkat.'}
             >
-              {filteredSecrets.map((row) => (
+              {secretPager.pageRows.map((row) => (
                 <tr key={row.id} className="hover:bg-slate-700/30">
                   <td className="px-3 py-2 font-medium text-slate-100">{row.name}</td>
                   <td className="px-3 py-2 text-slate-400">{row.service}</td>
@@ -251,6 +259,9 @@ const Ppp: React.FC = () => {
                 </tr>
               ))}
             </Table>
+          )}
+          {filteredSecrets.length > 0 && (
+            <TablePager unit="secret" {...secretPager.pagerProps} />
           )}
         </>
       )}

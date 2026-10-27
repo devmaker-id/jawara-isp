@@ -3,6 +3,7 @@ import api from '../../services/api';
 import { useBackgroundRefresh } from '../../hooks/useBackgroundRefresh';
 import { useAuth } from '../../contexts/AuthContext';
 import { Badge, Button, Card, ErrorNote, Loading, PageHeader } from '../../components/net/NetUI';
+import { TablePager, useTablePager } from '../../components/TablePager';
 
 /**
  * Voucher Management — satu halaman per tipe layanan.
@@ -180,6 +181,11 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
   }, [type]);
 
   const visible = rows;
+
+  // Voucher bisa ratusan: tampilkan sebagian per halaman. Centang tetap
+  // berlaku lintas halaman (disimpan di `selected`), jadi aksi massal tidak
+  // terpengaruh pagination.
+  const pager = useTablePager(visible, 25);
 
   const allChecked = visible.length > 0 && visible.every((row) => selected.has(row.id));
 
@@ -534,7 +540,7 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
                     </td>
                   </tr>
                 ) : (
-                  visible.map((row) => (
+                  pager.pageRows.map((row) => (
                     <tr key={row.id} className={selected.has(row.id) ? 'bg-cyan-500/5' : undefined}>
                       <td className="px-3 py-2">
                         <input
@@ -576,6 +582,12 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
                 )}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {visible.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
+            <TablePager unit="voucher" {...pager.pagerProps} />
           </div>
         )}
       </Card>

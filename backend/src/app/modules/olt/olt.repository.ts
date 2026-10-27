@@ -85,7 +85,9 @@ export interface OltOnuFilter {
   search?: string;
   /** Hanya ONU dengan Rx di bawah nilai ini (dBm). */
   maxRx?: number;
-  limit?: number;
+  /** 1-based. */
+  page?: number;
+  size?: number;
 }
 
 @Injectable()
@@ -182,8 +184,20 @@ export class OltRepository {
     );
   }
 
-  /** ONU terpanjang 2000 baris per perangkat: cukup untuk satu PON penuh. */
-  async listOnus(filter: OltOnuFilter): Promise<OltOnuRow[]> {
+  /**
+   * Daftar ONU dengan pembagian halaman di server.
+   *
+   * Panel tidak pernah mengirim seluruh inventori ke browser: OLT besar bisa
+   * punya ribuan ONU, dan tabel sebesar itu membuat halaman tersendat. Yang
+   * dikirim hanya satu halaman + jumlah totalnya.
+   */
+  async listOnus(
+    filter: OltOnuFilter,
+  ): Promise<{
+    rows: OltOnuRow[];
+    total: number;
+    stats: { online: number; offline: number; weak: number };
+  }> {
     const where: string[] = ['1 = 1'];
     const params: unknown[] = [];
 
@@ -207,17 +221,48 @@ export class OltRepository {
       params.push(filter.maxRx);
     }
 
-    const limit = Math.min(Math.max(filter.limit ?? 500, 1), 2000);
+    const size = Math.min(Math.max(Math.trunc(filter.size ?? 25), 1), 1000);
+    const page = Math.max(Math.trunc(filter.page ?? 1), 1);
+    const offset = (page - 1) * size;
+    const clause = where.join(' AND ');
+
+    // Ringkasan dihitung dari SELURUH hasil filter, bukan dari halaman yang
+    // dikirim — kartu "online/offline" tidak boleh berubah saat pindah halaman.
+    const counted = await this.db.queryOne<{
+      total: number;
+      online: number;
+      offline: number;
+      weak: number;
+    }>(
+      `SELECT COUNT(*) AS total,
+              COALESCE(SUM(o.online = 1), 0) AS online,
+              COALESCE(SUM(o.online = 0), 0) AS offline,
+              COALESCE(SUM(o.rx_power_onu IS NOT NULL AND o.rx_power_onu < -27), 0) AS weak
+         FROM olt_onus o
+         JOIN olt_devices d ON d.id = o.olt_id
+        WHERE ${clause}`,
+      params,
+    );
+
     const rows = await this.db.query<RowDataPacket>(
       `SELECT o.*, d.name AS olt_name
          FROM olt_onus o
          JOIN olt_devices d ON d.id = o.olt_id
-        WHERE ${where.join(' AND ')}
+        WHERE ${clause}
         ORDER BY d.name, o.port_id, CAST(o.onu_id AS UNSIGNED)
-        LIMIT ${limit}`,
+        LIMIT ${size} OFFSET ${offset}`,
       params,
     );
-    return rows as OltOnuRow[];
+
+    return {
+      rows: rows as OltOnuRow[],
+      total: Number(counted?.total ?? 0),
+      stats: {
+        online: Number(counted?.online ?? 0),
+        offline: Number(counted?.offline ?? 0),
+        weak: Number(counted?.weak ?? 0),
+      },
+    };
   }
 
   async countOnus(oltId: number): Promise<{ total: number; online: number }> {

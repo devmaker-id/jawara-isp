@@ -31,7 +31,8 @@ export class ListNasQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(200)
+  // Batas mengikuti pilihan "tampilkan" di panel: 25/50/100/500/1000.
+  @Max(1000)
   limit?: number;
 }
 
@@ -132,7 +133,8 @@ export class ListRadiusUsersQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(200)
+  // Batas mengikuti pilihan "tampilkan" di panel: 25/50/100/500/1000.
+  @Max(1000)
   limit?: number;
 }
 

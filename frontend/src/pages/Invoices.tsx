@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import api from '../services/api';
 import { useBackgroundRefresh } from '../hooks/useBackgroundRefresh';
-import TablePagination from '../components/TablePagination';
+import { TablePager } from '../components/TablePager';
 import { useAuth } from '../contexts/AuthContext';
 
 interface InvoiceItem {
@@ -151,7 +151,8 @@ const Invoices: React.FC = () => {
   const [toast, setToast] = useState<Toast>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | InvoiceItem['status']>('all');
   // Fase 0: daftar diambil per halaman dari server (bukan ambil semua).
-  const PAGE_LIMIT = 10;
+  // Jumlah baris per halaman dipilih operator; server membatasi maksimal 1000.
+  const [limit, setLimit] = useState(25);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
 
@@ -201,7 +202,7 @@ const Invoices: React.FC = () => {
         api.get('/api/invoices', {
           params: {
             page,
-            limit: PAGE_LIMIT,
+            limit,
             status: statusFilter === 'all' ? undefined : statusFilter,
           },
         }),
@@ -698,13 +699,17 @@ const Invoices: React.FC = () => {
               </tbody>
             </table>
           </div>
-          <TablePagination
+          <TablePager
             page={page}
+            size={limit}
             total={total}
-            limit={PAGE_LIMIT}
-            loading={loading}
             unit="tagihan"
+            loading={loading}
             onPage={setPage}
+            onSize={(next) => {
+              setLimit(next);
+              setPage(1);
+            }}
           />
         </div>
       )}

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react'
 import api from '../services/api';
 import { useBackgroundRefresh } from '../hooks/useBackgroundRefresh';
 import { useAuth } from '../contexts/AuthContext';
-import TablePagination from '../components/TablePagination';
+import { TablePager } from '../components/TablePager';
 
 // Halaman pelanggan = pintu masuk layanan. Satu pelanggan langsung memiliki
 // akun RADIUS (username, profil hotspot/ppp, limit waktu & kuota), karena
@@ -78,7 +78,6 @@ const groupLimitText = (profile: ProfileOption | undefined): { time: string; quo
   return { time, quota };
 };
 
-const PAGE_LIMIT = 10;
 
 const STATUS_LABEL: Record<CustomerStatus, string> = {
   active: 'Aktif',
@@ -162,6 +161,8 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
+  // Jumlah baris per halaman dipilih operator; server membatasi maksimal 1000.
+  const [limit, setLimit] = useState(25);
   const [loading, setLoading] = useState(true);
   // Pemuatan pertama menampilkan spinner; pemuatan berikutnya berjalan
   // di belakang layar tanpa mengosongkan data yang sudah tampil.
@@ -203,7 +204,7 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
       const response = await api.get('/api/customers', {
         params: {
           page,
-          limit: PAGE_LIMIT,
+          limit,
           search: debouncedSearch || undefined,
           state: stateFilter || undefined,
           profile: profileType,
@@ -767,13 +768,17 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
       </div>
 
       {!loadError && (
-        <TablePagination
+        <TablePager
           page={page}
+          size={limit}
           total={total}
-          limit={PAGE_LIMIT}
-          loading={loading}
           unit="pelanggan"
+          loading={loading}
           onPage={setPage}
+          onSize={(next) => {
+            setLimit(next);
+            setPage(1);
+          }}
         />
       )}
 

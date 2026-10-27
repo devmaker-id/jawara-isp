@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { TablePager, useTablePager } from '../../components/TablePager';
 import {
   Badge,
   Button,
@@ -39,6 +40,10 @@ const Sesi: React.FC = () => {
   const [tab, setTab] = useState('active');
   const sessions = useNet<SessionRow[]>('/api/freeradius/sessions');
   const accounting = useNet<SessionRow[]>('/api/freeradius/accounting');
+
+  // radacct bisa memuat ribuan baris; keduanya dipotong per halaman.
+  const activePager = useTablePager(sessions.data ?? [], 25);
+  const historyPager = useTablePager(accounting.data ?? [], 25);
 
   return (
     <div>
@@ -89,7 +94,7 @@ const Sesi: React.FC = () => {
               isEmpty={(sessions.data?.length ?? 0) === 0}
               empty="Tidak ada sesi RADIUS aktif."
             >
-              {(sessions.data ?? []).map((row) => (
+              {activePager.pageRows.map((row) => (
                 <tr key={row.radacctid} className="hover:bg-slate-700/30">
                   <td className="px-3 py-2 font-medium text-slate-100">{row.username}</td>
                   <td className="px-3 py-2 font-mono text-xs text-slate-400">{row.nasipaddress ?? '-'}</td>
@@ -102,6 +107,9 @@ const Sesi: React.FC = () => {
                 </tr>
               ))}
             </Table>
+          )}
+          {(sessions.data?.length ?? 0) > 0 && (
+            <TablePager unit="sesi" {...activePager.pagerProps} />
           )}
         </>
       )}
@@ -116,7 +124,7 @@ const Sesi: React.FC = () => {
               isEmpty={(accounting.data?.length ?? 0) === 0}
               empty="Belum ada catatan akuntansi."
             >
-              {(accounting.data ?? []).map((row) => (
+              {historyPager.pageRows.map((row) => (
                 <tr key={row.radacctid} className="hover:bg-slate-700/30">
                   <td className="px-3 py-2 font-medium text-slate-100">{row.username}</td>
                   <td className="px-3 py-2 font-mono text-xs text-slate-400">{row.nasipaddress ?? '-'}</td>
@@ -132,6 +140,9 @@ const Sesi: React.FC = () => {
                 </tr>
               ))}
             </Table>
+          )}
+          {(accounting.data?.length ?? 0) > 0 && (
+            <TablePager unit="catatan" {...historyPager.pagerProps} />
           )}
         </>
       )}

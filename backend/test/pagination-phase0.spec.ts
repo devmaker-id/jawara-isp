@@ -46,10 +46,16 @@ describe('Pagination Fase 0', () => {
       expect((active as Array<{ name: string }>)[0].name).toBe('Siti');
     });
 
-    it('dengan page mengembalikan objek berpaginasi dan membatasi limit', async () => {
+    it('menerima limit sampai 1000 sesuai pilihan "tampilkan" di panel', async () => {
       const paged = await service.list({ page: 1, limit: 500 });
       expect(Array.isArray(paged)).toBe(false);
-      expect(paged).toMatchObject({ page: 1, limit: 200 });
+      expect(paged).toMatchObject({ page: 1, limit: 500 });
+    });
+
+    it('tetap membatasi limit di atas 1000 agar satu permintaan tidak menarik seluruh tabel', async () => {
+      const paged = await service.list({ page: 1, limit: 5000 });
+      expect(Array.isArray(paged)).toBe(false);
+      expect(paged).toMatchObject({ page: 1, limit: 1000 });
     });
   });
 

@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { TablePager, useTablePager } from '../../components/TablePager';
 import api from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 import {
@@ -119,6 +120,10 @@ const Hotspot: React.FC = () => {
     );
   }, [active.data, search]);
 
+  // Daftar user & sesi hotspot bisa panjang; tampilkan sebagian per halaman.
+  const userPager = useTablePager(filteredUsers, 25);
+  const activePager = useTablePager(filteredActive, 25);
+
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!form) return;
@@ -204,7 +209,7 @@ const Hotspot: React.FC = () => {
               isEmpty={filteredUsers.length === 0}
               empty={search ? 'Tidak ada user yang cocok.' : 'Belum ada user hotspot di perangkat.'}
             >
-              {filteredUsers.map((row) => (
+              {userPager.pageRows.map((row) => (
                 <tr key={row.id} className="hover:bg-slate-700/30">
                   <td className="px-3 py-2 font-medium text-slate-100">{row.name}</td>
                   <td className="px-3 py-2 text-slate-400">{row.profile}</td>
@@ -250,6 +255,7 @@ const Hotspot: React.FC = () => {
               ))}
             </Table>
           )}
+          {filteredUsers.length > 0 && <TablePager unit="user" {...userPager.pagerProps} />}
         </>
       )}
 
@@ -266,7 +272,7 @@ const Hotspot: React.FC = () => {
               isEmpty={filteredActive.length === 0}
               empty="Tidak ada sesi hotspot aktif."
             >
-              {filteredActive.map((row) => (
+              {activePager.pageRows.map((row) => (
                 <tr key={row.id} className="hover:bg-slate-700/30">
                   <td className="px-3 py-2 font-medium text-slate-100">{row.user}</td>
                   <td className="px-3 py-2 font-mono text-xs text-slate-300">{row.address}</td>
@@ -279,6 +285,9 @@ const Hotspot: React.FC = () => {
                 </tr>
               ))}
             </Table>
+          )}
+          {filteredActive.length > 0 && (
+            <TablePager unit="sesi" {...activePager.pagerProps} />
           )}
         </>
       )}

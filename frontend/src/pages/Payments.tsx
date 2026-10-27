@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { TablePager } from '../components/TablePager';
 import api from '../services/api';
 import { useBackgroundRefresh } from '../hooks/useBackgroundRefresh';
 import { useAuth } from '../contexts/AuthContext';
@@ -112,7 +113,7 @@ const Payments: React.FC = () => {
   const [rows, setRows] = useState<PaymentItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [limit] = useState(20);
+  const [limit, setLimit] = useState(25);
   const [search, setSearch] = useState('');
   const [method, setMethod] = useState<'' | PaymentMethod>('');
   const [status, setStatus] = useState<'all' | 'valid' | 'void'>('all');
@@ -623,32 +624,18 @@ const Payments: React.FC = () => {
                 </tbody>
               </table>
             </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-4 py-3 bg-slate-700/30 text-sm text-slate-400">
-              <span>
-                Menampilkan {(page - 1) * limit + 1}–{Math.min(page * limit, total)} dari {total} transaksi
-              </span>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  disabled={page <= 1}
-                  className="px-3 py-1.5 rounded-lg bg-slate-800/60 hover:bg-slate-700 disabled:opacity-40 transition"
-                >
-                  Sebelumnya
-                </button>
-                <span className="text-xs">
-                  Halaman {page} / {totalPages}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  disabled={page >= totalPages}
-                  className="px-3 py-1.5 rounded-lg bg-slate-800/60 hover:bg-slate-700 disabled:opacity-40 transition"
-                >
-                  Berikutnya
-                </button>
-              </div>
-            </div>
+            <TablePager
+              page={page}
+              size={limit}
+              total={total}
+              unit="transaksi"
+              loading={loading}
+              onPage={setPage}
+              onSize={(next) => {
+                setLimit(next);
+                setPage(1);
+              }}
+            />
           </div>
         )
       )}

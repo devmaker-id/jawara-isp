@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { TablePager, useTablePager } from '../../components/TablePager';
 import {
   Badge,
   Button,
@@ -82,6 +83,11 @@ const LogAktivitas: React.FC = () => {
       );
     });
   }, [data, topic, search]);
+
+  // Log diambil sekali (satu koneksi ke router), lalu ditampilkan per halaman:
+  // 1000 baris DOM membuat browser tersendat, dan operator tidak membacanya
+  // sekaligus.
+  const pager = useTablePager(rows, 50);
 
   if (loading) return <Loading label="Membaca log perangkat…" />;
 
@@ -191,7 +197,7 @@ const LogAktivitas: React.FC = () => {
               isEmpty={rows.length === 0}
               empty="Tidak ada baris yang cocok dengan filter."
             >
-              {rows.map((row) => (
+              {pager.pageRows.map((row) => (
                 <tr key={row.seq} className="align-top hover:bg-slate-800/40">
                   <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-slate-400">
                     {row.time}
@@ -205,6 +211,10 @@ const LogAktivitas: React.FC = () => {
                 </tr>
               ))}
             </Table>
+          )}
+
+          {rows.length > 0 && (
+            <TablePager unit="baris" {...pager.pagerProps} />
           )}
         </>
       )}

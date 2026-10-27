@@ -148,7 +148,7 @@ export class InvoicesRepository {
     const listParams = [...params];
     let sql = `SELECT ${COLUMNS} FROM invoices${clause} ORDER BY id DESC`;
     if (query.limit !== undefined) {
-      const limit = Math.max(1, Math.min(200, Math.trunc(query.limit)));
+      const limit = Math.max(1, Math.min(1000, Math.trunc(query.limit)));
       const page = Math.max(1, Math.trunc(query.page ?? 1));
       sql += ' LIMIT ? OFFSET ?';
       listParams.push(limit, (page - 1) * limit);

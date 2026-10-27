@@ -97,7 +97,8 @@ export class InvoicesService {
       });
     }
 
-    const limit = Math.max(1, Math.min(200, query.limit ?? 20));
+    // Batas 1000 mengikuti pilihan "tampilkan" di panel (25/50/100/500/1000).
+    const limit = Math.max(1, Math.min(1000, query.limit ?? 25));
     const page = Math.max(1, query.page);
     const { rows, total } = await this.repository
       .findPage({ ...query, page, limit }, scope)

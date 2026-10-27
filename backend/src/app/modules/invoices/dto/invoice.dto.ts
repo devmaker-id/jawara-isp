@@ -124,7 +124,8 @@ export class ListInvoicesQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(200)
+  // Batas mengikuti pilihan "tampilkan" di panel: 25/50/100/500/1000.
+  @Max(1000)
   @IsOptional()
   limit?: number;
 }

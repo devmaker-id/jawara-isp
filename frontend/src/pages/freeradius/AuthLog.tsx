@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import api from '../../services/api';
+import { TablePager } from '../../components/TablePager';
 import { useBackgroundRefresh } from '../../hooks/useBackgroundRefresh';
 import {
   Badge,
@@ -65,6 +66,7 @@ const AuthLog: React.FC = () => {
   const [iface, setIface] = useState('');
   const [reply, setReply] = useState('');
   const [page, setPage] = useState(1);
+  const [size, setSize] = useState(25);
 
   const load = useCallback(async () => {
     if (!loadedOnce.current) setLoading(true);
@@ -80,7 +82,7 @@ const AuthLog: React.FC = () => {
           iface: iface || undefined,
           reply: reply || undefined,
           page,
-          limit: 100,
+          limit: size,
         },
       });
       setData(response.data);
@@ -89,7 +91,7 @@ const AuthLog: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [search, mac, station, nas, iface, reply, page]);
+  }, [search, mac, station, nas, iface, reply, page, size]);
 
   // Ketikan difilter ~350 ms supaya tidak membanjiri API.
   useEffect(() => {
@@ -108,7 +110,7 @@ const AuthLog: React.FC = () => {
   const facets = data?.facets ?? emptyFacets;
   const rows = data?.rows ?? [];
   const total = data?.total ?? 0;
-  const limit = data?.limit ?? 100;
+  const limit = data?.limit ?? size;
   const pageCount = Math.max(Math.ceil(total / limit), 1);
 
   const reset = () => {
@@ -240,16 +242,19 @@ const AuthLog: React.FC = () => {
             ))}
           </Table>
 
-          <div className="mt-3 flex items-center gap-2">
-            <Button onClick={() => setPage((current) => Math.max(current - 1, 1))} disabled={page <= 1}>
-              Sebelumnya
-            </Button>
-            <Button
-              onClick={() => setPage((current) => Math.min(current + 1, pageCount))}
-              disabled={page >= pageCount}
-            >
-              Berikutnya
-            </Button>
+          <div className="mt-3">
+            <TablePager
+              page={page}
+              size={limit}
+              total={total}
+              unit="baris"
+              loading={loading}
+              onPage={setPage}
+              onSize={(next) => {
+                setSize(next);
+                setPage(1);
+              }}
+            />
           </div>
         </>
       )}

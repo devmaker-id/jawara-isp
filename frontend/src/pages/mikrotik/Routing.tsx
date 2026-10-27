@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { TablePager, useTablePager } from '../../components/TablePager';
 import {
   Badge,
   Button,
@@ -83,6 +84,12 @@ const Routing: React.FC = () => {
     [arp.data, needle],
   );
 
+  // ARP bisa ratusan entri dan route bisa lebih banyak dari satu layar;
+  // ketiganya dipotong per halaman.
+  const routePager = useTablePager(filteredRoutes, 25);
+  const neighborPager = useTablePager(filteredNeighbors, 25);
+  const arpPager = useTablePager(filteredArp, 25);
+
   const defaultRoutes = (routes.data ?? []).filter((row) => row.dst_address === '0.0.0.0/0');
 
   return (
@@ -128,7 +135,7 @@ const Routing: React.FC = () => {
               isEmpty={filteredRoutes.length === 0}
               empty="Tidak ada route yang cocok."
             >
-              {filteredRoutes.map((row) => (
+              {routePager.pageRows.map((row) => (
                 <tr key={row.id} className="hover:bg-slate-700/30">
                   <td className="px-3 py-2 font-mono text-xs text-slate-100">{row.dst_address}</td>
                   <td className="px-3 py-2 font-mono text-xs text-slate-300">{row.gateway}</td>
@@ -148,6 +155,7 @@ const Routing: React.FC = () => {
               ))}
             </Table>
           )}
+          {filteredRoutes.length > 0 && <TablePager unit="route" {...routePager.pagerProps} />}
         </>
       )}
 
@@ -161,7 +169,7 @@ const Routing: React.FC = () => {
               isEmpty={filteredNeighbors.length === 0}
               empty="Tidak ada tetangga terdeteksi (MNDP bisa nonaktif di perangkat lain)."
             >
-              {filteredNeighbors.map((row) => (
+              {neighborPager.pageRows.map((row) => (
                 <tr key={row.id} className="hover:bg-slate-700/30">
                   <td className="px-3 py-2 font-medium text-slate-100">{row.identity || '-'}</td>
                   <td className="px-3 py-2 font-mono text-xs text-slate-300">{row.address || '-'}</td>
@@ -173,6 +181,9 @@ const Routing: React.FC = () => {
                 </tr>
               ))}
             </Table>
+          )}
+          {filteredNeighbors.length > 0 && (
+            <TablePager unit="tetangga" {...neighborPager.pagerProps} />
           )}
         </>
       )}
@@ -187,7 +198,7 @@ const Routing: React.FC = () => {
               isEmpty={filteredArp.length === 0}
               empty="Tidak ada entri ARP yang cocok."
             >
-              {filteredArp.map((row) => (
+              {arpPager.pageRows.map((row) => (
                 <tr key={row.id} className="hover:bg-slate-700/30">
                   <td className="px-3 py-2 font-mono text-xs text-slate-100">{row.address}</td>
                   <td className="px-3 py-2 font-mono text-xs text-slate-300">{row.mac_address || '-'}</td>
@@ -201,6 +212,7 @@ const Routing: React.FC = () => {
               ))}
             </Table>
           )}
+          {filteredArp.length > 0 && <TablePager unit="entri ARP" {...arpPager.pagerProps} />}
         </>
       )}
     </div>

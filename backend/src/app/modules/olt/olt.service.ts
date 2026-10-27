@@ -339,8 +339,14 @@ export class OltService {
 
   async listOnus(filter: OltOnuFilter) {
     if (filter.oltId !== undefined) await this.requireDevice(filter.oltId);
-    const rows = await this.repository.listOnus(filter);
+    const size = Math.min(Math.max(Math.trunc(filter.size ?? 25), 1), 1000);
+    const page = Math.max(Math.trunc(filter.page ?? 1), 1);
+    const { rows, total, stats } = await this.repository.listOnus({ ...filter, page, size });
     return {
+      page,
+      size,
+      total,
+      stats,
       rows: rows.map((row) => ({
         ...row,
         online: Number(row.online) === 1,

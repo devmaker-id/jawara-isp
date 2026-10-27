@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Badge,
   Button,
@@ -11,6 +11,7 @@ import {
   formatNumber,
   useNet,
 } from '../../components/net/NetUI';
+import { TablePager } from '../../components/TablePager';
 
 interface OltOnu {
   id: number;
@@ -35,6 +36,10 @@ interface OltOnu {
 }
 
 interface OnuPayload {
+  page: number;
+  size: number;
+  total: number;
+  stats: { online: number; offline: number; weak: number };
   rows: OltOnu[];
 }
 
@@ -62,6 +67,14 @@ const OnuInventory: React.FC = () => {
   const [online, setOnline] = useState('');
   const [search, setSearch] = useState('');
   const [maxRx, setMaxRx] = useState('');
+  const [page, setPage] = useState(1);
+  const [size, setSize] = useState(25);
+
+  // Setiap perubahan filter mengembalikan tampilan ke halaman 1: kalau tidak,
+  // operator bisa mendarat di halaman yang sudah tidak ada isinya.
+  useEffect(() => {
+    setPage(1);
+  }, [oltId, online, search, maxRx, size]);
 
   const query = useMemo(() => {
     const params = new URLSearchParams();
@@ -69,19 +82,17 @@ const OnuInventory: React.FC = () => {
     if (online) params.set('online', online);
     if (search.trim()) params.set('search', search.trim());
     if (maxRx.trim()) params.set('max_rx', maxRx.trim());
-    params.set('limit', '2000');
+    params.set('page', String(page));
+    params.set('size', String(size));
     return `/api/olt/onus?${params.toString()}`;
-  }, [oltId, online, search, maxRx]);
+  }, [oltId, online, search, maxRx, page, size]);
 
+  // Satu permintaan per halaman: browser tidak pernah menerima seluruh
+  // inventori sekaligus, berapa pun jumlah ONU di perangkat.
   const onus = useNet<OnuPayload>(query);
   const rows = onus.data?.rows ?? [];
-
-  const stats = useMemo(() => {
-    const onlineCount = rows.filter((row) => row.online).length;
-    const weak = rows.filter((row) => row.rx_power_onu !== null && row.rx_power_onu < -27).length;
-    const noSignal = rows.filter((row) => row.online && row.rx_power_onu === null).length;
-    return { total: rows.length, online: onlineCount, offline: rows.length - onlineCount, weak, noSignal };
-  }, [rows]);
+  const total = onus.data?.total ?? 0;
+  const stats = onus.data?.stats ?? { online: 0, offline: 0, weak: 0 };
 
   if (devices.loading && onus.loading) return <Loading label="Memuat inventori ONU…" />;
 
@@ -100,7 +111,7 @@ const OnuInventory: React.FC = () => {
       {onus.error && <ErrorNote message={onus.error} onRetry={onus.reload} />}
 
       <div className="mb-3 grid gap-3 sm:grid-cols-4">
-        <StatCard label="ONU ditampilkan" value={formatNumber(stats.total)} />
+        <StatCard label="ONU (sesuai filter)" value={formatNumber(total)} />
         <StatCard label="Online" value={formatNumber(stats.online)} tone="good" />
         <StatCard label="Offline" value={formatNumber(stats.offline)} tone={stats.offline ? 'warn' : 'default'} />
         <StatCard
@@ -153,56 +164,70 @@ const OnuInventory: React.FC = () => {
 
       {onus.loading ? (
         <Loading label="Membaca inventori…" />
-      ) : rows.length === 0 ? (
+      ) : total === 0 ? (
         <div className="rounded-xl border border-slate-700/60 bg-slate-800/40 p-6 text-center text-sm text-slate-400">
           Belum ada data ONU. Buka menu <span className="text-slate-200">Perangkat OLT</span> lalu tekan
           tombol <span className="text-slate-200">Sinkron</span> pada perangkatnya.
         </div>
       ) : (
-        <Table
-          columns={[
-            'Perangkat',
-            'PON / ONU',
-            'Serial / MAC',
-            'Deskripsi',
-            'Status',
-            'Rx ONU',
-            'Rx OLT',
-            'Suhu',
-          ]}
-        >
-          {rows.map((row) => (
-            <tr key={row.id} className="hover:bg-slate-800/40">
-              <td className="px-3 py-2 text-xs text-slate-300">{row.olt_name}</td>
-              <td className="px-3 py-2 font-mono text-xs text-slate-200">
-                {row.port_id} / {row.onu_id}
-              </td>
-              {/* VSOL memberi serial GPON; HiFocus memberi MAC ONU. Keduanya
-                  ditampilkan apa adanya, tidak dicampur dalam satu arti. */}
-              <td className="px-3 py-2 font-mono text-xs text-slate-300">
-                {row.serial_number || row.onu_mac || '—'}
-              </td>
-              <td className="px-3 py-2 text-xs text-slate-300">{row.description || '—'}</td>
-              <td className="px-3 py-2">
-                {row.online ? (
-                  <Badge tone="good">online</Badge>
-                ) : (
-                  <Badge tone="bad">{row.phase_state || 'offline'}</Badge>
-                )}
-                <p className="mt-1 text-[11px] text-slate-500">
-                  admin {row.admin_state ?? '—'}
-                </p>
-              </td>
-              <td className="px-3 py-2">
-                <Badge tone={rxTone(row.rx_power_onu)}>{dbm(row.rx_power_onu)}</Badge>
-              </td>
-              <td className="px-3 py-2 font-mono text-xs text-slate-400">{dbm(row.rx_power_olt)}</td>
-              <td className="px-3 py-2 font-mono text-xs text-slate-400">
-                {row.temperature === null ? '—' : `${row.temperature.toFixed(1)} °C`}
-              </td>
-            </tr>
-          ))}
-        </Table>
+        <div>
+          <Table
+            columns={[
+              'Perangkat',
+              'PON / ONU',
+              'Serial / MAC',
+              'Deskripsi',
+              'Status',
+              'Rx ONU',
+              'Rx OLT',
+              'Suhu',
+            ]}
+          >
+            {rows.map((row) => (
+              <tr key={row.id} className="hover:bg-slate-800/40">
+                <td className="px-3 py-2 text-xs text-slate-300">{row.olt_name}</td>
+                <td className="px-3 py-2 font-mono text-xs text-slate-200">
+                  {row.port_id} / {row.onu_id}
+                </td>
+                {/* VSOL memberi serial GPON; HiFocus memberi MAC ONU. Keduanya
+                    ditampilkan apa adanya, tidak dicampur dalam satu arti. */}
+                <td className="px-3 py-2 font-mono text-xs text-slate-300">
+                  {row.serial_number || row.onu_mac || '—'}
+                </td>
+                <td className="px-3 py-2 text-xs text-slate-300">{row.description || '—'}</td>
+                <td className="px-3 py-2">
+                  {row.online ? (
+                    <Badge tone="good">online</Badge>
+                  ) : (
+                    <Badge tone="bad">{row.phase_state || 'offline'}</Badge>
+                  )}
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    admin {row.admin_state ?? '—'}
+                  </p>
+                </td>
+                <td className="px-3 py-2">
+                  <Badge tone={rxTone(row.rx_power_onu)}>{dbm(row.rx_power_onu)}</Badge>
+                </td>
+                <td className="px-3 py-2 font-mono text-xs text-slate-400">
+                  {dbm(row.rx_power_olt)}
+                </td>
+                <td className="px-3 py-2 font-mono text-xs text-slate-400">
+                  {row.temperature === null ? '—' : `${row.temperature.toFixed(1)} °C`}
+                </td>
+              </tr>
+            ))}
+          </Table>
+
+          <TablePager
+            page={onus.data?.page ?? page}
+            size={onus.data?.size ?? size}
+            total={total}
+            unit="ONU"
+            loading={onus.refreshing}
+            onPage={setPage}
+            onSize={setSize}
+          />
+        </div>
       )}
     </div>
   );

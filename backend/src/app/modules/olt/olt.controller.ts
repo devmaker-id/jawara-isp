@@ -111,14 +111,16 @@ export class OltController {
     @Query('online') online?: string,
     @Query('search') search?: string,
     @Query('max_rx') maxRx?: string,
-    @Query('limit') limit?: string,
+    @Query('page') page?: string,
+    @Query('size') size?: string,
   ) {
     return this.service.listOnus({
       oltId: oltId ? Number(oltId) : undefined,
       online: online === undefined || online === '' ? undefined : online === 'true' || online === '1',
       search: search?.trim() || undefined,
       maxRx: maxRx ? Number(maxRx) : undefined,
-      limit: limit ? Number(limit) : undefined,
+      page: page ? Number(page) : undefined,
+      size: size ? Number(size) : undefined,
     });
   }
 }
