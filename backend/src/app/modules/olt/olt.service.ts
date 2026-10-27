@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '../../config/config.service';
 import { DatabaseService } from '../../database/database.service';
-import { OltConnection, OltOnu } from './driver/olt-driver';
+import { OltConnection, OltOnu, OltOptical } from './driver/olt-driver';
 import { createAdapter, supportedVendors } from './driver/registry';
 import { CreateOltDeviceDto, UpdateOltDeviceDto } from './dto/olt.dto';
 import { decryptOltSecret, encryptOltSecret } from './olt-crypto';
@@ -34,8 +34,23 @@ export interface SyncResult {
   onu_online: number;
   saved: number;
   removed: number;
+  /** Jumlah ONU yang redamannya dibaca pada run ini (vendor per-ONU). */
+  optical_scanned: number;
   duration_ms: number;
 }
+
+/**
+ * Batas pembacaan redaman untuk vendor yang butuh satu perintah per ONU
+ * (HiFocus). Dibatasi oleh JUMLAH dan WAKTU, karena:
+ *   - satu permintaan harus selesai jauh di bawah batas 100 detik Cloudflare,
+ *   - OLT tetap bisa dipakai operator lain selama pembacaan.
+ *
+ * Perangkat yang lebih lambat akan berhenti karena waktu, bukan karena kuota;
+ * perangkat cepat bisa menyelesaikan kuota. Sisa ONU terbaca pada sync
+ * berikutnya (diurutkan dari yang paling lama belum dibaca).
+ */
+const OPTICAL_BATCH_MAX = 60;
+const OPTICAL_TIME_BUDGET_MS = 20_000;
 
 /** Satu sync per perangkat pada satu waktu. */
 const running = new Set<number>();
@@ -226,6 +241,9 @@ export class OltService {
     const runId = await this.repository.startRun(id, actor.userId);
 
     let identity: string | null = null;
+    let version: string | null = null;
+    let opticalScanned = 0;
+    let saved = { saved: 0, removed: 0 };
     const collected: OltOnu[] = [];
 
     try {
@@ -233,28 +251,51 @@ export class OltService {
       try {
         const opened = await adapter.open();
         identity = opened.prompt;
+        version = opened.version;
         for (const port of ports) {
           const onus = await adapter.readOnus(port);
           collected.push(...onus);
+        }
+
+        // Inventori disimpan lebih dulu supaya daftar kandidat redaman sudah
+        // memuat ONU yang baru ditemukan pada run ini.
+        saved = await this.repository.saveInventory(id, ports, collected);
+
+        if (adapter.opticalInInventory !== true && adapter.readOptical) {
+          const candidates = await this.repository.opticalCandidates(id, OPTICAL_BATCH_MAX);
+          const deadline = Date.now() + OPTICAL_TIME_BUDGET_MS;
+          for (const candidate of candidates) {
+            if (Date.now() > deadline) break;
+
+            const optical = await this.readOpticalWithRetry(adapter, candidate.port_id, candidate.onu_id);
+            if (!optical) {
+              // Tidak ada Rx = jangan ditandai "sudah dibaca". ONU ini akan
+              // dicoba lagi pada sync berikutnya, bukan dianggap selesai.
+              continue;
+            }
+            await this.repository.saveOptical(id, candidate.port_id, candidate.onu_id, optical);
+            opticalScanned += 1;
+          }
         }
       } finally {
         await adapter.close().catch(() => undefined);
       }
 
-      const saved = await this.repository.saveInventory(id, ports, collected);
       const online = collected.filter((onu) => onu.online).length;
 
       await this.repository.finishRun(runId, {
         status: 'ok',
         total: collected.length,
         online,
-        message: `${ports.join(', ')} — ${collected.length} ONU (${online} online)`,
+        message:
+          `${ports.join(', ')} — ${collected.length} ONU (${online} online)` +
+          (opticalScanned > 0 ? `, redaman ${opticalScanned} ONU` : ''),
       });
       await this.repository.touchStatus(id, {
         connected: true,
         message: `Sinkron terakhir: ${collected.length} ONU (${online} online)`,
         identity,
-        version: null,
+        version,
       });
       await this.audit(actor, 'OLT_SYNCED', {
         id,
@@ -272,6 +313,7 @@ export class OltService {
         onu_online: online,
         saved: saved.saved,
         removed: saved.removed,
+        optical_scanned: opticalScanned,
         duration_ms: Date.now() - started,
       };
     } catch (error) {
@@ -302,6 +344,7 @@ export class OltService {
       rows: rows.map((row) => ({
         ...row,
         online: Number(row.online) === 1,
+        onu_mac: row.onu_mac ?? null,
         rx_power_onu: this.number(row.rx_power_onu),
         rx_power_olt: this.number(row.rx_power_olt),
         tx_power: this.number(row.tx_power),
@@ -316,6 +359,27 @@ export class OltService {
   async listRuns(id: number) {
     await this.requireDevice(id);
     return { rows: await this.repository.listRuns(id) };
+  }
+
+  /**
+   * Baca redaman dengan satu percobaan ulang.
+   *
+   * Perangkat EPON kadang menjawab tanpa baris RxPower saat perintah dikirim
+   * beruntun cepat (sesudah empat `show onu info` besar). Percobaan kedua
+   * setelah jeda pendek hampir selalu berhasil; kalau tetap kosong, ONU itu
+   * memang tidak memberi data DDM dan tidak ditandai terbaca.
+   */
+  private async readOpticalWithRetry(
+    adapter: { readOptical?: (portId: string, onuId: string) => Promise<OltOptical | null> },
+    portId: string,
+    onuId: string,
+  ): Promise<OltOptical | null> {
+    if (!adapter.readOptical) return null;
+    const first = await adapter.readOptical(portId, onuId).catch(() => null);
+    if (first && first.rxPowerOnu !== null) return first;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const second = await adapter.readOptical(portId, onuId).catch(() => null);
+    return second && second.rxPowerOnu !== null ? second : null;
   }
 
   // ===== bantuan internal =====

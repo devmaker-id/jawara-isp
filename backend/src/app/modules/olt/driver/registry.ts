@@ -5,6 +5,7 @@ import {
   OltDriverUnsupportedError,
 } from './olt-driver';
 import { VsolAdapter } from '../vendors/vsol/vsol.adapter';
+import { HisfocusAdapter } from '../vendors/hisfocus/hisfocus.adapter';
 
 /**
  * Daftar driver yang terpasang di panel.
@@ -19,6 +20,11 @@ import { VsolAdapter } from '../vendors/vsol/vsol.adapter';
 const DRIVERS: Record<string, OltAdapterFactory> = {
   vsol: (connection) => new VsolAdapter(connection),
   global: (connection) => new VsolAdapter(connection),
+  // HiFocus dan Hioso memakai CLI yang sama; "hiso" diterima karena itu nama
+  // yang sering ditulis operator di lapangan.
+  hisfocus: (connection) => new HisfocusAdapter(connection),
+  hioso: (connection) => new HisfocusAdapter(connection),
+  hiso: (connection) => new HisfocusAdapter(connection),
 };
 
 export const supportedVendors = (): string[] => Object.keys(DRIVERS).sort();

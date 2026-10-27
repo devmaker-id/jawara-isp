@@ -19,6 +19,7 @@ interface OltOnu {
   port_id: string;
   onu_id: string;
   serial_number: string | null;
+  onu_mac: string | null;
   description: string | null;
   admin_state: string | null;
   omcc_state: string | null;
@@ -137,7 +138,7 @@ const OnuInventory: React.FC = () => {
         <input
           value={search}
           onChange={(event) => setSearch(event.target.value)}
-          placeholder="Cari ONU ID, serial, atau deskripsi…"
+          placeholder="Cari ONU ID, serial/MAC, atau deskripsi…"
           className="w-full max-w-xs rounded-lg border border-slate-600 bg-slate-900/60 px-3 py-2 text-sm text-slate-100"
         />
 
@@ -159,7 +160,16 @@ const OnuInventory: React.FC = () => {
         </div>
       ) : (
         <Table
-          columns={['Perangkat', 'PON / ONU', 'Serial', 'Deskripsi', 'Status', 'Rx ONU', 'Rx OLT', 'Suhu']}
+          columns={[
+            'Perangkat',
+            'PON / ONU',
+            'Serial / MAC',
+            'Deskripsi',
+            'Status',
+            'Rx ONU',
+            'Rx OLT',
+            'Suhu',
+          ]}
         >
           {rows.map((row) => (
             <tr key={row.id} className="hover:bg-slate-800/40">
@@ -167,7 +177,11 @@ const OnuInventory: React.FC = () => {
               <td className="px-3 py-2 font-mono text-xs text-slate-200">
                 {row.port_id} / {row.onu_id}
               </td>
-              <td className="px-3 py-2 font-mono text-xs text-slate-300">{row.serial_number ?? '—'}</td>
+              {/* VSOL memberi serial GPON; HiFocus memberi MAC ONU. Keduanya
+                  ditampilkan apa adanya, tidak dicampur dalam satu arti. */}
+              <td className="px-3 py-2 font-mono text-xs text-slate-300">
+                {row.serial_number || row.onu_mac || '—'}
+              </td>
               <td className="px-3 py-2 text-xs text-slate-300">{row.description || '—'}</td>
               <td className="px-3 py-2">
                 {row.online ? (

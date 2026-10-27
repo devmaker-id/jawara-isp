@@ -27,7 +27,10 @@ export interface OltConnection {
 export interface OltOnu {
   onuId: string;
   portId: string;
+  /** Serial GPON (vendor VSOL). Vendor lain mengisi `onuMac`. */
   serialNumber: string | null;
+  /** MAC ONU (vendor HiFocus/Hioso). Bukan serial — jangan dicampur. */
+  onuMac?: string | null;
   name: string | null;
   description: string | null;
   adminState: string | null;
@@ -48,11 +51,28 @@ export interface OltIdentity {
   version: string | null;
 }
 
+export interface OltOptical {
+  rxPowerOnu: number | null;
+  rxPowerOlt: number | null;
+  txPower: number | null;
+  temperature: number | null;
+  voltage: number | null;
+  txBias: number | null;
+}
+
 export interface OltAdapter {
   /** Buka sesi sampai siap menerima perintah untuk port PON tertentu. */
   open(): Promise<OltIdentity>;
   /** Baca seluruh ONU pada satu port PON (mis. "0/1"). */
   readOnus(portId: string): Promise<OltOnu[]>;
+  /**
+   * true bila redaman sudah ikut pada `readOnus` (VSOL: 3 perintah untuk
+   * seluruh port). Bila false/absen, redaman dibaca per ONU lewat `readOptical`
+   * dan pemanggil yang mengatur berapa banyak per sekali jalan.
+   */
+  readonly opticalInInventory?: boolean;
+  /** Baca redaman satu ONU. Wajib ada bila `opticalInInventory` bukan true. */
+  readOptical?(portId: string, onuId: string): Promise<OltOptical | null>;
   /** Tutup sesi. Wajib dipanggil di blok `finally` pemanggil. */
   close(): Promise<void>;
 }

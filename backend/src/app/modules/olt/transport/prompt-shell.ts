@@ -25,7 +25,8 @@ export interface ShellChannel {
 export const DEFAULT_PROMPT = /(?:^|\n)\s*(?:[A-Za-z0-9._-]+(?:\([^)]*\))?[>#]|>)\s*$/;
 
 /** Penanda halaman keluaran panjang — dikirim spasi agar lanjut. */
-const MORE_MARKER = /--\s?More\s?--|\(q\)\s*uit|Press any key/gi;
+const MORE_MARKER =
+  /--\s?More\s?--|\(q\)\s*uit|Press any key|---?\s*Enter Key To Continue\s*-*/gi;
 
 export class ShellTimeoutError extends Error {
   constructor(command: string, timeoutMs: number, tail: string) {

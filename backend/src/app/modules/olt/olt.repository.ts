@@ -63,6 +63,7 @@ export interface OltOnuRow {
   port_id: string;
   onu_id: string;
   serial_number: string | null;
+  onu_mac: string | null;
   onu_name: string | null;
   description: string | null;
   admin_state: string | null;
@@ -195,9 +196,11 @@ export class OltRepository {
       params.push(filter.online ? 1 : 0);
     }
     if (filter.search) {
-      where.push('(o.onu_id LIKE ? OR o.serial_number LIKE ? OR o.description LIKE ? OR o.onu_name LIKE ?)');
+      where.push(
+        '(o.onu_id LIKE ? OR o.serial_number LIKE ? OR o.onu_mac LIKE ? OR o.description LIKE ? OR o.onu_name LIKE ?)',
+      );
       const needle = `%${filter.search}%`;
-      params.push(needle, needle, needle, needle);
+      params.push(needle, needle, needle, needle, needle);
     }
     if (filter.maxRx !== undefined) {
       where.push('o.rx_power_onu IS NOT NULL AND o.rx_power_onu <= ?');
@@ -241,30 +244,35 @@ export class OltRepository {
       for (const onu of onus) {
         await connection.query(
           `INSERT INTO olt_onus
-             (olt_id, port_id, onu_id, serial_number, onu_name, description,
+             (olt_id, port_id, onu_id, serial_number, onu_mac, onu_name, description,
               admin_state, omcc_state, phase_state, online,
               rx_power_onu, rx_power_olt, tx_power, temperature, voltage, tx_bias, last_seen_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
            ON DUPLICATE KEY UPDATE
              serial_number = VALUES(serial_number),
+             onu_mac       = VALUES(onu_mac),
              onu_name      = VALUES(onu_name),
              description   = VALUES(description),
              admin_state   = VALUES(admin_state),
              omcc_state    = VALUES(omcc_state),
              phase_state   = VALUES(phase_state),
              online        = VALUES(online),
-             rx_power_onu  = VALUES(rx_power_onu),
-             rx_power_olt  = VALUES(rx_power_olt),
-             tx_power      = VALUES(tx_power),
-             temperature   = VALUES(temperature),
-             voltage       = VALUES(voltage),
-             tx_bias       = VALUES(tx_bias),
+             -- Vendor yang membaca redaman terpisah (HiFocus) mengirim NULL
+             -- di sini; nilai lama harus dipertahankan, bukan dihapus setiap
+             -- sync. Vendor VSOL mengirim angka, jadi tetap menimpa.
+             rx_power_onu  = COALESCE(VALUES(rx_power_onu), rx_power_onu),
+             rx_power_olt  = COALESCE(VALUES(rx_power_olt), rx_power_olt),
+             tx_power      = COALESCE(VALUES(tx_power), tx_power),
+             temperature   = COALESCE(VALUES(temperature), temperature),
+             voltage       = COALESCE(VALUES(voltage), voltage),
+             tx_bias       = COALESCE(VALUES(tx_bias), tx_bias),
              last_seen_at  = NOW()`,
           [
             oltId,
             onu.portId,
             onu.onuId,
             onu.serialNumber,
+            onu.onuMac ?? null,
             onu.name,
             onu.description,
             onu.adminState,
@@ -296,6 +304,63 @@ export class OltRepository {
 
       return { saved: onus.length, removed };
     });
+  }
+
+  /**
+   * ONU yang redamannya perlu dibaca: belum pernah dibaca atau paling lama.
+   *
+   * Vendor yang butuh satu perintah per ONU (HiFocus) dibaca bertahap, supaya
+   * satu permintaan tidak menggantung lama untuk OLT dengan ratusan ONU.
+   */
+  async opticalCandidates(
+    oltId: number,
+    limit: number,
+  ): Promise<Array<{ port_id: string; onu_id: string }>> {
+    const safeLimit = Math.min(Math.max(limit, 1), 60);
+    const rows = await this.db.query<RowDataPacket>(
+      `SELECT port_id, onu_id
+         FROM olt_onus
+        WHERE olt_id = ? AND online = 1
+        -- ONU yang belum punya Rx selalu didahulukan, lalu yang paling lama
+        -- dibaca. Tanpa urutan ini, ONU yang gagal terus tertinggal di belakang.
+        ORDER BY rx_power_onu IS NOT NULL, optical_read_at IS NULL DESC,
+                 optical_read_at ASC, id
+        LIMIT ${safeLimit}`,
+      [oltId],
+    );
+    return rows.map((row) => ({ port_id: String(row.port_id), onu_id: String(row.onu_id) }));
+  }
+
+  async saveOptical(
+    oltId: number,
+    portId: string,
+    onuId: string,
+    optical: {
+      rxPowerOnu: number | null;
+      rxPowerOlt: number | null;
+      txPower: number | null;
+      temperature: number | null;
+      voltage: number | null;
+      txBias: number | null;
+    },
+  ): Promise<void> {
+    await this.db.execute(
+      `UPDATE olt_onus
+          SET rx_power_onu = ?, rx_power_olt = ?, tx_power = ?,
+              temperature = ?, voltage = ?, tx_bias = ?, optical_read_at = NOW()
+        WHERE olt_id = ? AND port_id = ? AND onu_id = ?`,
+      [
+        optical.rxPowerOnu,
+        optical.rxPowerOlt,
+        optical.txPower,
+        optical.temperature,
+        optical.voltage,
+        optical.txBias,
+        oltId,
+        portId,
+        onuId,
+      ],
+    );
   }
 
   async startRun(oltId: number, userId: number): Promise<number> {

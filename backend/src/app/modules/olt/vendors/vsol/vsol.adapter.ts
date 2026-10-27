@@ -27,6 +27,9 @@ import { parseOnuDesc, parseOnuOptical, parseOnuState } from './vsol.parser';
  * atau `reboot` di driver mana pun.
  */
 export class VsolAdapter implements OltAdapter {
+  /** Redaman sudah terbaca bersama inventori (3 perintah untuk satu port). */
+  readonly opticalInInventory = true;
+
   private shell: PromptShell | null = null;
   private mode: 'shell' | 'enable' | 'config' | 'pon' = 'shell';
   private currentPort: string | null = null;
