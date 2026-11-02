@@ -12,10 +12,16 @@ interface InvoiceItem {
   /** Akun RADIUS yang ditagih; null untuk tagihan non-layanan. */
   username: string | null;
   amount: number;
-  status: 'unpaid' | 'paid' | 'overdue' | 'partial';
+  status: 'unpaid' | 'paid' | 'overdue' | 'partial' | 'void';
   due_date: string;
+  /** Periode penagihan (migrasi 032); null untuk tagihan lama/non-layanan. */
+  period_start: string | null;
+  period_end: string | null;
   paid_date: string | null;
   description: string;
+  /** Jejak pembatalan: tagihan void tidak dihapus, hanya ditandai. */
+  voided_at: string | null;
+  void_reason: string | null;
   created_at: string;
 }
 
@@ -43,7 +49,20 @@ interface InvoiceForm {
   username: string;
   amount: string;
   due_date: string;
+  period_start: string;
+  period_end: string;
   description: string;
+}
+
+// Satu baris riwayat dari finance_events (append-only).
+interface FinanceEventItem {
+  id: number;
+  action: string;
+  before_json: Record<string, unknown> | null;
+  after_json: Record<string, unknown> | null;
+  reason: string | null;
+  actor_name: string | null;
+  created_at: string;
 }
 
 interface PaymentItem {
@@ -77,7 +96,15 @@ const today = () => {
   ).padStart(2, '0')}`;
 };
 
-const EMPTY_FORM: InvoiceForm = { customer_id: '', username: '', amount: '', due_date: today(), description: '' };
+const EMPTY_FORM: InvoiceForm = {
+  customer_id: '',
+  username: '',
+  amount: '',
+  due_date: today(),
+  period_start: '',
+  period_end: '',
+  description: '',
+};
 
 // DECIMAL(12,2): tampilkan maksimal 2 desimal tanpa membuang nilainya.
 const formatRupiah = (value: number): string =>
@@ -91,11 +118,42 @@ const formatDate = (iso: string | null): string => {
   return `${d}/${m}/${y}`;
 };
 
+// Timestamp jejak audit (ISO dari server) → tanggal + jam lokal.
+const formatDateTime = (iso: string): string => {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '-';
+  const time = date.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+  return `${formatDate(iso)} ${time}`;
+};
+
 const STATUS_LABEL: Record<InvoiceItem['status'], string> = {
   paid: 'Lunas',
   overdue: 'Terlambat',
   unpaid: 'Belum bayar',
   partial: 'Sebagian',
+  void: 'Dibatalkan',
+};
+
+const ACTION_LABEL: Record<string, string> = {
+  INVOICE_CREATED: 'Tagihan dibuat',
+  INVOICE_UPDATED: 'Tagihan diubah',
+  INVOICE_VOIDED: 'Tagihan dibatalkan',
+  PAYMENT_CREATED: 'Pembayaran dicatat',
+  PAYMENT_VOIDED: 'Pembayaran dibatalkan',
+};
+
+const periodLabel = (invoice: InvoiceItem): string => {
+  if (!invoice.period_start && !invoice.period_end) return '-';
+  return `${formatDate(invoice.period_start)} – ${formatDate(invoice.period_end)}`;
+};
+
+// Alasan void wajib, minimal 5 karakter (sama dengan validasi backend).
+const voidReasonError = (raw: string): string | null => {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return 'Alasan pembatalan wajib diisi.';
+  if (trimmed.length < 5) return 'Alasan minimal 5 karakter agar bisa diaudit.';
+  if (trimmed.length > 255) return 'Alasan maksimal 255 karakter.';
+  return null;
 };
 
 const METHOD_LABEL: Record<PaymentItem['method'], string> = {
@@ -115,6 +173,7 @@ const STATUS_CLASS: Record<InvoiceItem['status'], string> = {
   overdue: 'bg-red-500/10 text-red-400',
   unpaid: 'bg-amber-500/10 text-amber-400',
   partial: 'bg-cyan-500/10 text-cyan-300',
+  void: 'bg-slate-500/20 text-slate-400 line-through',
 };
 
 const readError = (error: unknown, fallback: string): string => {
@@ -166,6 +225,10 @@ const Invoices: React.FC = () => {
   const [saving, setSaving] = useState(false);
 
   const [detail, setDetail] = useState<InvoiceItem | null>(null);
+  // Riwayat aktivitas tagihan (finance_events) untuk panel detail.
+  const [events, setEvents] = useState<FinanceEventItem[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
+  const [eventsError, setEventsError] = useState<string | null>(null);
 
   const [payTarget, setPayTarget] = useState<InvoiceItem | null>(null);
   const [payForm, setPayForm] = useState<PayForm>({
@@ -190,8 +253,11 @@ const Invoices: React.FC = () => {
   const [voidError, setVoidError] = useState<string | null>(null);
   const [voiding, setVoiding] = useState(false);
 
-  const [confirmTarget, setConfirmTarget] = useState<InvoiceItem | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  // Pembatalan tagihan (void) — pengganti hapus permanen.
+  const [invoiceVoidTarget, setInvoiceVoidTarget] = useState<InvoiceItem | null>(null);
+  const [invoiceVoidReason, setInvoiceVoidReason] = useState('');
+  const [invoiceVoidError, setInvoiceVoidError] = useState<string | null>(null);
+  const [invoiceVoiding, setInvoiceVoiding] = useState(false);
 
   const load = useCallback(async () => {
     if (!loadedOnce.current) setLoading(true);
@@ -260,6 +326,8 @@ const Invoices: React.FC = () => {
       username: invoice.username ?? '',
       amount: String(invoice.amount),
       due_date: invoice.due_date.slice(0, 10),
+      period_start: invoice.period_start?.slice(0, 10) ?? '',
+      period_end: invoice.period_end?.slice(0, 10) ?? '',
       description: invoice.description ?? '',
     });
     setFormError(null);
@@ -298,6 +366,15 @@ const Invoices: React.FC = () => {
     const err = amountError(form.amount);
     if (err) return err;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(form.due_date)) return 'Jatuh tempo wajib diisi.';
+    // Periode: keduanya diisi atau keduanya kosong (sama dengan aturan backend).
+    const periodStart = form.period_start.trim();
+    const periodEnd = form.period_end.trim();
+    if ((periodStart === '') !== (periodEnd === '')) {
+      return 'Periode awal dan periode akhir harus diisi bersama.';
+    }
+    if (periodStart && periodEnd && periodEnd < periodStart) {
+      return 'Periode akhir tidak boleh lebih awal dari periode awal.';
+    }
     if (form.description.length > 255) return 'Deskripsi maksimal 255 karakter.';
     return null;
   };
@@ -318,6 +395,9 @@ const Invoices: React.FC = () => {
         await api.patch(`/api/invoices/${editing.id}`, {
           amount: parseAmount(form.amount),
           due_date: form.due_date,
+          // null = kosongkan periode (dikirim berpasangan).
+          period_start: form.period_start || null,
+          period_end: form.period_end || null,
           description: form.description.trim(),
         });
         setToast({ type: 'success', text: 'Tagihan berhasil diperbarui.' });
@@ -328,6 +408,8 @@ const Invoices: React.FC = () => {
           username: form.username || null,
           amount: parseAmount(form.amount),
           due_date: form.due_date,
+          period_start: form.period_start || null,
+          period_end: form.period_end || null,
           description: form.description.trim(),
         });
         setToast({ type: 'success', text: 'Tagihan berhasil dibuat.' });
@@ -357,15 +439,33 @@ const Invoices: React.FC = () => {
     }
   };
 
+  const loadEvents = async (invoiceId: number): Promise<void> => {
+    setEventsLoading(true);
+    setEventsError(null);
+    try {
+      const res = await api.get(`/api/invoices/${invoiceId}/events`);
+      setEvents(Array.isArray(res.data) ? (res.data as FinanceEventItem[]) : []);
+    } catch (error) {
+      setEvents([]);
+      // 503 = migrasi 032 belum dijalankan; ditampilkan inline, bukan toast.
+      setEventsError(readError(error, 'Riwayat aktivitas belum dapat dimuat.'));
+    } finally {
+      setEventsLoading(false);
+    }
+  };
+
   const openDetail = async (invoice: InvoiceItem) => {
     setDetail(invoice);
     setPayments([]);
     setPaymentsError(null);
+    setEvents([]);
+    setEventsError(null);
     try {
       await loadPayments(invoice.id);
     } catch (error) {
       setPaymentsError(readError(error, 'Gagal memuat riwayat pembayaran.'));
     }
+    await loadEvents(invoice.id);
   };
 
   // Kunci idempoten per dialog: klik ganda tidak boleh menjadi dua tagihan.
@@ -440,6 +540,7 @@ const Invoices: React.FC = () => {
       await load();
       if (detail?.id === payTarget.id) {
         await loadPayments(payTarget.id).catch(() => undefined);
+        await loadEvents(payTarget.id);
       }
     } catch (error) {
       setPayError(readError(error, 'Gagal mencatat pembayaran.'));
@@ -485,6 +586,7 @@ const Invoices: React.FC = () => {
       );
       await load();
       await loadPayments(invoiceId).catch(() => undefined);
+      if (detail?.id === invoiceId) await loadEvents(invoiceId);
     } catch (error) {
       setVoidError(readError(error, 'Gagal membatalkan pembayaran.'));
     } finally {
@@ -492,20 +594,42 @@ const Invoices: React.FC = () => {
     }
   };
 
-  const handleDelete = async () => {
-    if (!confirmTarget || deleting) return;
-    setDeleting(true);
+  const openInvoiceVoid = (invoice: InvoiceItem) => {
+    setInvoiceVoidTarget(invoice);
+    setInvoiceVoidReason('');
+    setInvoiceVoidError(null);
+  };
+
+  // Tagihan tidak pernah dihapus: dibatalkan dengan alasan yang tercatat.
+  const handleInvoiceVoid = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!invoiceVoidTarget || invoiceVoiding) return;
+    const invalid = voidReasonError(invoiceVoidReason);
+    if (invalid) {
+      setInvoiceVoidError(invalid);
+      return;
+    }
+
+    setInvoiceVoiding(true);
+    setInvoiceVoidError(null);
     try {
-      await api.delete(`/api/invoices/${confirmTarget.id}`);
-      setToast({ type: 'success', text: `Tagihan ${confirmTarget.invoice_number} dihapus.` });
-      setConfirmTarget(null);
-      setDetail(null);
+      const res = await api.post(`/api/invoices/${invoiceVoidTarget.id}/void`, {
+        reason: invoiceVoidReason.trim(),
+      });
+      const updated = res.data as InvoiceItem;
+      const targetId = invoiceVoidTarget.id;
+      setToast({
+        type: 'success',
+        text: `Tagihan ${invoiceVoidTarget.invoice_number} dibatalkan (void).`,
+      });
+      setInvoiceVoidTarget(null);
+      setDetail((d) => (d && d.id === targetId ? { ...d, ...updated } : d));
       await load();
+      if (detail?.id === targetId) await loadEvents(targetId);
     } catch (error) {
-      setToast({ type: 'error', text: readError(error, 'Gagal menghapus tagihan.') });
-      setConfirmTarget(null);
+      setInvoiceVoidError(readError(error, 'Gagal membatalkan tagihan.'));
     } finally {
-      setDeleting(false);
+      setInvoiceVoiding(false);
     }
   };
 
@@ -567,7 +691,7 @@ const Invoices: React.FC = () => {
       )}
 
       <div className="flex flex-wrap gap-2">
-        {(['all', 'unpaid', 'overdue', 'partial', 'paid'] as const).map((key) => (
+        {(['all', 'unpaid', 'overdue', 'partial', 'paid', 'void'] as const).map((key) => (
           <button
             key={key}
             type="button"
@@ -628,13 +752,19 @@ const Invoices: React.FC = () => {
                   <th className="px-4 py-3 text-right font-medium text-slate-400">Jumlah</th>
                   <th className="px-4 py-3 text-left font-medium text-slate-400">Status</th>
                   <th className="px-4 py-3 text-left font-medium text-slate-400">Jatuh Tempo</th>
+                  <th className="px-4 py-3 text-left font-medium text-slate-400">Periode</th>
                   <th className="px-4 py-3 text-left font-medium text-slate-400">Dibayar</th>
                   <th className="px-4 py-3 text-right font-medium text-slate-400">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-700/50">
                 {invoices.map((invoice) => (
-                  <tr key={invoice.id} className="hover:bg-slate-700/20 transition">
+                  <tr
+                    key={invoice.id}
+                    className={`transition hover:bg-slate-700/20 ${
+                      invoice.status === 'void' ? 'opacity-60' : ''
+                    }`}
+                  >
                     <td className="px-4 py-3 font-medium text-cyan-400 whitespace-nowrap">
                       {invoice.invoice_number}
                     </td>
@@ -655,6 +785,9 @@ const Invoices: React.FC = () => {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-slate-400 whitespace-nowrap">{formatDate(invoice.due_date)}</td>
+                    <td className="px-4 py-3 text-slate-400 whitespace-nowrap text-xs">
+                      {periodLabel(invoice)}
+                    </td>
                     <td className="px-4 py-3 text-slate-400 whitespace-nowrap">{formatDate(invoice.paid_date)}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap justify-end gap-3">
@@ -665,7 +798,7 @@ const Invoices: React.FC = () => {
                         >
                           Detail
                         </button>
-                        {canWrite && invoice.status !== 'paid' && (
+                        {canWrite && invoice.status !== 'paid' && invoice.status !== 'void' && (
                           <>
                             <button
                               type="button"
@@ -683,13 +816,13 @@ const Invoices: React.FC = () => {
                             </button>
                           </>
                         )}
-                        {canDelete && (
+                        {canWrite && invoice.status !== 'void' && (
                           <button
                             type="button"
-                            onClick={() => setConfirmTarget(invoice)}
+                            onClick={() => openInvoiceVoid(invoice)}
                             className="text-slate-400 hover:text-red-400 transition"
                           >
-                            Hapus
+                            Batalkan
                           </button>
                         )}
                       </div>
@@ -821,6 +954,38 @@ const Invoices: React.FC = () => {
                 </div>
               </div>
 
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-1" htmlFor="i-period-start">
+                    Periode awal
+                  </label>
+                  <input
+                    id="i-period-start"
+                    type="date"
+                    value={form.period_start}
+                    onChange={(e) => setForm((f) => ({ ...f, period_start: e.target.value }))}
+                    className={inputClass}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-1" htmlFor="i-period-end">
+                    Periode akhir
+                  </label>
+                  <input
+                    id="i-period-end"
+                    type="date"
+                    min={form.period_start || undefined}
+                    value={form.period_end}
+                    onChange={(e) => setForm((f) => ({ ...f, period_end: e.target.value }))}
+                    className={inputClass}
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-slate-500 -mt-2">
+                Isi keduanya atau kosongkan keduanya. Periode yang sama untuk akun yang sama
+                tidak bisa ditagih dua kali — batalkan (void) tagihan lama bila memang diganti.
+              </p>
+
               <div>
                 <label className="block text-sm font-medium text-slate-300 mb-1" htmlFor="i-desc">
                   Deskripsi
@@ -904,6 +1069,10 @@ const Invoices: React.FC = () => {
                 <dd className="text-slate-200">{formatDate(detail.due_date)}</dd>
               </div>
               <div className="flex justify-between gap-4">
+                <dt className="text-slate-400">Periode</dt>
+                <dd className="text-slate-200 text-right">{periodLabel(detail)}</dd>
+              </div>
+              <div className="flex justify-between gap-4">
                 <dt className="text-slate-400">Tanggal bayar</dt>
                 <dd className="text-slate-200">{formatDate(detail.paid_date)}</dd>
               </div>
@@ -911,6 +1080,15 @@ const Invoices: React.FC = () => {
                 <dt className="text-slate-400">Deskripsi</dt>
                 <dd className="text-slate-200 text-right break-words">{detail.description || '-'}</dd>
               </div>
+              {detail.status === 'void' && (
+                <div className="flex justify-between gap-4">
+                  <dt className="text-slate-400">Dibatalkan</dt>
+                  <dd className="text-red-400 text-right break-words">
+                    {formatDateTime(detail.voided_at ?? '')}
+                    {detail.void_reason ? ` · ${detail.void_reason}` : ''}
+                  </dd>
+                </div>
+              )}
             </dl>
 
             <div className="space-y-2">
@@ -968,6 +1146,44 @@ const Invoices: React.FC = () => {
               )}
             </div>
 
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-slate-300">Riwayat aktivitas</p>
+              {eventsLoading ? (
+                <p className="text-sm text-slate-500">Memuat riwayat...</p>
+              ) : eventsError ? (
+                <p className="text-sm text-amber-400">{eventsError}</p>
+              ) : events.length === 0 ? (
+                <p className="text-sm text-slate-500">Belum ada aktivitas tercatat.</p>
+              ) : (
+                <ul className="space-y-1.5">
+                  {events.map((event) => (
+                    <li key={event.id} className="rounded-lg border border-slate-700/50 bg-slate-700/10 px-3 py-2">
+                      <p className="text-sm text-slate-200">
+                        {ACTION_LABEL[event.action] ?? event.action}
+                        {typeof event.after_json?.amount === 'number' && event.action !== 'INVOICE_UPDATED'
+                          ? ` · ${formatRupiah(event.after_json.amount as number)}`
+                          : ''}
+                      </p>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        {formatDateTime(event.created_at)}
+                        {event.actor_name ? ` · ${event.actor_name}` : ''}
+                      </p>
+                      {event.reason && <p className="text-xs text-red-400 mt-1 break-words">{event.reason}</p>}
+                      {event.action === 'INVOICE_UPDATED' &&
+                        typeof event.before_json?.amount === 'number' &&
+                        typeof event.after_json?.amount === 'number' &&
+                        event.before_json.amount !== event.after_json.amount && (
+                          <p className="text-xs text-slate-400 mt-1">
+                            Nominal {formatRupiah(event.before_json.amount as number)} →{' '}
+                            {formatRupiah(event.after_json.amount as number)}
+                          </p>
+                        )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
             <div className="flex gap-3 justify-end pt-2">
               <button
                 type="button"
@@ -976,7 +1192,7 @@ const Invoices: React.FC = () => {
               >
                 Tutup
               </button>
-              {canWrite && detail.status !== 'paid' && (
+              {canWrite && detail.status !== 'paid' && detail.status !== 'void' && (
                 <button
                   type="button"
                   onClick={() => openPay(detail)}
@@ -1192,39 +1408,67 @@ const Invoices: React.FC = () => {
         </div>
       )}
 
-      {confirmTarget && (
+      {invoiceVoidTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4">
           <div
             role="dialog"
             aria-modal="true"
-            aria-labelledby="confirm-invoice-title"
+            aria-labelledby="void-invoice-title"
             className="w-full max-w-sm bg-slate-800 rounded-2xl border border-slate-700 shadow-2xl p-5 space-y-4"
           >
-            <h2 id="confirm-invoice-title" className="text-lg font-semibold text-white">
-              Hapus tagihan?
-            </h2>
-            <p className="text-sm text-slate-400">
-              Tagihan <span className="text-slate-200 font-medium">{confirmTarget.invoice_number}</span> (
-              {formatRupiah(confirmTarget.amount)}) akan dihapus permanen.
-            </p>
-            <div className="flex gap-3 justify-end">
-              <button
-                type="button"
-                onClick={() => setConfirmTarget(null)}
-                disabled={deleting}
-                className="px-4 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-slate-700/50 disabled:opacity-50 transition"
-              >
-                Batal
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleDelete()}
-                disabled={deleting}
-                className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-500 hover:bg-red-400 disabled:opacity-50 transition"
-              >
-                {deleting ? 'Menghapus...' : 'Hapus'}
-              </button>
-            </div>
+            <form onSubmit={handleInvoiceVoid} className="space-y-4">
+              <h2 id="void-invoice-title" className="text-lg font-semibold text-white">
+                Batalkan tagihan?
+              </h2>
+              <p className="text-sm text-slate-400">
+                Tagihan{' '}
+                <span className="text-slate-200 font-medium">{invoiceVoidTarget.invoice_number}</span> (
+                {formatRupiah(invoiceVoidTarget.amount)}) tidak dihapus, hanya dibatalkan. Nomor tagihan,
+                riwayat pembayaran, dan alasannya tetap tersimpan.
+              </p>
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-1" htmlFor="void-invoice-reason">
+                  Alasan pembatalan *
+                </label>
+                <input
+                  id="void-invoice-reason"
+                  type="text"
+                  maxLength={255}
+                  value={invoiceVoidReason}
+                  onChange={(e) => setInvoiceVoidReason(e.target.value)}
+                  className={inputClass}
+                  placeholder="Mis. salah input nominal"
+                  required
+                />
+                <p className="text-xs text-slate-500 mt-1">Minimal 5 karakter.</p>
+              </div>
+              {invoiceVoidError && (
+                <p role="alert" className="text-sm text-red-400">
+                  {invoiceVoidError}
+                </p>
+              )}
+              <div className="flex gap-3 justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (invoiceVoiding) return;
+                    setInvoiceVoidTarget(null);
+                    setInvoiceVoidError(null);
+                  }}
+                  disabled={invoiceVoiding}
+                  className="px-4 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-slate-700/50 disabled:opacity-50 transition"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={invoiceVoiding}
+                  className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-500 hover:bg-red-400 disabled:opacity-50 transition"
+                >
+                  {invoiceVoiding ? 'Membatalkan...' : 'Batalkan Invoice'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
