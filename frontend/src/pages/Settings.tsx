@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import api from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 
-type TabKey = 'branding' | 'voucher' | 'payment' | 'telegram' | 'whatsapp' | 'integrasi' | 'sistem';
+type TabKey = 'branding' | 'voucher' | 'pelanggan' | 'payment' | 'telegram' | 'whatsapp' | 'integrasi' | 'sistem';
 type Toast = { type: 'success' | 'error'; text: string } | null;
 
 interface SettingsView {
@@ -15,6 +15,7 @@ interface SettingsView {
 const TABS: Array<{ key: TabKey; label: string; hint: string }> = [
   { key: 'branding', label: 'Branding', hint: 'Nama, logo, dan warna panel' },
   { key: 'voucher', label: 'Template Voucher', hint: 'Teks kartu voucher & variabel cetak' },
+  { key: 'pelanggan', label: 'Pelanggan', hint: 'Angka awal Nomor Internet' },
   { key: 'payment', label: 'Pembayaran', hint: 'Manual (tunai/transfer/QRIS) atau payment gateway' },
   { key: 'telegram', label: 'Telegram', hint: 'Bot notifikasi tagihan' },
   { key: 'whatsapp', label: 'WhatsApp Bot', hint: 'Gateway pesan WhatsApp' },
@@ -405,6 +406,29 @@ const Settings: React.FC = () => {
           <p className="text-xs text-slate-500 mt-3">{values.brand_footer_text}</p>
         )}
       </div>
+    </Card>
+  );
+
+  const renderPelanggan = () => (
+    <Card
+      title="Nomor Internet"
+      description="Identitas permanen pelanggan. Nomor dibuat otomatis saat pelanggan reguler (PPPoE atau Hotspot) dibuat."
+    >
+      <TextField
+        id="internet_no_start"
+        label="Angka awal Nomor Internet"
+        value={values.internet_no_start ?? ''}
+        onChange={(v) => set('internet_no_start', v)}
+        disabled={!isAdmin}
+        mono
+        placeholder="1312013"
+        hint="Contoh: 1312013. Nomor berikutnya = angka awal + urutan yang sudah terpakai. Kosongkan untuk mematikan penomoran otomatis. Nomor yang sudah terbit tidak pernah dipakai ulang."
+      />
+      <p className="text-xs text-slate-400">
+        Mengubah angka awal hanya memindahkan titik mulai untuk nomor BERIKUTNYA. Nomor yang sudah
+        terbit tidak berubah dan tidak bisa dipakai ulang. Nilai yang akan bertabrakan dengan nomor
+        terbit akan ditolak.
+      </p>
     </Card>
   );
 
@@ -941,6 +965,8 @@ const Settings: React.FC = () => {
     switch (tab) {
       case 'voucher':
         return renderVoucher();
+      case 'pelanggan':
+        return renderPelanggan();
       case 'payment':
         return renderPayment();
       case 'telegram':

@@ -106,6 +106,7 @@ export const MAX_VALUE_LENGTH = 20000;
 export const SETTING_GROUPS: Record<string, SettingKey[]> = {
   branding: ['brand_name', 'brand_tagline', 'brand_primary_color', 'brand_logo_url', 'brand_footer_text'],
   voucher: ['voucher_templates'],
+  pelanggan: ['internet_no_start'],
   payment: [
     'payment_mode',
     'payment_methods',

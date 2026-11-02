@@ -29,7 +29,17 @@ describe('SettingsService', () => {
 
     expect(view.values.brand_name).toBe('BibitNet Nanggela');
     expect(view.values.brand_tagline).toBe('BibitNet ISP');
-    expect(Object.keys(view.groups)).toEqual(['branding', 'payment', 'telegram', 'whatsapp', 'integrasi']);
+    // Urutan grup mengikuti SETTING_GROUPS; yang penting setiap tab pengaturan
+    // punya grupnya sendiri.
+    expect(Object.keys(view.groups)).toEqual([
+      'branding',
+      'voucher',
+      'pelanggan',
+      'payment',
+      'telegram',
+      'whatsapp',
+      'integrasi',
+    ]);
   });
 
   it('branding publik hanya berisi lima nilai identitas, tanpa rahasia', async () => {

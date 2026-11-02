@@ -32,4 +32,22 @@ export class SettingsRepository {
       }
     });
   }
+
+  /**
+   * Keadaan penomoran Nomor Internet: nomor tertinggi yang sudah terbit dan
+   * urutan terakhir di penghitung.
+   *
+   * Dipakai untuk menolak angka awal yang akan membuat nomor berikutnya
+   * menabrak nomor yang sudah terbit. Penghitung sendiri TIDAK pernah diubah
+   * di sini — nomor yang sudah keluar tidak boleh dipakai ulang.
+   */
+  async internetNoState(): Promise<{ maxIssued: number; lastSeq: number }> {
+    const row = await this.db.queryOne<{ max_issued: number | null; last_seq: number | null }>(
+      `SELECT
+         (SELECT MAX(CAST(internet_no AS UNSIGNED)) FROM customers
+           WHERE internet_no IS NOT NULL) AS max_issued,
+         (SELECT COALESCE(MAX(seq), 0) FROM internet_no_sequence) AS last_seq`,
+    );
+    return { maxIssued: Number(row?.max_issued ?? 0), lastSeq: Number(row?.last_seq ?? 0) };
+  }
 }

@@ -142,6 +142,32 @@ export class SettingsService {
       throw new BadRequestException('Tidak ada nilai yang berubah untuk disimpan');
     }
 
+    // Angka awal Nomor Internet. Kosong = penomoran otomatis dimatikan
+    // (pelanggan baru dibuat tanpa nomor). Nilai baru hanya boleh menggeser
+    // titik mulai KE DEPAN: penghitung tidak pernah direset, jadi nomor yang
+    // sudah terbit tidak mungkin dipakai ulang.
+    if (toSave.internet_no_start !== undefined) {
+      const raw = toSave.internet_no_start;
+      if (raw !== '' && !/^[0-9]{4,15}$/.test(raw)) {
+        throw new BadRequestException(
+          'Angka awal Nomor Internet harus 4-15 digit angka tanpa titik/koma (contoh 1312013).',
+        );
+      }
+      if (raw !== '') {
+        const start = Number(raw);
+        const { maxIssued, lastSeq } = await this.repository
+          .internetNoState()
+          .catch((error) => this.rethrow(error));
+        const next = start + lastSeq;
+        if (maxIssued > 0 && next <= maxIssued) {
+          throw new BadRequestException(
+            `Angka awal ${start} ditolak: nomor berikutnya (${next}) akan bertabrakan dengan ` +
+              `nomor ${maxIssued} yang sudah terbit. Gunakan minimal ${maxIssued - lastSeq + 1}.`,
+          );
+        }
+      }
+    }
+
     await this.repository.upsert(toSave).catch((error) => this.rethrow(error));
     return this.get();
   }
