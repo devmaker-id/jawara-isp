@@ -24,6 +24,7 @@ import {
   CreateBandwidthDto,
   CreateGroupProfileDto,
   CreateServiceProfileDto,
+  ExportVoucherQueryDto,
   GenerateVoucherDto,
   ListVoucherQueryDto,
   RemoveVouchersDto,
@@ -44,6 +45,21 @@ function parseIds(raw?: string): number[] | undefined {
     .map((value) => Number(value.trim()))
     .filter((value) => Number.isInteger(value) && value > 0);
   return ids.length > 0 ? ids : undefined;
+}
+
+/** Kriteria ekspor: nama query → parameter service (sama dengan daftar). */
+function voucherFilters(query: ExportVoucherQueryDto) {
+  return {
+    profileType: query.profile_type,
+    profileId: query.profile_id,
+    status: query.status,
+    userType: query.user_type,
+    search: query.search,
+    createdBy: query.created_by,
+    ownerId: query.owner_id,
+    dateFrom: query.date_from,
+    dateTo: query.date_to,
+  };
 }
 
 const validation = new ValidationPipe({
@@ -83,7 +99,8 @@ export class ProfilesController {
 
   // ===== Bandwidth =====
   @Get('bandwidth')
-  @Roles('admin', 'operator')
+  @Roles('admin', 'operator', 'resseler')
+  @RequirePermission('bandwidth.view')
   bandwidths(@Req() request: Request, @Query('search') search?: string) {
     return this.service.listBandwidths(actorOf(request), search);
   }
@@ -112,7 +129,8 @@ export class ProfilesController {
 
   // ===== Group Profile =====
   @Get('groups')
-  @Roles('admin', 'operator')
+  @Roles('admin', 'operator', 'resseler')
+  @RequirePermission('group.view')
   groups(
     @Req() request: Request,
     @Query('type') type?: string,
@@ -122,7 +140,8 @@ export class ProfilesController {
   }
 
   @Get('groups/:id')
-  @Roles('admin', 'operator')
+  @Roles('admin', 'operator', 'resseler')
+  @RequirePermission('group.view')
   group(@Req() request: Request, @Param('id', ParseIntPipe) id: number) {
     return this.service.getGroup(actorOf(request), id);
   }
@@ -151,19 +170,22 @@ export class ProfilesController {
 
   // ===== Profil Hotspot / PPP =====
   @Get('hotspot')
-  @Roles('admin', 'operator')
+  @Roles('admin', 'operator', 'resseler')
+  @RequirePermission('profile.view')
   hotspot(@Req() request: Request, @Query('search') search?: string) {
     return this.service.listProfiles(actorOf(request), 'hotspot', search);
   }
 
   @Get('ppp')
-  @Roles('admin', 'operator')
+  @Roles('admin', 'operator', 'resseler')
+  @RequirePermission('profile.view')
   ppp(@Req() request: Request, @Query('search') search?: string) {
     return this.service.listProfiles(actorOf(request), 'ppp', search);
   }
 
   @Get(':type/:id/preview')
-  @Roles('admin', 'operator')
+  @Roles('admin', 'operator', 'resseler')
+  @RequirePermission('profile.view')
   preview(
     @Req() request: Request,
     @Param('type') type: string,
@@ -173,7 +195,8 @@ export class ProfilesController {
   }
 
   @Get(':type/:id')
-  @Roles('admin', 'operator')
+  @Roles('admin', 'operator', 'resseler')
+  @RequirePermission('profile.view')
   profile(
     @Req() request: Request,
     @Param('type') type: string,
@@ -183,7 +206,8 @@ export class ProfilesController {
   }
 
   @Post(':type')
-  @Roles('admin')
+  @Roles('admin', 'operator', 'resseler')
+  @RequirePermission('profile.create')
   createProfile(
     @Req() request: Request,
     @Param('type') type: string,
@@ -193,7 +217,8 @@ export class ProfilesController {
   }
 
   @Patch(':type/:id')
-  @Roles('admin')
+  @Roles('admin', 'operator', 'resseler')
+  @RequirePermission('profile.update')
   updateProfile(
     @Req() request: Request,
     @Param('type') type: string,
@@ -254,14 +279,20 @@ export class VouchersController {
   }
 
   /**
-   * Ekspor voucher terpilih (atau seluruh hasil filter bila `ids` kosong).
+   * Ekspor voucher terpilih (atau hasil filter bila `ids` kosong).
    * CSV untuk dibuka di spreadsheet, PDF untuk dicetak/dikirim.
+   * Kriteria filter sama dengan daftar voucher: profil, pemilik, status,
+   * rentang tanggal pembuatan.
    */
   @Get('export.csv')
   @Roles('admin', 'operator', 'resseler')
   @RequirePermission('voucher.print')
-  async exportCsv(@Req() request: Request, @Res() response: Response, @Query('ids') ids?: string) {
-    const rows = await this.service.voucherRowsForExport(actorOf(request), parseIds(ids));
+  async exportCsv(@Req() request: Request, @Res() response: Response, @Query() query: ExportVoucherQueryDto) {
+    const rows = await this.service.voucherRowsForExport(
+      actorOf(request),
+      parseIds(query.ids),
+      voucherFilters(query),
+    );
     const header = [
       'username', 'password', 'profile_type', 'profile', 'user_type', 'status',
       'price', 'tax', 'owner', 'created_by', 'created_at',
@@ -277,20 +308,35 @@ export class VouchersController {
     response
       .status(200)
       .setHeader('content-type', 'text/csv; charset=utf-8')
-      .setHeader('content-disposition', `attachment; filename="voucher-${Date.now()}.csv"`)
+      .setHeader('content-disposition', `attachment; filename="voucher-${query.profile_type ?? 'semua'}-${Date.now()}.csv"`)
       .send(`\uFEFF${csv}`);
   }
 
   @Get('export.pdf')
   @Roles('admin', 'operator', 'resseler')
   @RequirePermission('voucher.print')
-  async exportPdf(@Req() request: Request, @Res() response: Response, @Query('ids') ids?: string) {
-    const rows = await this.service.voucherRowsForExport(actorOf(request), parseIds(ids));
-    const pdf = this.service.buildVoucherPdf(ProfilesService.toCards(rows));
+  async exportPdf(@Req() request: Request, @Res() response: Response, @Query() query: ExportVoucherQueryDto) {
+    const rows = await this.service.voucherRowsForExport(
+      actorOf(request),
+      parseIds(query.ids),
+      voucherFilters(query),
+    );
+    // Tanggal cetak ikut tercetak di kaki halaman: lembar cetak bisa dilacak
+    // kapan dibuat dan berapa voucher yang termuat.
+    const footer =
+      `Dicetak ${new Date().toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' })}` +
+      ` - ${rows.length} voucher${rows.length >= 500 ? ' (maksimal 500)' : ''}`;
+    const templates = await this.service.voucherTemplates();
+    const template = templates.find((item) => item.id === query.template) ?? templates[0];
+    const brand = await this.service.voucherBrand();
+    const pdf = this.service.buildVoucherPdf(
+      ProfilesService.toCards(rows, template, brand),
+      footer,
+    );
     response
       .status(200)
       .setHeader('content-type', 'application/pdf')
-      .setHeader('content-disposition', `attachment; filename="voucher-${Date.now()}.pdf"`)
+      .setHeader('content-disposition', `attachment; filename="voucher-${query.profile_type ?? 'semua'}-${Date.now()}.pdf"`)
       .send(pdf);
   }
 
@@ -301,6 +347,14 @@ export class VouchersController {
     return this.service.voucherCounts(actorOf(request));
   }
 
+  /** Template cetak + variabel yang sah (dipakai dialog cetak). */
+  @Get('templates')
+  @Roles('admin', 'operator', 'resseler')
+  @RequirePermission('voucher.print')
+  templates() {
+    return this.service.voucherTemplateCatalog();
+  }
+
   @Post('generate')
   @Roles('admin', 'operator', 'resseler')
   @RequirePermission('voucher.generate')
@@ -309,14 +363,15 @@ export class VouchersController {
   }
 
   @Post(':id/activate')
-  @Roles('admin', 'operator')
+  @Roles('admin', 'operator', 'resseler')
+  @RequirePermission('voucher.generate')
   activate(@Req() request: Request, @Param('id', ParseIntPipe) id: number) {
     return this.service.activateVoucher(actorOf(request), id);
   }
 
   // Didaftarkan sebelum ':id/status' supaya "bulk" tidak dianggap id.
   @Patch('bulk/status')
-  @Roles('admin', 'operator')
+  @Roles('admin', 'operator', 'resseler')
   @RequirePermission('voucher.generate')
   bulkStatus(@Req() request: Request, @Body() dto: BulkVoucherStatusDto) {
     return this.service.bulkVoucherStatus(actorOf(request), dto.ids, dto.status);

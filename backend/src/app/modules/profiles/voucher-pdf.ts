@@ -5,22 +5,32 @@
  * Helvetica/Courier (base-14, tidak perlu di-embed). Cukup untuk voucher yang
  * dicetak atau dikirim lewat WhatsApp.
  *
+ * Isi kartu datang sudah dalam bentuk teks jadi (variabel template sudah
+ * diganti pemanggil), jadi berkas ini hanya mengurus tata letak.
+ *
  * ponytail: hanya teks Latin-1 dan tanpa gambar/QR. Naikkan ke pdfkit bila
  * suatu saat butuh QR code atau font khusus.
  */
 
 export interface VoucherCard {
-  profile: string;
+  /** Baris paling atas, kecil & redup. */
+  header: string;
+  /** Baris judul. */
+  title: string;
   username: string;
+  /** Kosong = tidak dicetak (mis. password sama dengan username). */
   password: string;
-  meta: string;
+  /** Maks 3 baris isi. */
+  lines: string[];
+  /** Baris kaki kartu. */
+  footer: string;
 }
 
 const A4 = { w: 595.28, h: 841.89 };
 const MARGIN = 24;
 const GAP = 10;
 const COLS = 3;
-const CARD_H = 88;
+const CARD_H = 100;
 
 const CARD_W = (A4.w - MARGIN * 2 - GAP * (COLS - 1)) / COLS;
 const ROWS_PER_PAGE = Math.floor((A4.h - MARGIN * 2 + GAP) / (CARD_H + GAP));
@@ -62,15 +72,19 @@ function pageContent(cards: VoucherCard[]): string {
       `0.6 w [3 2] 0 d 0.55 G ${x.toFixed(2)} ${(top - CARD_H).toFixed(2)} ` +
       `${CARD_W.toFixed(2)} ${CARD_H.toFixed(2)} re S [] 0 d\n`;
 
-    out += text(x + 8, top - 16, 8, 'F1', 0.35, card.profile.slice(0, 34));
-    out += text(x + 8, top - 38, 15, 'F2', 0, card.username);
-    out += text(x + 8, top - 54, 11, 'F3', 0, card.password);
-    out += text(x + 8, top - 72, 7, 'F1', 0.45, card.meta.slice(0, 44));
+    if (card.header) out += text(x + 8, top - 13, 7, 'F1', 0.45, card.header);
+    if (card.title) out += text(x + 8, top - 26, 8, 'F1', 0.2, card.title);
+    out += text(x + 8, top - 46, 15, 'F2', 0, card.username);
+    if (card.password) out += text(x + 8, top - 60, 10, 'F3', 0, card.password);
+    card.lines.slice(0, 3).forEach((line, i) => {
+      out += text(x + 8, top - 73 - i * 8.5, 6.5, 'F1', 0.35, line);
+    });
+    if (card.footer) out += text(x + 8, top - 95, 6, 'F1', 0.5, card.footer);
   });
   return out;
 }
 
-export function buildVoucherPdf(cards: VoucherCard[], title = 'Voucher'): Buffer {
+export function buildVoucherPdf(cards: VoucherCard[], title = 'Voucher', footer?: string): Buffer {
   const pages: string[] = [];
   if (cards.length === 0) {
     pages.push(text(MARGIN, A4.h - MARGIN - 16, 12, 'F1', 0.3, 'Tidak ada voucher pada pilihan ini.'));
@@ -79,6 +93,9 @@ export function buildVoucherPdf(cards: VoucherCard[], title = 'Voucher'): Buffer
       pages.push(pageContent(cards.slice(start, start + PER_PAGE)));
     }
   }
+  // Baris kaki halaman: tanggal cetak + jumlah voucher, supaya lembar cetak bisa
+  // dilacak kapan dan dari kriteria mana ia dibuat.
+  if (footer) for (let i = 0; i < pages.length; i += 1) pages[i] += text(MARGIN, 14, 7, 'F1', 0.45, footer);
 
   // Objek: 1 catalog, 2 pages, 3-5 font, lalu pasangan (page, content).
   const firstPageId = 6;

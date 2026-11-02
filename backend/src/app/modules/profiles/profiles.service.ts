@@ -29,6 +29,21 @@ import {
 import { finalPrice, toRadiusMapping } from './profile-mapping';
 import { BURST_FACTOR } from './rate-limit';
 import { buildVoucherPdf, VoucherCard } from './voucher-pdf';
+import {
+  DEFAULT_TEMPLATES,
+  fillTemplate,
+  parseTemplates,
+  TEMPLATE_VARIABLES,
+  type VoucherTemplate,
+} from './voucher-template';
+import { SettingsService } from '../settings/settings.service';
+import {
+  CHARSET_MIN_LENGTH,
+  randomCode,
+  randomPassword,
+  VOUCHER_MIN_LENGTH,
+  type VoucherCharset,
+} from './voucher-code';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { quotaToBytes, unitToSeconds } from './rate-limit';
 
@@ -37,15 +52,6 @@ import { quotaToBytes, unitToSeconds } from './rate-limit';
 // berasal dari akun terautentikasi di server, tidak pernah dari body/query.
 type Actor = { userId: number; ip: string; role?: string };
 type ProfileType = 'hotspot' | 'ppp';
-
-// Karakter voucher: tanpa 0/O/1/I/L agar tidak salah baca saat dicetak.
-const VOUCHER_CHARS = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
-
-function randomCode(length: number): string {
-  let out = '';
-  for (let i = 0; i < length; i += 1) out += VOUCHER_CHARS[randomInt(VOUCHER_CHARS.length)];
-  return out;
-}
 
 /**
  * Validasi sumber IP untuk sebuah grup.
@@ -137,6 +143,7 @@ export class ProfilesService {
     private readonly db: DatabaseService,
     private readonly mikrotik: MikrotikService,
     private readonly whatsapp: WhatsAppService,
+    private readonly settings: SettingsService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -1094,21 +1101,42 @@ export class ProfilesService {
       }
     }
 
+    // Karakter & panjang kode: mode angka butuh minimal 8 digit supaya tidak
+    // gampang ditebak. Nilai default menjaga perilaku lama (8 karakter alnum).
+    const charset = (dto.charset ?? 'alnum') as VoucherCharset;
+    const length = dto.length ?? 8;
+    if (length < (CHARSET_MIN_LENGTH[charset] ?? VOUCHER_MIN_LENGTH)) {
+      throw new BadRequestException(
+        charset === 'digit'
+          ? 'Karakter hanya angka butuh panjang minimal 8 digit.'
+          : 'Panjang voucher minimal 4 karakter.',
+      );
+    }
+    // same = password mengikuti username; separate = password 4-6 digit angka.
+    const separatePassword = dto.username_mode === 'separate';
+    const owner = await this.resolveVoucherOwner(actor, profile.owner_id, dto.owner_id);
+
+    // Username wajib unik; selain dicek ke tabel, duplikat di dalam batch yang
+    // sama juga ditolak supaya INSERT tidak gagal di tengah jalan.
+    const taken = new Set<string>();
+
     for (let i = 0; i < dto.count; i += 1) {
-      // Username dan password dijamin unik di dalam tabel (username UNIQUE).
       let username = '';
-      for (let attempt = 0; attempt < 12; attempt += 1) {
-        const candidate = dto.username_prefix
-          ? `${dto.username_prefix.toUpperCase()}${randomCode(Math.max(4, 12 - dto.username_prefix.length))}`
-          : randomCode(8);
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const candidate = randomCode(charset, length);
+        if (taken.has(candidate)) continue;
         if (!(await this.vouchers.findByUsername(candidate))) {
           username = candidate;
           break;
         }
       }
       if (!username) {
-        throw new ConflictException('Gagal membuat username unik setelah beberapa percobaan.');
+        throw new ConflictException(
+          'Gagal membuat username unik setelah beberapa percobaan. ' +
+            'Perpanjang panjang voucher atau kurangi jumlah sekali buat.',
+        );
       }
+      taken.add(username);
 
       rows.push({
         profile_type: dto.profile_type,
@@ -1117,10 +1145,14 @@ export class ProfilesService {
         profile_name: profile.name,
         user_type: dto.user_type,
         username,
-        // Voucher: username = password (dibagikan di kertas, satu kali pakai).
+        // Voucher: password mengikuti pilihan format akun (sama atau terpisah).
         // Member: password terpisah, boleh ditentukan operator.
         password:
-          dto.user_type === 'voucher' ? username : (dto.password ?? randomCode(8)),
+          dto.user_type === 'member'
+            ? (dto.password ?? randomCode(charset, length))
+            : separatePassword
+              ? randomPassword()
+              : username,
         customer_id: dto.user_type === 'member' ? dto.customer_id : null,
         // Member adalah akun langganan yang langsung diserahkan; voucher
         // masih berstatus baru sampai diserahkan ke pembeli.
@@ -1128,9 +1160,8 @@ export class ProfilesService {
         price: price.base,
         tax_amount: price.tax,
         created_by: actor.userId,
-        // Voucher mewarisi pemilik PROFIL-nya: reseller harus bisa mencetak
-        // voucher dari profilnya sendiri walau yang mencetak operator.
-        owner_id: profile.owner_id ?? null,
+        // Pemilik: admin bebas menunjuk, peran lain mengikuti pemilik profil.
+        owner_id: owner?.id ?? null,
       });
     }
 
@@ -1157,13 +1188,45 @@ export class ProfilesService {
       type: dto.profile_type,
       user_type: dto.user_type,
       customer_id: dto.customer_id ?? null,
+      owner_id: owner?.id ?? null,
+      charset,
+      length,
+      username_mode: separatePassword ? 'separate' : 'same',
     });
     return {
       created,
       profile: profile.name,
       user_type: dto.user_type,
+      owner_id: owner?.id ?? null,
+      owner_name: owner?.name ?? null,
       total_price: price.total * created,
     };
+  }
+
+  /**
+   * Pemilik voucher hasil generate.
+   *
+   * Admin bebas menunjuk pemilik (dipilih dari daftar owner). Peran lain tidak
+   * bisa mengubahnya lewat body: voucher mengikuti pemilik profil, atau akun
+   * yang login bila profil tidak berpemilik.
+   */
+  private async resolveVoucherOwner(
+    actor: Actor,
+    profileOwnerId: number | null | undefined,
+    requestedOwnerId?: number,
+  ): Promise<{ id: number; name: string } | null> {
+    const fallback = profileOwnerId ?? actor.userId ?? null;
+    const wanted = actor.role === 'admin' ? (requestedOwnerId ?? fallback) : fallback;
+    if (!wanted) return null;
+
+    const rows = await this.db.query<{ id: number; name: string }>(
+      'SELECT id, name FROM users WHERE id = ? AND is_active = 1',
+      [wanted],
+    );
+    if (rows.length === 0) {
+      throw new BadRequestException(`Pemilik #${wanted} tidak ditemukan atau tidak aktif.`);
+    }
+    return { id: Number(rows[0].id), name: String(rows[0].name) };
   }
 
   /**
@@ -1273,15 +1336,22 @@ export class ProfilesService {
     if (unique.length === 0) {
       throw new BadRequestException('Tidak ada voucher yang dipilih.');
     }
-    const rows = await this.vouchers.list({
-      limit: 500,
-      ownerId: isResellerRole(actor.role) ? actor.userId : undefined,
-    });
-    const picked = rows.filter((row) => unique.includes(row.id));
-    if (picked.length === 0) {
+    // Cari langsung per id. Jangan memuat 500 baris terbaru lalu menyaring di
+    // memori: aksi massal pada lebih dari 500 voucher akan diam-diam hanya
+    // mengenai sebagian pilihan.
+    const rows = await this.vouchers.findByIds(
+      unique,
+      isResellerRole(actor.role) ? actor.userId : undefined,
+    );
+    if (rows.length === 0) {
       throw new NotFoundException('Voucher yang dipilih tidak ditemukan pada akun Anda.');
     }
-    return picked;
+    if (rows.length !== unique.length) {
+      throw new NotFoundException(
+        `${unique.length - rows.length} dari ${unique.length} voucher tidak ditemukan pada akun Anda.`,
+      );
+    }
+    return rows;
   }
 
   async removeVouchers(actor: Actor, ids: number[]) {
@@ -1307,27 +1377,108 @@ export class ProfilesService {
     return { changed, status };
   }
 
-  /** Baris voucher untuk ekspor CSV/PDF & pengiriman WhatsApp. */
-  async voucherRowsForExport(actor: Actor, ids?: number[]) {
+  /**
+   * Baris voucher untuk ekspor CSV/PDF & pengiriman WhatsApp.
+   * Tanpa `ids`, kriteria filter yang dipakai sama dengan daftar voucher,
+   * sehingga "cetak sesuai profil/pemilik/tanggal" tidak perlu mengirim
+   * ratusan id lewat URL.
+   */
+  async voucherRowsForExport(
+    actor: Actor,
+    ids?: number[],
+    filters?: {
+      profileType?: string;
+      profileId?: number;
+      status?: string;
+      userType?: string;
+      search?: string;
+      createdBy?: number;
+      ownerId?: number;
+      dateFrom?: string;
+      dateTo?: string;
+    },
+  ) {
     if (ids && ids.length > 0) return this.vouchersForAction(actor, ids);
-    return this.vouchers.list({
-      limit: 500,
-      ownerId: isResellerRole(actor.role) ? actor.userId : undefined,
+    return this.listVouchers(actor, { ...filters, limit: 500 });
+  }
+
+  /** Template kartu voucher aktif (Pengaturan → Template Voucher). */
+  async voucherTemplates(): Promise<VoucherTemplate[]> {
+    return parseTemplates(await this.settings.rawValue('voucher_templates'));
+  }
+
+  /** Daftar template + variabel yang sah, untuk dialog cetak dan halaman pengaturan. */
+  async voucherTemplateCatalog() {
+    return { templates: await this.voucherTemplates(), variables: TEMPLATE_VARIABLES };
+  }
+
+  /** Identitas brand untuk variabel {{brand}}/{{tagline}}. */
+  async voucherBrand() {
+    const [brand, tagline] = await Promise.all([
+      this.settings.rawValue('brand_name'),
+      this.settings.rawValue('brand_tagline'),
+    ]);
+    return { brand, tagline };
+  }
+
+  /** Kartu voucher siap cetak: variabel template sudah diganti per baris. */
+  static toCards(
+    rows: Array<{
+      profile_type?: string;
+      profile_name: string;
+      username: string;
+      password: string;
+      user_type: string;
+      status: string;
+      price?: number | string;
+      tax_amount?: number | string;
+      owner_name?: string | null;
+      created_by_name?: string | null;
+      customer_name?: string | null;
+      expires_at?: string | null;
+      created_at?: string | null;
+    }>,
+    template: VoucherTemplate = DEFAULT_TEMPLATES[0],
+    brand: { brand: string; tagline: string } = { brand: '', tagline: '' },
+    printedAt: Date = new Date(),
+  ): VoucherCard[] {
+    const when = printedAt.toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' });
+    const stamp = (value: string | null | undefined) =>
+      value ? new Date(value).toLocaleDateString('id-ID', { dateStyle: 'short' }) : '-';
+
+    return rows.map((row) => {
+      const vars: Record<string, string> = {
+        brand: brand.brand,
+        tagline: brand.tagline,
+        profile: row.profile_name,
+        profile_type: row.profile_type ?? '',
+        user_type: row.user_type === 'member' ? 'member' : 'voucher',
+        username: row.username,
+        password: row.password,
+        price: `Rp ${(Number(row.price ?? 0) + Number(row.tax_amount ?? 0)).toLocaleString('id-ID')}`,
+        owner: row.owner_name ?? '-',
+        created_by: row.created_by_name ?? '-',
+        customer: row.customer_name ?? '-',
+        status: row.status,
+        expires: stamp(row.expires_at),
+        created_at: stamp(row.created_at),
+        printed_at: when,
+      };
+      return {
+        header: fillTemplate(template.header, vars),
+        title: fillTemplate(template.title, vars),
+        username: row.username,
+        // Password tidak dicetak dua kali bila sama dengan username (voucher
+        // hotspot mode username = password).
+        password: row.password === row.username ? '' : row.password,
+        lines: template.lines.map((line) => fillTemplate(line, vars)),
+        footer: fillTemplate(template.footer, vars),
+      };
     });
   }
 
-  /** Kartu voucher untuk PDF: satu kartu per akun. */
-  static toCards(rows: Array<{ profile_name: string; username: string; password: string; user_type: string; status: string }>): VoucherCard[] {
-    return rows.map((row) => ({
-      profile: row.profile_name,
-      username: row.username,
-      password: row.password,
-      meta: `${row.user_type === 'member' ? 'member' : 'voucher'} · ${row.status}`,
-    }));
-  }
-
-  buildVoucherPdf(cards: VoucherCard[]): Buffer {
-    return buildVoucherPdf(cards);
+  buildVoucherPdf(cards: VoucherCard[], footer?: string): Buffer {
+    return buildVoucherPdf(cards, 'Voucher', footer);
   }
 
   /**
@@ -1351,6 +1502,11 @@ export class ProfilesService {
       [picked.map((row) => row.customer_id).filter((id): id is number => Boolean(id)).concat([0])],
     );
     const phoneByCustomer = new Map(customers.map((row) => [Number(row.id), row.phone ?? '']));
+
+    // Template & brand dipakai untuk semua PDF yang dikirim (template pertama).
+    const templates = await this.voucherTemplates();
+    const template = templates[0];
+    const brand = await this.voucherBrand();
 
     const sent: string[] = [];
     const skipped: string[] = [];
@@ -1376,7 +1532,9 @@ export class ProfilesService {
         phone: target,
         caption,
         filename: `voucher-${row.username}.pdf`,
-        pdf: buildVoucherPdf(ProfilesService.toCards([row])),
+        pdf: buildVoucherPdf(
+          ProfilesService.toCards([row], template, brand),
+        ),
       });
       pdfAttached = result.pdf_attached;
       note = result.note;

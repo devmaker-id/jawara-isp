@@ -445,6 +445,28 @@ export class VoucherRepository {
     );
   }
 
+  /** Baris voucher berdasarkan daftar id, dengan cakupan pemilik (opsional). */
+  async findByIds(ids: number[], ownerId?: number): Promise<VoucherRow[]> {
+    if (ids.length === 0) return [];
+    const where = [`v.id IN (${ids.map(() => '?').join(', ')})`];
+    const params: unknown[] = [...ids];
+    if (ownerId) {
+      where.push('v.owner_id = ?');
+      params.push(ownerId);
+    }
+    return this.db.query<VoucherRow>(
+      `SELECT v.*, c.name AS customer_name,
+              ow.name AS owner_name, cr.name AS created_by_name
+         FROM radius_vouchers v
+         LEFT JOIN customers c ON c.id = v.customer_id
+         LEFT JOIN users ow ON ow.id = v.owner_id
+         LEFT JOIN users cr ON cr.id = v.created_by
+        WHERE ${where.join(' AND ')}
+        ORDER BY v.id DESC`,
+      params,
+    );
+  }
+
   async findById(id: number): Promise<VoucherRow | null> {
     const rows = await this.db.query<VoucherRow>(
       `SELECT v.*, c.name AS customer_name,

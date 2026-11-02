@@ -2,7 +2,15 @@ import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react'
 import api from '../../services/api';
 import { useBackgroundRefresh } from '../../hooks/useBackgroundRefresh';
 import { useAuth } from '../../contexts/AuthContext';
-import { Badge, Button, Card, ErrorNote, Loading, PageHeader } from '../../components/net/NetUI';
+import {
+  Badge,
+  Button,
+  Card,
+  ErrorNote,
+  Loading,
+  PageHeader,
+  errorMessage,
+} from '../../components/net/NetUI';
 import { TablePager, useTablePager } from '../../components/TablePager';
 
 /**
@@ -86,6 +94,44 @@ const TITLE: Record<VoucherType, string> = {
   ppp: 'Voucher PPPoE',
 };
 
+type Charset = 'upper' | 'lower' | 'mixed' | 'alnum' | 'digit';
+
+/**
+ * Pilihan karakter kode voucher. Karakter ambigu (0/O, 1/I/L) dibuang di
+ * server, jadi yang tercetak selalu terbaca jelas. `min` = panjang minimal.
+ */
+const CHARSET_OPTIONS: Array<{ value: Charset; label: string; min: number }> = [
+  { value: 'upper', label: 'Hanya huruf besar (A-Z)', min: 4 },
+  { value: 'lower', label: 'Hanya huruf kecil (a-z)', min: 4 },
+  { value: 'mixed', label: 'Huruf besar & kecil', min: 4 },
+  { value: 'alnum', label: 'Huruf besar, kecil & angka', min: 4 },
+  { value: 'digit', label: 'Hanya angka (minimal 8 digit)', min: 8 },
+];
+
+/** Satu baris pada dropdown "Konfigurasi & Manajemen". */
+const MenuItem: React.FC<{
+  onClick: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+  children: React.ReactNode;
+}> = ({ onClick, disabled, danger, children }) => (
+  <button
+    type="button"
+    role="menuitem"
+    disabled={disabled}
+    onClick={onClick}
+    className={`flex w-full items-center px-3 py-2 text-left text-xs transition disabled:cursor-not-allowed disabled:opacity-40 ${
+      danger ? 'text-rose-300 hover:bg-rose-500/10' : 'text-slate-200 hover:bg-slate-700/60'
+    }`}
+  >
+    {children}
+  </button>
+);
+
+const MenuLabel: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-slate-500">{children}</div>
+);
+
 const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
@@ -118,13 +164,50 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
   const [selected, setSelected] = useState<Set<number>>(new Set());
 
   // Dialog
+  // Pencatatan penjualan voucher: uang masuk, bukan aktivitas login.
+  const [saleOpen, setSaleOpen] = useState(false);
+  const [saleBusy, setSaleBusy] = useState(false);
+  const [unsold, setUnsold] = useState<
+    Array<{ id: number; username: string; profile_name: string; profile_type: string; sell_price: number }>
+  >([]);
+  const [sale, setSale] = useState({
+    voucher_id: '',
+    profile_name: '',
+    profile_type: 'hotspot' as 'hotspot' | 'ppp',
+    quantity: '1',
+    cost_price: '',
+    sell_price: '',
+    buyer_name: '',
+    method: 'cash',
+    note: '',
+  });
   const [genOpen, setGenOpen] = useState(false);
   const [genProfile, setGenProfile] = useState('');
   const [genCount, setGenCount] = useState('10');
-  const [genPrefix, setGenPrefix] = useState('');
+  const [genLength, setGenLength] = useState('8');
+  const [genMode, setGenMode] = useState<'same' | 'separate'>('same');
+  const [genCharset, setGenCharset] = useState<Charset>('alnum');
+  const [genOwner, setGenOwner] = useState('');
   const [waOpen, setWaOpen] = useState(false);
   const [waPhone, setWaPhone] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // Menu "Konfigurasi & Manajemen": aksi yang tidak dipakai tiap menit
+  // dikumpulkan di satu dropdown supaya toolbar tidak penuh tombol.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  // Dialog cetak: dasar pencetakan dipilih di sini (yang dicentang, kriteria
+  // status/profil/pemilik, atau rentang tanggal pembuatan).
+  const [printOpen, setPrintOpen] = useState(false);
+  const [printUseSelection, setPrintUseSelection] = useState(true);
+  const [printTemplate, setPrintTemplate] = useState('');
+  const [templates, setTemplates] = useState<Array<{ id: string; name: string }>>([]);
+  const [printStatus, setPrintStatus] = useState<'' | Status>('new-created');
+  const [printProfile, setPrintProfile] = useState('');
+  const [printOwner, setPrintOwner] = useState('');
+  const [printFrom, setPrintFrom] = useState('');
+  const [printTo, setPrintTo] = useState('');
 
   const load = useCallback(async () => {
     if (!loadedOnce.current) setLoading(true);
@@ -174,11 +257,36 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
       .catch(() => setOwners([]));
   }, [isAdmin]);
 
+  // Template cetak dari Pengaturan → Template Voucher.
+  useEffect(() => {
+    api
+      .get<{ templates: Array<{ id: string; name: string }> }>('/api/vouchers/templates')
+      .then((res) => setTemplates(Array.isArray(res.data?.templates) ? res.data.templates : []))
+      .catch(() => setTemplates([]));
+  }, []);
+
   // Ganti tipe layanan = ganti halaman; filter profil ikut direset.
   useEffect(() => {
     setProfileFilter('');
     setSelected(new Set());
   }, [type]);
+
+  // Dropdown ditutup oleh klik di luar, Escape, atau pindah halaman.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) setMenuOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen]);
 
   const visible = rows;
 
@@ -202,11 +310,16 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
     });
   };
 
-  /** Id yang jadi sasaran aksi: yang dicentang, atau semua baris yang tampil. */
-  const targetIds = useMemo(
-    () => (selected.size > 0 ? [...selected] : visible.map((row) => row.id)),
-    [selected, visible],
-  );
+  /**
+   * Sasaran aksi massal: HANYA voucher yang ditandai. Tidak ada lagi jatuh ke
+   * "semua baris yang tampil" — aksi tanpa centang harus ditolak, bukan
+   * diam-diam mengenai seluruh hasil filter.
+   */
+  const targetIds = useMemo(() => [...selected], [selected]);
+  const hasSelection = selected.size > 0;
+
+  // Panjang minimal kode mengikuti karakter yang dipilih (mode angka = 8).
+  const genMinLength = CHARSET_OPTIONS.find((option) => option.value === genCharset)?.min ?? 4;
 
   const flash = (message: string) => {
     setToast(message);
@@ -227,17 +340,26 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
 
   const generate = () =>
     run(async () => {
-      const { data } = await api.post<{ created: number; profile: string }>('/api/vouchers/generate', {
+      const { data } = await api.post<{
+        created: number;
+        profile: string;
+        owner_name: string | null;
+      }>('/api/vouchers/generate', {
         profile_type: type,
         user_type: 'voucher',
         profile_id: Number(genProfile),
         count: Number(genCount),
-        username_prefix: genPrefix.trim() || undefined,
+        length: Number(genLength),
+        username_mode: genMode,
+        charset: genCharset,
+        // Pemilik hanya dikirim admin; server memaksa peran lain.
+        owner_id: isAdmin && genOwner ? Number(genOwner) : undefined,
       });
       setGenOpen(false);
       setSelected(new Set());
       await load();
-      return `${data.created} voucher dibuat untuk profil ${data.profile}.`;
+      const owner = data.owner_name ? ` Pemilik: ${data.owner_name}.` : '';
+      return `${data.created} voucher dibuat untuk profil ${data.profile}.${owner}`;
     });
 
   const activateOne = (row: VoucherRow) =>
@@ -253,6 +375,7 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
         ids: targetIds,
         status,
       });
+      setSelected(new Set());
       await load();
       return `${data.changed} voucher ditandai ${label}.`;
     });
@@ -296,19 +419,79 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
     window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
   };
 
-  const idsQuery = () => (targetIds.length > 0 ? `?ids=${targetIds.join(',')}` : '');
-
-  const printPdf = () =>
-    run(async () => {
-      await fetchFile(`/api/vouchers/export.pdf${idsQuery()}`, 'voucher.pdf', true);
-      return `${targetIds.length} voucher disiapkan untuk dicetak (PDF).`;
-    });
+  /** Query ekspor: tipe layanan halaman ini + id yang jadi sasaran. */
+  const exportQuery = () => {
+    const params = new URLSearchParams({ profile_type: type });
+    if (targetIds.length > 0) params.set('ids', targetIds.join(','));
+    return `?${params.toString()}`;
+  };
 
   const exportCsv = () =>
     run(async () => {
-      await fetchFile(`/api/vouchers/export.csv${idsQuery()}`, `voucher-${type}.csv`, false);
+      await fetchFile(`/api/vouchers/export.csv${exportQuery()}`, `voucher-${type}.csv`, false);
       return `${targetIds.length} voucher diekspor ke CSV.`;
     });
+
+  /** Buka dialog cetak; sasaran default = voucher yang ditandai. */
+  const openPrint = () => {
+    if (!hasSelection) return;
+    setPrintUseSelection(true);
+    setPrintTemplate(templates[0]?.id ?? '');
+    setPrintStatus('new-created');
+    setPrintProfile(profileFilter);
+    setPrintOwner(ownerFilter);
+    setPrintFrom('');
+    setPrintTo('');
+    setPrintOpen(true);
+  };
+
+  /**
+   * Cetak sesuai kriteria. Daftar yang cocok diambil dulu supaya jumlah yang
+   * dilaporkan nyata dan yang dicetak persis baris itu — bukan tebakan dari
+   * baris yang kebetulan tampil di layar.
+   */
+  const printVoucher = async () => {
+    const useSelection = printUseSelection && selected.size > 0;
+
+    setBusy(true);
+    setError(null);
+    try {
+      let ids: number[] = [...selected];
+      if (!useSelection) {
+        const { data } = await api.get<VoucherRow[]>('/api/vouchers', {
+          params: {
+            limit: 500,
+            profile_type: type,
+            status: printStatus || undefined,
+            profile_id: printProfile || undefined,
+            owner_id: printOwner || undefined,
+            date_from: printFrom || undefined,
+            date_to: printTo || undefined,
+          },
+        });
+        ids = (Array.isArray(data) ? data : []).map((row) => row.id);
+      }
+      if (ids.length === 0) {
+        setError('Tidak ada voucher yang cocok dengan kriteria cetak.');
+        return;
+      }
+      await fetchFile(
+        `/api/vouchers/export.pdf?profile_type=${type}&ids=${ids.join(',')}` +
+          (printTemplate ? `&template=${encodeURIComponent(printTemplate)}` : ''),
+        `voucher-${type}-${new Date().toISOString().slice(0, 10)}.pdf`,
+        true,
+      );
+      setPrintOpen(false);
+      setToast(
+        `${ids.length} voucher disiapkan untuk dicetak (PDF)` +
+          (ids.length >= 500 ? ' — batas 500 per cetak, persempit kriteria bila perlu.' : '.'),
+      );
+    } catch (err) {
+      setError(readError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const sendWhatsApp = () =>
     run(async () => {
@@ -327,6 +510,65 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
       const pdf = data.pdf_attached ? ' PDF dilampirkan.' : ' PDF tidak dilampirkan (lihat catatan).';
       return `${data.message}${pdf}${extra}`;
     });
+
+  const openSale = async () => {
+    setSale({
+      voucher_id: '',
+      profile_name: '',
+      profile_type: type,
+      quantity: '1',
+      cost_price: '',
+      sell_price: '',
+      buyer_name: '',
+      method: 'cash',
+      note: '',
+    });
+    setSaleOpen(true);
+    try {
+      const { data } = await api.get<typeof unsold>('/api/sales/unsold-vouchers?limit=200');
+      setUnsold(Array.isArray(data) ? data : []);
+    } catch {
+      setUnsold([]);
+    }
+  };
+
+  /**
+   * Simpan penjualan. Modal dan harga jual WAJIB: tanpa keduanya laporan hanya
+   * jadi omzet yang menyesatkan. Bila voucher dipilih, profil & modal terisi
+   * otomatis dari data voucher dan tetap bisa disesuaikan.
+   */
+  const submitSale = async () => {
+    setSaleBusy(true);
+    try {
+      const body: Record<string, unknown> = {
+        profile_name: sale.profile_name.trim(),
+        profile_type: sale.profile_type,
+        quantity: Number(sale.quantity || '1'),
+        cost_price: Number(sale.cost_price || '0'),
+        sell_price: Number(sale.sell_price || '0'),
+        method: sale.method,
+      };
+      if (sale.voucher_id) body.voucher_id = Number(sale.voucher_id);
+      if (sale.buyer_name.trim()) body.buyer_name = sale.buyer_name.trim();
+      if (sale.note.trim()) body.note = sale.note.trim();
+      if (!body.profile_name && !sale.voucher_id) {
+        setToast('');
+        setError('Isi nama profil atau pilih voucher yang dijual.');
+        setSaleBusy(false);
+        return;
+      }
+      await api.post('/api/sales/vouchers', body);
+      setSaleOpen(false);
+      setToast(
+        `Penjualan dicatat: ${sale.quantity} voucher, jual ${rupiah(Number(sale.sell_price || 0) * Number(sale.quantity || 1))}.`,
+      );
+      await load();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setSaleBusy(false);
+    }
+  };
 
   const rupiah = (value: number) =>
     new Intl.NumberFormat('id-ID', {
@@ -348,15 +590,106 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
             : 'Akun PPPoE: username dan password terpisah, ditulis ke FreeRADIUS.'
         }
         actions={
-          <div className="flex flex-wrap gap-2">
-            {isAdmin && (
-              <Button onClick={() => void expireOverdue()} disabled={busy}>
-                Tandai kedaluwarsa
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative" ref={menuRef}>
+              <Button
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                onClick={() => setMenuOpen((open) => !open)}
+              >
+                Konfigurasi &amp; Manajemen <span className="ml-1 text-[10px] text-slate-400">▼</span>
               </Button>
-            )}
-            <Button variant="primary" onClick={() => setGenOpen(true)} disabled={busy}>
-              Buat voucher
-            </Button>
+              {menuOpen && (
+                <div
+                  role="menu"
+                  aria-label="Konfigurasi dan manajemen voucher"
+                  className="absolute left-0 z-50 mt-2 max-h-[calc(100vh-14rem)] w-72 max-w-[calc(100vw-4rem)] overflow-y-auto rounded-lg border border-slate-700 bg-slate-800 py-1 shadow-xl sm:left-auto sm:right-0"
+                >
+                  <div
+                    className={`px-3 py-1.5 text-[11px] ${
+                      hasSelection ? 'text-slate-400' : 'text-amber-300'
+                    }`}
+                  >
+                    {hasSelection
+                      ? `${selected.size} voucher ditandai — aksi berlaku pada ini saja`
+                      : 'Pilih salah satu voucher dahulu'}
+                  </div>
+
+                  <MenuLabel>Voucher</MenuLabel>
+                  <MenuItem
+                    onClick={() => { setMenuOpen(false); setGenOpen(true); }}
+                    disabled={busy}
+                  >
+                    Buat voucher…
+                  </MenuItem>
+
+                  <MenuLabel>Cetak &amp; berkas</MenuLabel>
+                  <MenuItem
+                    onClick={() => { setMenuOpen(false); openPrint(); }}
+                    disabled={busy || !hasSelection}
+                  >
+                    Cetak voucher (PDF)…
+                  </MenuItem>
+                  <MenuItem
+                    onClick={() => { setMenuOpen(false); void exportCsv(); }}
+                    disabled={busy || !hasSelection}
+                  >
+                    Ekspor CSV
+                  </MenuItem>
+                  <MenuItem
+                    onClick={() => { setMenuOpen(false); setWaOpen(true); }}
+                    disabled={busy || !hasSelection}
+                  >
+                    Kirim WhatsApp…
+                  </MenuItem>
+
+                  <MenuLabel>Penjualan</MenuLabel>
+                  <MenuItem
+                    onClick={() => { setMenuOpen(false); void openSale(); }}
+                    disabled={busy || saleBusy}
+                  >
+                    Catat penjualan…
+                  </MenuItem>
+
+                  {canBulkWrite && (
+                    <>
+                      <MenuLabel>Ubah status sasaran</MenuLabel>
+                      <MenuItem
+                        onClick={() => { setMenuOpen(false); void bulkStatus('ready-to-use', 'siap pakai'); }}
+                        disabled={busy || !hasSelection}
+                      >
+                        Tandai siap pakai
+                      </MenuItem>
+                      <MenuItem
+                        onClick={() => { setMenuOpen(false); void bulkStatus('expired', 'kedaluwarsa'); }}
+                        disabled={busy || !hasSelection}
+                      >
+                        Tandai kedaluwarsa
+                      </MenuItem>
+                    </>
+                  )}
+
+                  {isAdmin && (
+                    <>
+                      <MenuLabel>Perawatan</MenuLabel>
+                      <MenuItem
+                        onClick={() => { setMenuOpen(false); void expireOverdue(); }}
+                        disabled={busy}
+                      >
+                        Perbarui voucher lewat masa aktif
+                      </MenuItem>
+                      <MenuItem
+                        danger
+                        onClick={() => { setMenuOpen(false); setConfirmDelete(true); }}
+                        disabled={busy || !hasSelection}
+                      >
+                        Hapus voucher…
+                      </MenuItem>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         }
       />
@@ -469,39 +802,21 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
           />
         </div>
 
-        {/* Baris aksi: berlaku pada yang dicentang, atau yang tampil bila kosong */}
+        {/* Sasaran aksi massal. Tombol aksinya ada di dropdown header supaya
+            baris ini tidak lagi menumpuk enam tombol. */}
         <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-slate-700/60 bg-slate-800/40 px-3 py-2">
-          <span className="text-xs text-slate-400">
-            {selected.size > 0
-              ? `${selected.size} dipilih`
-              : `Belum ada yang dipilih — aksi berlaku pada ${visible.length} baris yang tampil`}
+          <span className={`text-xs ${hasSelection ? 'text-slate-400' : 'text-amber-300'}`}>
+            {hasSelection
+              ? `${selected.size} voucher ditandai — aksi massal hanya berlaku pada ini`
+              : 'Pilih salah satu voucher dahulu'}
           </span>
-          <div className="ml-auto flex flex-wrap gap-2">
-            {canBulkWrite && (
-              <>
-                <Button onClick={() => void bulkStatus('ready-to-use', 'siap pakai')} disabled={busy || targetIds.length === 0}>
-                  Siap pakai
-                </Button>
-                <Button onClick={() => void bulkStatus('expired', 'kedaluwarsa')} disabled={busy || targetIds.length === 0}>
-                  Kedaluwarsa
-                </Button>
-              </>
-            )}
-            <Button onClick={() => void exportCsv()} disabled={busy || targetIds.length === 0}>
-              Ekspor CSV
-            </Button>
-            <Button onClick={() => void printPdf()} disabled={busy || targetIds.length === 0}>
-              Cetak PDF
-            </Button>
-            <Button onClick={() => setWaOpen(true)} disabled={busy || targetIds.length === 0}>
-              Kirim WhatsApp
-            </Button>
-            {isAdmin && (
-              <Button variant="danger" onClick={() => setConfirmDelete(true)} disabled={busy || targetIds.length === 0}>
-                Hapus
-              </Button>
-            )}
-          </div>
+          <button
+            type="button"
+            onClick={() => setMenuOpen(true)}
+            className="ml-auto text-xs font-medium text-cyan-300 hover:text-cyan-200"
+          >
+            Buka Konfigurasi &amp; Manajemen
+          </button>
         </div>
 
         {loading ? (
@@ -592,6 +907,167 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
         )}
       </Card>
 
+      {/* Dialog cetak: dasar pencetakan dipilih di sini */}
+      {printOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Cetak voucher"
+            className="max-h-[92vh] w-full max-w-lg space-y-3 overflow-y-auto rounded-xl border border-slate-700 bg-slate-800 p-5"
+          >
+            <h2 className="text-lg font-semibold text-white">Cetak voucher {type}</h2>
+            <p className="text-xs text-slate-400">
+              Pilih dasar pencetakan. Tanggal cetak dan jumlah voucher ikut tercetak di kaki setiap
+              halaman PDF.
+            </p>
+
+            {selected.size > 0 && (
+              <label className="flex items-start gap-2 rounded-lg border border-slate-700/60 bg-slate-900/60 px-3 py-2 text-xs text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={printUseSelection}
+                  onChange={(event) => setPrintUseSelection(event.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-slate-500 bg-slate-700 text-cyan-500"
+                />
+                <span>
+                  Hanya {selected.size} voucher yang dicentang
+                  <span className="block text-[11px] text-slate-500">
+                    Bila dicentang, kriteria di bawah diabaikan.
+                  </span>
+                </span>
+              </label>
+            )}
+
+            <div>
+              <label className="mb-1 block text-xs text-slate-400" htmlFor="print-template">
+                Template cetak
+              </label>
+              <select
+                id="print-template"
+                value={printTemplate}
+                onChange={(event) => setPrintTemplate(event.target.value)}
+                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+              >
+                {templates.length === 0 && <option value="">Template bawaan</option>}
+                {templates.map((template) => (
+                  <option key={template.id} value={template.id}>
+                    {template.name}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-[11px] text-slate-500">
+                Template diatur di Pengaturan → Template Voucher.
+              </p>
+            </div>
+
+            <div
+              className={`grid gap-3 sm:grid-cols-2 ${
+                printUseSelection && selected.size > 0 ? 'opacity-50' : ''
+              }`}
+            >
+              <div>
+                <label className="mb-1 block text-xs text-slate-400" htmlFor="print-status">
+                  Status voucher
+                </label>
+                <select
+                  id="print-status"
+                  value={printStatus}
+                  onChange={(event) => setPrintStatus(event.target.value as '' | Status)}
+                  disabled={printUseSelection && selected.size > 0}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 disabled:cursor-not-allowed"
+                >
+                  <option value="">Semua status</option>
+                  <option value="new-created">Baru dibuat (baru di-generate)</option>
+                  <option value="ready-to-use">Siap pakai</option>
+                  <option value="active">Aktif</option>
+                  <option value="expired">Kedaluwarsa</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-slate-400" htmlFor="print-profile">
+                  Profil
+                </label>
+                <select
+                  id="print-profile"
+                  value={printProfile}
+                  onChange={(event) => setPrintProfile(event.target.value)}
+                  disabled={printUseSelection && selected.size > 0}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 disabled:cursor-not-allowed"
+                >
+                  <option value="">Semua profil</option>
+                  {profiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {isAdmin && (
+                <div>
+                  <label className="mb-1 block text-xs text-slate-400" htmlFor="print-owner">
+                    Pemilik
+                  </label>
+                  <select
+                    id="print-owner"
+                    value={printOwner}
+                    onChange={(event) => setPrintOwner(event.target.value)}
+                    disabled={printUseSelection && selected.size > 0}
+                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 disabled:cursor-not-allowed"
+                  >
+                    <option value="">Semua pemilik</option>
+                    {owners.map((owner) => (
+                      <option key={owner.id} value={owner.id}>
+                        {owner.name} ({owner.role})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <div>
+                <label className="mb-1 block text-xs text-slate-400" htmlFor="print-from">
+                  Dibuat sejak
+                </label>
+                <input
+                  id="print-from"
+                  type="date"
+                  value={printFrom}
+                  onChange={(event) => setPrintFrom(event.target.value)}
+                  disabled={printUseSelection && selected.size > 0}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 disabled:cursor-not-allowed"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-slate-400" htmlFor="print-to">
+                  Dibuat sampai
+                </label>
+                <input
+                  id="print-to"
+                  type="date"
+                  value={printTo}
+                  onChange={(event) => setPrintTo(event.target.value)}
+                  disabled={printUseSelection && selected.size > 0}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 disabled:cursor-not-allowed"
+                />
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-500">
+              Maksimal 500 voucher sekali cetak. Kosongkan tanggal bila tidak dibatasi.
+            </p>
+
+            <div className="flex justify-end gap-2">
+              <Button onClick={() => setPrintOpen(false)} disabled={busy}>
+                Batal
+              </Button>
+              <Button variant="primary" onClick={() => void printVoucher()} disabled={busy}>
+                {busy ? 'Menyiapkan…' : 'Cetak PDF'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Dialog buat voucher */}
       {genOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
@@ -615,40 +1091,113 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
                 ))}
               </select>
             </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="mb-1 block text-xs text-slate-400" htmlFor="v-count">
-                  Jumlah (1-200)
+                  Jumlah voucher (1-1000)
                 </label>
                 <input
                   id="v-count"
                   type="number"
                   min={1}
-                  max={200}
+                  max={1000}
                   value={genCount}
                   onChange={(event) => setGenCount(event.target.value)}
                   className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs text-slate-400" htmlFor="v-prefix">
-                  Awalan username
+                <label className="mb-1 block text-xs text-slate-400" htmlFor="v-length">
+                  Panjang kode ({genMinLength}-9)
                 </label>
                 <input
-                  id="v-prefix"
-                  value={genPrefix}
-                  onChange={(event) => setGenPrefix(event.target.value)}
-                  placeholder="opsional"
+                  id="v-length"
+                  type="number"
+                  min={genMinLength}
+                  max={9}
+                  value={genLength}
+                  onChange={(event) => setGenLength(event.target.value)}
                   className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
                 />
               </div>
             </div>
+
+            <div>
+              <label className="mb-1 block text-xs text-slate-400" htmlFor="v-charset">
+                Karakter voucher
+              </label>
+              <select
+                id="v-charset"
+                value={genCharset}
+                onChange={(event) => {
+                  const next = event.target.value as Charset;
+                  setGenCharset(next);
+                  // Mode angka minimal 8 digit: naikkan panjang otomatis.
+                  const min = CHARSET_OPTIONS.find((option) => option.value === next)?.min ?? 4;
+                  if (Number(genLength) < min) setGenLength(String(min));
+                }}
+                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+              >
+                {CHARSET_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs text-slate-400" htmlFor="v-mode">
+                Format akun
+              </label>
+              <select
+                id="v-mode"
+                value={genMode}
+                onChange={(event) => setGenMode(event.target.value as 'same' | 'separate')}
+                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+              >
+                <option value="same">username = password</option>
+                <option value="separate">username &amp; password terpisah (password 4-6 digit angka)</option>
+              </select>
+            </div>
+
+            {isAdmin && (
+              <div>
+                <label className="mb-1 block text-xs text-slate-400" htmlFor="v-owner">
+                  Pemilik voucher
+                </label>
+                <select
+                  id="v-owner"
+                  value={genOwner}
+                  onChange={(event) => setGenOwner(event.target.value)}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+                >
+                  <option value="">Ikut pemilik profil (bawaan)</option>
+                  {owners.map((owner) => (
+                    <option key={owner.id} value={owner.id}>
+                      {owner.name} ({owner.role})
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Hanya admin yang bisa memilih pemilik. Operator/reseller selalu memakai pemilik
+                  profil atau akunnya sendiri.
+                </p>
+              </div>
+            )}
+
             <p className="text-[11px] text-slate-500">
-              Username dibuat otomatis dan unik. Voucher hotspot: password = username.
+              Username dibuat otomatis dan unik. Karakter 0/O dan 1/I/L tidak dipakai agar tidak
+              salah baca saat dicetak.
             </p>
             <div className="flex justify-end gap-2">
               <Button onClick={() => setGenOpen(false)}>Batal</Button>
-              <Button variant="primary" onClick={() => void generate()} disabled={busy || !genProfile}>
+              <Button
+                variant="primary"
+                onClick={() => void generate()}
+                disabled={busy || !genProfile || Number(genLength) < genMinLength}
+              >
                 {busy ? 'Membuat…' : 'Buat'}
               </Button>
             </div>
@@ -657,6 +1206,186 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
       )}
 
       {/* Dialog kirim WhatsApp */}
+      {saleOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Catat penjualan voucher"
+            className="max-h-[92vh] w-full max-w-lg space-y-3 overflow-y-auto rounded-xl border border-slate-700 bg-slate-800 p-5"
+          >
+            <h2 className="text-lg font-semibold text-white">Catat penjualan voucher</h2>
+            <p className="text-xs text-slate-400">
+              Mencatat uang masuk. Masa aktif voucher tetap dihitung dari login pertama — login
+              bukan penjualan, jadi keduanya dipisah.
+            </p>
+
+            <div>
+              <label className="mb-1 block text-xs text-slate-400" htmlFor="sale-voucher">
+                Voucher terjual (opsional)
+              </label>
+              <select
+                id="sale-voucher"
+                value={sale.voucher_id}
+                onChange={(event) => {
+                  const id = event.target.value;
+                  const picked = unsold.find((item) => String(item.id) === id);
+                  setSale({
+                    ...sale,
+                    voucher_id: id,
+                    profile_name: picked ? picked.profile_name : sale.profile_name,
+                    profile_type: picked ? (picked.profile_type as 'hotspot' | 'ppp') : sale.profile_type,
+                    sell_price: picked && picked.sell_price ? String(picked.sell_price) : sale.sell_price,
+                  });
+                }}
+                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+              >
+                <option value="">— penjualan borongan / tidak per voucher —</option>
+                {unsold.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.username} · {item.profile_name}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-[11px] text-slate-500">
+                Daftar ini hanya voucher yang belum pernah dicatat terjual.
+              </p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs text-slate-400" htmlFor="sale-profile">
+                  Profil
+                </label>
+                <input
+                  id="sale-profile"
+                  value={sale.profile_name}
+                  onChange={(event) => setSale({ ...sale, profile_name: event.target.value })}
+                  placeholder="HS-1HARI"
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-slate-400" htmlFor="sale-type">
+                  Tipe
+                </label>
+                <select
+                  id="sale-type"
+                  value={sale.profile_type}
+                  onChange={(event) =>
+                    setSale({ ...sale, profile_type: event.target.value as 'hotspot' | 'ppp' })
+                  }
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+                >
+                  <option value="hotspot">hotspot</option>
+                  <option value="ppp">ppp</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-slate-400" htmlFor="sale-qty">
+                  Jumlah
+                </label>
+                <input
+                  id="sale-qty"
+                  value={sale.quantity}
+                  onChange={(event) => setSale({ ...sale, quantity: event.target.value })}
+                  inputMode="numeric"
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-slate-400" htmlFor="sale-method">
+                  Metode
+                </label>
+                <select
+                  id="sale-method"
+                  value={sale.method}
+                  onChange={(event) => setSale({ ...sale, method: event.target.value })}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+                >
+                  <option value="cash">Tunai</option>
+                  <option value="transfer">Transfer</option>
+                  <option value="qris">QRIS / E-Wallet</option>
+                  <option value="other">Lainnya</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-slate-400" htmlFor="sale-cost">
+                  Harga modal / voucher
+                </label>
+                <input
+                  id="sale-cost"
+                  value={sale.cost_price}
+                  onChange={(event) => setSale({ ...sale, cost_price: event.target.value })}
+                  inputMode="decimal"
+                  placeholder="1500"
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-slate-400" htmlFor="sale-sell">
+                  Harga jual / voucher
+                </label>
+                <input
+                  id="sale-sell"
+                  value={sale.sell_price}
+                  onChange={(event) => setSale({ ...sale, sell_price: event.target.value })}
+                  inputMode="decimal"
+                  placeholder="3000"
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-slate-400" htmlFor="sale-buyer">
+                  Pembeli (opsional)
+                </label>
+                <input
+                  id="sale-buyer"
+                  value={sale.buyer_name}
+                  onChange={(event) => setSale({ ...sale, buyer_name: event.target.value })}
+                  placeholder="Warung Bu Sri"
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-slate-400" htmlFor="sale-note">
+                  Catatan (opsional)
+                </label>
+                <input
+                  id="sale-note"
+                  value={sale.note}
+                  onChange={(event) => setSale({ ...sale, note: event.target.value })}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+                />
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-slate-700/60 bg-slate-900/60 px-3 py-2 text-xs text-slate-300">
+              Total jual{' '}
+              <span className="font-semibold text-emerald-300">
+                {rupiah(Number(sale.sell_price || 0) * Number(sale.quantity || 0))}
+              </span>
+              {' · '}laba{' '}
+              <span className="font-semibold text-amber-300">
+                {rupiah(
+                  (Number(sale.sell_price || 0) - Number(sale.cost_price || 0)) *
+                    Number(sale.quantity || 0),
+                )}
+              </span>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button onClick={() => setSaleOpen(false)} disabled={saleBusy}>
+                Batal
+              </Button>
+              <Button variant="primary" onClick={() => void submitSale()} disabled={saleBusy}>
+                {saleBusy ? 'Menyimpan…' : 'Simpan penjualan'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {waOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div role="dialog" aria-modal="true" className="w-full max-w-md space-y-3 rounded-xl border border-slate-700 bg-slate-800 p-5">

@@ -2,7 +2,14 @@ import { Type } from 'class-transformer';
 import { IsEnum, IsIn, IsInt, IsOptional, Matches, Max, Min } from 'class-validator';
 import { PaymentMethod } from '../../payments/dto/payment.dto';
 
-export const REPORT_TYPES = ['summary', 'transactions', 'unpaid', 'by-method'] as const;
+export const REPORT_TYPES = [
+  'summary',
+  'transactions',
+  'unpaid',
+  'by-method',
+  'vouchers',
+  'voucher-usage',
+] as const;
 export type ReportType = (typeof REPORT_TYPES)[number];
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -10,7 +17,8 @@ const DATE_MESSAGE = 'tanggal harus format YYYY-MM-DD';
 
 export class ReportQueryDto {
   @IsIn(REPORT_TYPES as unknown as string[], {
-    message: 'type harus summary, transactions, unpaid, atau by-method',
+    message:
+      'type harus summary, transactions, unpaid, by-method, vouchers, atau voucher-usage',
   })
   type: ReportType;
 
@@ -36,6 +44,6 @@ export class ReportQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(200, { message: 'limit maksimal 200' })
+  @Max(1000, { message: 'limit maksimal 1000' })
   limit?: number;
 }

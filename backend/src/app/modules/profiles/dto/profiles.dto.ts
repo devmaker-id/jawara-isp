@@ -464,14 +464,37 @@ export class GenerateVoucherDto {
   @Type(() => Number)
   @IsInt({ message: 'Jumlah voucher harus angka.' })
   @Min(1, { message: 'Minimal 1 voucher.' })
-  @Max(200, { message: 'Maksimal 200 voucher sekali buat.' })
+  @Max(1000, { message: 'Maksimal 1000 voucher sekali buat.' })
   count!: number;
 
-  // 4-12 karakter. Kosong = dibuat otomatis.
+  // Panjang kode voucher 4-9 karakter. Mode angka minimal 8 digit (dicek di
+  // service karena bergantung pada `charset`).
   @IsOptional()
-  @IsString()
-  @Matches(/^[A-Za-z0-9]{4,12}$/, { message: 'Panjang username 4-12 huruf/angka.' })
-  username_prefix?: string;
+  @Type(() => Number)
+  @IsInt({ message: 'Panjang voucher harus angka.' })
+  @Min(4, { message: 'Panjang voucher minimal 4 karakter.' })
+  @Max(9, { message: 'Panjang voucher maksimal 9 karakter.' })
+  length?: number;
+
+  // same     = username dipakai juga sebagai password (voucher klasik)
+  // separate = username & password terpisah; password 4-6 digit angka
+  @IsOptional()
+  @IsIn(['same', 'separate'], { message: 'Format akun harus same atau separate.' })
+  username_mode?: 'same' | 'separate';
+
+  @IsOptional()
+  @IsIn(['upper', 'lower', 'mixed', 'alnum', 'digit'], {
+    message: 'Karakter voucher harus upper, lower, mixed, alnum, atau digit.',
+  })
+  charset?: 'upper' | 'lower' | 'mixed' | 'alnum' | 'digit';
+
+  // Pemilik voucher hasil generate. HANYA admin yang boleh menentukan; peran
+  // lain dipaksa memakai pemilik profil (atau akunnya sendiri) di service.
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'Pemilik harus angka.' })
+  @Min(1, { message: 'Pemilik tidak valid.' })
+  owner_id?: number;
 
   @IsOptional()
   @IsString()
@@ -546,6 +569,22 @@ export class ListVoucherQueryDto {
   limit?: number;
 }
 
+/**
+ * Ekspor voucher: `ids` (yang dicentang) atau kriteria yang sama dengan daftar
+ * (profil, pemilik, status, rentang tanggal pembuatan).
+ */
+export class ExportVoucherQueryDto extends ListVoucherQueryDto {
+  @IsOptional()
+  @IsString()
+  ids?: string;
+
+  // Id template cetak (Pengaturan → Template Voucher). Kosong = template pertama.
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  template?: string;
+}
+
 export class UpdateVoucherStatusDto {
   @IsIn(VOUCHER_STATUS as unknown as string[], { message: 'Status voucher tidak valid.' })
   status!: 'new-created' | 'ready-to-use' | 'active' | 'expired';
@@ -584,7 +623,7 @@ export class SendVoucherWhatsAppDto {
 
 export class RemoveVouchersDto {
   @IsArray()
-  @ArrayMaxSize(200, { message: 'Maksimal 200 voucher sekali hapus.' })
+  @ArrayMaxSize(1000, { message: 'Maksimal 1000 voucher sekali hapus.' })
   @Type(() => Number)
   @IsInt({ each: true })
   ids!: number[];
