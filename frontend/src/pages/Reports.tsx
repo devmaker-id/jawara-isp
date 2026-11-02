@@ -3,7 +3,7 @@ import api from '../services/api';
 import { useBackgroundRefresh } from '../hooks/useBackgroundRefresh';
 import { downloadCsv } from '../utils/csv';
 
-type ReportType = 'summary' | 'transactions' | 'unpaid' | 'by-method';
+type ReportType = 'summary' | 'transactions' | 'unpaid' | 'by-method' | 'vouchers' | 'voucher-usage';
 type PaymentMethod = 'cash' | 'transfer' | 'qris' | 'other';
 
 interface ReportSummary {
@@ -43,14 +43,81 @@ interface MethodRow {
   total: number;
 }
 
+/** Pendapatan periode dari dua sumber: tagihan dan penjualan voucher. */
+interface RevenueSummary {
+  payments_income: number;
+  voucher_income: number;
+  voucher_cost: number;
+  voucher_margin: number;
+  total_income: number;
+  transactions: number;
+  /** 'all' = admin melihat semua pemilik; 'own' = hanya data akun ini. */
+  scope: 'all' | 'own';
+  by_owner: Array<{ owner_id: number | null; owner_name: string; income: number; margin: number }>;
+}
+
+interface VoucherSaleRow {
+  id: number;
+  username: string | null;
+  profile_name: string;
+  profile_type: 'hotspot' | 'ppp';
+  quantity: number;
+  total_cost: number;
+  total_sell: number;
+  margin: number;
+  owner_name: string | null;
+  recorded_by_name: string | null;
+  buyer_name: string | null;
+  method: string;
+  sold_at: string;
+  voided_at: string | null;
+}
+
 interface ReportResult {
   type: ReportType;
   summary: ReportSummary;
+  revenue?: RevenueSummary;
+  voucher_sales?: VoucherSaleRow[];
+  voucher_usage?: VoucherUsageReport | null;
   rows: Array<PaymentRow | InvoiceRow>;
   by_method: MethodRow[];
   total: number;
   page: number;
   limit: number;
+}
+
+/**
+ * Indikator penggunaan pertama voucher: MIN(authdate) Access-Accept per
+ * username. Bukan penjualan, bukan penerimaan uang.
+ */
+interface VoucherUsageRow {
+  tanggal: string;
+  owner_id: number | null;
+  agen: string;
+  atribusi: 'pemilik-tercatat' | 'tanpa-pemilik';
+  profile_name: string;
+  profile_type: 'hotspot' | 'ppp';
+  harga_jual: number;
+  harga_modal: number | null;
+  voucher_unik: number;
+  total_jual: number;
+  estimasi_modal: number;
+}
+
+interface VoucherUsageReport {
+  from: string | null;
+  to: string | null;
+  rows: VoucherUsageRow[];
+  by_owner: Array<{
+    owner_id: number | null;
+    agen: string;
+    voucher_unik: number;
+    total_jual: number;
+    estimasi_modal: number;
+  }>;
+  total_vouchers: number;
+  total_jual: number;
+  estimasi_modal: number;
 }
 
 const METHOD_LABEL: Record<PaymentMethod, string> = {
@@ -60,11 +127,20 @@ const METHOD_LABEL: Record<PaymentMethod, string> = {
   other: 'Gateway / Lainnya',
 };
 
+const METHOD_SALE_LABEL: Record<string, string> = {
+  cash: 'Tunai',
+  transfer: 'Transfer',
+  qris: 'QRIS / E-Wallet',
+  other: 'Lainnya',
+};
+
 const TYPE_LABEL: Record<ReportType, string> = {
   summary: 'Ringkasan keuangan',
   transactions: 'Detail transaksi',
   unpaid: 'Tagihan belum lunas / jatuh tempo',
   'by-method': 'Pemasukan per metode',
+  vouchers: 'Penjualan voucher',
+  'voucher-usage': 'Laporan Penggunaan Pertama Voucher',
 };
 
 const formatRupiah = (value: number): string =>
@@ -194,6 +270,72 @@ const Reports: React.FC = () => {
     if (!result) return;
     const suffix = `${type}-${from || 'awal'}-${to || 'akhir'}`;
 
+    if (type === 'vouchers') {
+      downloadCsv(
+        `laporan-${suffix}.csv`,
+        ['Tanggal', 'Profil', 'Voucher', 'Jumlah', 'Modal', 'Jual', 'Laba', 'Pemilik', 'Dicatat oleh'],
+        (result.voucher_sales ?? []).map((row) => [
+          row.sold_at,
+          row.profile_name,
+          row.username ?? '',
+          row.quantity,
+          row.total_cost,
+          row.total_sell,
+          row.margin,
+          row.owner_name ?? '',
+          row.recorded_by_name ?? '',
+        ]),
+      );
+      return;
+    }
+    if (type === 'voucher-usage') {
+      const usage = result.voucher_usage;
+      // Kolom detail tidak berubah (8 kolom, urutan sama). Baris ringkasan
+      // ditandai di kolom pertama (TOTAL_PERIODE / TOTAL_PER_AGEN) dan hanya
+      // mengisi kolom agregat, sehingga pemroses ulang cukup membuang baris
+      // bertanda sebelum menjumlahkan — tidak ada voucher/modal terhitung dua
+      // kali. Kolom harga per unit sengaja dikosongkan pada baris ringkasan.
+      const rows: Array<Array<string | number | null>> = (usage?.rows ?? []).map((row) => [
+        row.tanggal,
+        row.agen,
+        row.atribusi === 'tanpa-pemilik' ? 'tanpa pemilik tercatat' : 'pemilik tercatat',
+        `${row.profile_name} (${row.profile_type})`,
+        row.harga_jual,
+        row.harga_modal ?? '',
+        row.voucher_unik,
+        row.estimasi_modal,
+      ]);
+      for (const owner of usage?.by_owner ?? []) {
+        rows.push([
+          'TOTAL_PER_AGEN',
+          owner.agen,
+          '',
+          '',
+          '',
+          '',
+          owner.voucher_unik,
+          owner.estimasi_modal,
+        ]);
+      }
+      if (usage) {
+        rows.push(['TOTAL_PERIODE', '', '', '', '', '', usage.total_vouchers, usage.estimasi_modal]);
+      }
+      downloadCsv(
+        `laporan-${suffix}.csv`,
+        [
+          'Tanggal pakai pertama',
+          'Agen (pemilik stok)',
+          'Atribusi',
+          'Profil',
+          'Harga jual',
+          'Estimasi modal (harga profil saat ini)',
+          'Voucher unik',
+          'Total estimasi modal',
+        ],
+        rows,
+      );
+      return;
+    }
     if (type === 'by-method') {
       downloadCsv(
         `laporan-${suffix}.csv`,
@@ -202,6 +344,7 @@ const Reports: React.FC = () => {
       );
       return;
     }
+
     if (type === 'unpaid') {
       downloadCsv(
         `laporan-${suffix}.csv`,
@@ -296,6 +439,201 @@ const Reports: React.FC = () => {
       );
     }
 
+    if (type === 'vouchers') {
+      const voucherRows = result.voucher_sales ?? [];
+      return (
+        <div className="overflow-hidden rounded-xl border border-slate-700/50 bg-slate-800/50">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-700/30">
+                  <th className="px-4 py-3 text-left font-medium text-slate-400">Tanggal</th>
+                  <th className="px-4 py-3 text-left font-medium text-slate-400">Profil</th>
+                  <th className="px-4 py-3 text-left font-medium text-slate-400">Voucher / pembeli</th>
+                  <th className="px-4 py-3 text-right font-medium text-slate-400">Jumlah</th>
+                  <th className="px-4 py-3 text-right font-medium text-slate-400">Modal</th>
+                  <th className="px-4 py-3 text-right font-medium text-slate-400">Jual</th>
+                  <th className="px-4 py-3 text-right font-medium text-slate-400">Laba</th>
+                  <th className="px-4 py-3 text-left font-medium text-slate-400">Dicatat</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-700/50">
+                {voucherRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-6 text-center text-slate-500">
+                      Belum ada penjualan voucher pada periode ini.
+                    </td>
+                  </tr>
+                ) : (
+                  voucherRows.map((row) => (
+                    <tr key={row.id} className={row.voided_at ? 'opacity-50' : ''}>
+                      <td className="whitespace-nowrap px-4 py-3 text-xs text-slate-400">
+                        {new Date(row.sold_at).toLocaleString('id-ID', {
+                          dateStyle: 'short',
+                          timeStyle: 'short',
+                        })}
+                      </td>
+                      <td className="px-4 py-3 text-slate-300">
+                        {row.profile_name}
+                        <span className="ml-1 text-[11px] text-slate-500">{row.profile_type}</span>
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs text-slate-300">
+                        {row.username ?? '—'}
+                        {row.buyer_name && (
+                          <p className="font-sans text-[11px] text-slate-500">{row.buyer_name}</p>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right text-slate-400">{row.quantity}</td>
+                      <td className="px-4 py-3 text-right text-slate-400">
+                        {formatRupiah(row.total_cost)}
+                      </td>
+                      <td className="px-4 py-3 text-right text-slate-200">
+                        {formatRupiah(row.total_sell)}
+                      </td>
+                      <td className="px-4 py-3 text-right text-amber-300">
+                        {formatRupiah(row.margin)}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-slate-400">
+                        {row.recorded_by_name ?? '—'}
+                        <p className="text-[11px] text-slate-500">
+                          {METHOD_SALE_LABEL[row.method] ?? row.method}
+                          {row.voided_at ? ' · dibatalkan' : ''}
+                        </p>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+    if (type === 'voucher-usage') {
+      const usage = result.voucher_usage;
+      const usageRows = usage?.rows ?? [];
+      return (
+        <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-700/50">
+            <p className="text-sm font-medium text-slate-200">Laporan Penggunaan Pertama Voucher</p>
+            <p className="mt-0.5 text-xs text-amber-300">
+              Indikator penggunaan, bukan bukti penjualan atau penerimaan uang.
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Waktu pakai = autentikasi sukses pertama (MIN authdate Access-Accept), dihitung sekali
+              per voucher dan dikelompokkan menurut tanggal Asia/Jakarta. Agen adalah pemilik stok
+              yang tercatat (owner_id), belum tentu penjual ke pelanggan akhir.
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-700/30">
+                  <th className="px-4 py-3 text-left font-medium text-slate-400">Tanggal pakai pertama</th>
+                  <th className="px-4 py-3 text-left font-medium text-slate-400">Agen (pemilik stok)</th>
+                  <th className="px-4 py-3 text-left font-medium text-slate-400">Profil</th>
+                  <th className="px-4 py-3 text-right font-medium text-slate-400">Harga jual</th>
+                  <th className="px-4 py-3 text-right font-medium text-slate-400">
+                    Estimasi modal
+                    <span className="block text-[10px] font-normal text-slate-500">
+                      berdasarkan harga profil saat ini
+                    </span>
+                  </th>
+                  <th className="px-4 py-3 text-right font-medium text-slate-400">Voucher unik</th>
+                  <th className="px-4 py-3 text-right font-medium text-slate-400">Total estimasi modal</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-700/50">
+                {usageRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-6 text-center text-slate-500">
+                      Belum ada voucher yang pernah autentikasi sukses pada periode ini.
+                    </td>
+                  </tr>
+                ) : (
+                  usageRows.map((row) => (
+                    <tr
+                      key={`${row.tanggal}-${row.owner_id ?? 'none'}-${row.profile_name}-${row.profile_type}`}
+                      className="hover:bg-slate-700/20 transition"
+                    >
+                      <td className="whitespace-nowrap px-4 py-3 text-slate-400">
+                        {formatDate(row.tanggal)}
+                      </td>
+                      <td className="px-4 py-3 text-slate-300">
+                        {row.agen}
+                        {row.atribusi === 'tanpa-pemilik' && (
+                          <p className="text-[11px] text-amber-300">atribusi belum tercatat</p>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-slate-300">
+                        {row.profile_name}
+                        <span className="ml-1 text-[11px] text-slate-500">{row.profile_type}</span>
+                      </td>
+                      <td className="px-4 py-3 text-right text-slate-200">
+                        {formatRupiah(row.harga_jual)}
+                      </td>
+                      <td className="px-4 py-3 text-right text-slate-400">
+                        {row.harga_modal === null ? '—' : formatRupiah(row.harga_modal)}
+                      </td>
+                      <td className="px-4 py-3 text-right text-white">{row.voucher_unik}</td>
+                      <td className="px-4 py-3 text-right text-slate-400">
+                        {formatRupiah(row.estimasi_modal)}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+              {usageRows.length > 0 && (
+                <tfoot>
+                  <tr className="bg-slate-700/20">
+                    <td className="px-4 py-3 text-xs text-slate-400" colSpan={5}>
+                      Total periode (bukan angka penjualan)
+                    </td>
+                    <td className="px-4 py-3 text-right font-medium text-white">
+                      {usage?.total_vouchers ?? 0}
+                    </td>
+                    <td className="px-4 py-3 text-right font-medium text-amber-300">
+                      {formatRupiah(usage?.estimasi_modal ?? 0)}
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+          {usage && usage.by_owner.length > 0 && (
+            <div className="border-t border-slate-700/50">
+              <p className="px-4 pt-3 text-[11px] uppercase tracking-wide text-slate-500">
+                Total per agen (pemilik stok tercatat)
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-slate-700/30">
+                      <th className="px-4 py-2 text-left font-medium text-slate-400">Agen</th>
+                      <th className="px-4 py-2 text-right font-medium text-slate-400">Voucher unik</th>
+                      <th className="px-4 py-2 text-right font-medium text-slate-400">Estimasi modal</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-700/50">
+                    {usage.by_owner.map((row) => (
+                      <tr key={`${row.owner_id ?? 'none'}-${row.agen}`}>
+                        <td className="px-4 py-2 text-slate-300">{row.agen}</td>
+                        <td className="px-4 py-2 text-right font-mono text-xs text-slate-200">
+                          {row.voucher_unik}
+                        </td>
+                        <td className="px-4 py-2 text-right font-mono text-xs text-amber-300">
+                          {formatRupiah(row.estimasi_modal)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
     if (type === 'unpaid') {
       const rows = result.rows as InvoiceRow[];
       return (
@@ -507,6 +845,62 @@ const Reports: React.FC = () => {
         </div>
       ) : (
         <>
+          {/* Kartu uang tidak ditampilkan untuk indikator penggunaan voucher:
+              angka pendapatan dan penggunaan tidak boleh berdampingan. */}
+          {type !== 'voucher-usage' && (
+          <>
+          {/* Pendapatan = uang masuk (tagihan + penjualan voucher). Admin
+              melihat seluruh pemilik; role lain hanya miliknya — cakupan
+              ditentukan server, label ini hanya menjelaskan angkanya. */}
+          <div className="rounded-xl border border-slate-700/50 bg-slate-800/50 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <p className="text-xs text-slate-400">Pendapatan total periode</p>
+                <p className="mt-1 text-2xl font-bold text-emerald-300">
+                  {result?.revenue ? formatRupiah(result.revenue.total_income) : '…'}
+                </p>
+              </div>
+              <span className="rounded bg-slate-700/60 px-2 py-0.5 text-[11px] text-slate-300">
+                {result?.revenue?.scope === 'all' ? 'semua role & pemilik' : 'hanya data Anda'}
+              </span>
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-3">
+              <div>
+                <p className="text-[11px] text-slate-500">Tagihan pelanggan</p>
+                <p className="text-sm text-slate-200">
+                  {result?.revenue ? formatRupiah(result.revenue.payments_income) : '…'}
+                </p>
+              </div>
+              <div>
+                <p className="text-[11px] text-slate-500">Penjualan voucher</p>
+                <p className="text-sm text-slate-200">
+                  {result?.revenue ? formatRupiah(result.revenue.voucher_income) : '…'}
+                </p>
+              </div>
+              <div>
+                <p className="text-[11px] text-slate-500">Laba voucher (jual − modal)</p>
+                <p className="text-sm text-amber-300">
+                  {result?.revenue ? formatRupiah(result.revenue.voucher_margin) : '…'}
+                </p>
+              </div>
+            </div>
+            {result?.revenue && result.revenue.by_owner.length > 0 && (
+              <div className="mt-3 border-t border-slate-700/50 pt-2">
+                <p className="mb-1 text-[11px] uppercase tracking-wide text-slate-500">
+                  Per pemilik data
+                </p>
+                <div className="flex flex-wrap gap-x-4 gap-y-1">
+                  {result.revenue.by_owner.slice(0, 8).map((row) => (
+                    <span key={row.owner_id ?? 'none'} className="text-[11px] text-slate-400">
+                      {row.owner_name}
+                      <span className="ml-1 text-slate-200">{formatRupiah(row.income)}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {[
               {
@@ -529,6 +923,8 @@ const Reports: React.FC = () => {
               </div>
             ))}
           </div>
+          </>
+          )}
 
           <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
             <div className="px-4 py-3 border-b border-slate-700/50">
