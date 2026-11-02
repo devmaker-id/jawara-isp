@@ -9,6 +9,7 @@ import {
   SettingKey,
 } from './settings.keys';
 import { SettingsRepository } from './settings.repository';
+import { TemplateValidationError, validateTemplates } from '../profiles/voucher-template';
 
 const DB_UNAVAILABLE = [
   'ECONNREFUSED',
@@ -165,6 +166,19 @@ export class SettingsService {
               `nomor ${maxIssued} yang sudah terbit. Gunakan minimal ${maxIssued - lastSeq + 1}.`,
           );
         }
+      }
+    }
+
+    // Template voucher: teksnya masuk ke mesin PDF, jadi divalidasi ketat
+    // sebelum disimpan (tanpa tag HTML, variabel hanya dari daftar putih).
+    if (toSave.voucher_templates !== undefined) {
+      try {
+        toSave.voucher_templates = JSON.stringify(validateTemplates(toSave.voucher_templates));
+      } catch (error) {
+        if (error instanceof TemplateValidationError) {
+          throw new BadRequestException(error.message);
+        }
+        throw error;
       }
     }
 

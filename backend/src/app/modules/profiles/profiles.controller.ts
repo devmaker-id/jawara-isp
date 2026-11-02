@@ -332,6 +332,7 @@ export class VouchersController {
     const pdf = this.service.buildVoucherPdf(
       ProfilesService.toCards(rows, template, brand),
       footer,
+      template.layout,
     );
     response
       .status(200)

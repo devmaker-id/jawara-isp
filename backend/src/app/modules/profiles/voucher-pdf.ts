@@ -27,14 +27,33 @@ export interface VoucherCard {
 }
 
 const A4 = { w: 595.28, h: 841.89 };
-const MARGIN = 24;
-const GAP = 10;
-const COLS = 3;
 const CARD_H = 100;
+const MM_TO_PT = 2.834645669;
 
-const CARD_W = (A4.w - MARGIN * 2 - GAP * (COLS - 1)) / COLS;
-const ROWS_PER_PAGE = Math.floor((A4.h - MARGIN * 2 + GAP) / (CARD_H + GAP));
-const PER_PAGE = COLS * ROWS_PER_PAGE;
+/** Tata letak halaman dari template (kolom, margin, jarak). */
+export interface PdfLayout {
+  columns?: number;
+  marginMm?: number;
+  gapMm?: number;
+}
+
+interface Geometry {
+  cols: number;
+  margin: number;
+  gap: number;
+  cardW: number;
+  perPage: number;
+}
+
+// Nilai bawaan = 3 kolom, margin 8,5 mm, jarak 3,5 mm (setara perilaku lama).
+function geometry(layout?: PdfLayout): Geometry {
+  const cols = Math.min(3, Math.max(1, Math.round(layout?.columns ?? 3)));
+  const margin = Math.max(0, (layout?.marginMm ?? 8.5) * MM_TO_PT);
+  const gap = Math.max(0, (layout?.gapMm ?? 3.5) * MM_TO_PT);
+  const cardW = (A4.w - margin * 2 - gap * (cols - 1)) / cols;
+  const rows = Math.max(1, Math.floor((A4.h - margin * 2 + gap) / (CARD_H + gap)));
+  return { cols, margin, gap, cardW, perPage: cols * rows };
+}
 
 /** Karakter di luar Latin-1 akan merusak stream, jadi diganti. */
 function latin(text: string): string {
@@ -59,18 +78,18 @@ function text(x: number, y: number, size: number, font: string, gray: number, va
   );
 }
 
-function pageContent(cards: VoucherCard[]): string {
+function pageContent(cards: VoucherCard[], geom: Geometry): string {
   let out = '';
   cards.forEach((card, index) => {
-    const col = index % COLS;
-    const row = Math.floor(index / COLS);
-    const x = MARGIN + col * (CARD_W + GAP);
-    const top = A4.h - MARGIN - row * (CARD_H + GAP);
+    const col = index % geom.cols;
+    const row = Math.floor(index / geom.cols);
+    const x = geom.margin + col * (geom.cardW + geom.gap);
+    const top = A4.h - geom.margin - row * (CARD_H + geom.gap);
 
     // Kotak putus-putus sebagai garis potong.
     out +=
       `0.6 w [3 2] 0 d 0.55 G ${x.toFixed(2)} ${(top - CARD_H).toFixed(2)} ` +
-      `${CARD_W.toFixed(2)} ${CARD_H.toFixed(2)} re S [] 0 d\n`;
+      `${geom.cardW.toFixed(2)} ${CARD_H.toFixed(2)} re S [] 0 d\n`;
 
     if (card.header) out += text(x + 8, top - 13, 7, 'F1', 0.45, card.header);
     if (card.title) out += text(x + 8, top - 26, 8, 'F1', 0.2, card.title);
@@ -86,18 +105,27 @@ function pageContent(cards: VoucherCard[]): string {
   return out;
 }
 
-export function buildVoucherPdf(cards: VoucherCard[], title = 'Voucher', footer?: string): Buffer {
+export function buildVoucherPdf(
+  cards: VoucherCard[],
+  title = 'Voucher',
+  footer?: string,
+  layout?: PdfLayout,
+): Buffer {
+  const geom = geometry(layout);
   const pages: string[] = [];
   if (cards.length === 0) {
-    pages.push(text(MARGIN, A4.h - MARGIN - 16, 12, 'F1', 0.3, 'Tidak ada voucher pada pilihan ini.'));
+    pages.push(
+      text(geom.margin, A4.h - geom.margin - 16, 12, 'F1', 0.3, 'Tidak ada voucher pada pilihan ini.'),
+    );
   } else {
-    for (let start = 0; start < cards.length; start += PER_PAGE) {
-      pages.push(pageContent(cards.slice(start, start + PER_PAGE)));
+    for (let start = 0; start < cards.length; start += geom.perPage) {
+      pages.push(pageContent(cards.slice(start, start + geom.perPage), geom));
     }
   }
   // Baris kaki halaman: tanggal cetak + jumlah voucher, supaya lembar cetak bisa
   // dilacak kapan dan dari kriteria mana ia dibuat.
-  if (footer) for (let i = 0; i < pages.length; i += 1) pages[i] += text(MARGIN, 14, 7, 'F1', 0.45, footer);
+  if (footer)
+    for (let i = 0; i < pages.length; i += 1) pages[i] += text(geom.margin, 14, 7, 'F1', 0.45, footer);
 
   // Objek: 1 catalog, 2 pages, 3-5 font, lalu pasangan (page, content).
   const firstPageId = 6;

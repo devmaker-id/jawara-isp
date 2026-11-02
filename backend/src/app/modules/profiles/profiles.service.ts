@@ -28,7 +28,7 @@ import {
 } from './dto/profiles.dto';
 import { finalPrice, toRadiusMapping } from './profile-mapping';
 import { BURST_FACTOR } from './rate-limit';
-import { buildVoucherPdf, VoucherCard } from './voucher-pdf';
+import { buildVoucherPdf, PdfLayout, VoucherCard } from './voucher-pdf';
 import {
   DEFAULT_TEMPLATES,
   fillTemplate,
@@ -1405,9 +1405,17 @@ export class ProfilesService {
     return this.listVouchers(actor, { ...filters, limit: 500 });
   }
 
-  /** Template kartu voucher aktif (Pengaturan → Template Voucher). */
+  /**
+   * Template kartu voucher yang AKTIF (Pengaturan → Template Voucher).
+   *
+   * Template yang dinonaktifkan tidak ditawarkan saat mencetak. Bila semua
+   * dinonaktifkan, pencetakan tetap berjalan memakai template bawaan supaya
+   * tidak ada layar kosong tanpa penjelasan.
+   */
   async voucherTemplates(): Promise<VoucherTemplate[]> {
-    return parseTemplates(await this.settings.rawValue('voucher_templates'));
+    const all = parseTemplates(await this.settings.rawValue('voucher_templates'));
+    const enabled = all.filter((template) => template.enabled);
+    return enabled.length > 0 ? enabled : DEFAULT_TEMPLATES.filter((template) => template.enabled);
   }
 
   /** Daftar template + variabel yang sah, untuk dialog cetak dan halaman pengaturan. */
@@ -1480,8 +1488,8 @@ export class ProfilesService {
     });
   }
 
-  buildVoucherPdf(cards: VoucherCard[], footer?: string): Buffer {
-    return buildVoucherPdf(cards, 'Voucher', footer);
+  buildVoucherPdf(cards: VoucherCard[], footer?: string, layout?: PdfLayout): Buffer {
+    return buildVoucherPdf(cards, 'Voucher', footer, layout);
   }
 
   /**
@@ -1537,6 +1545,9 @@ export class ProfilesService {
         filename: `voucher-${row.username}.pdf`,
         pdf: buildVoucherPdf(
           ProfilesService.toCards([row], template, brand),
+          'Voucher',
+          undefined,
+          template.layout,
         ),
       });
       pdfAttached = result.pdf_attached;

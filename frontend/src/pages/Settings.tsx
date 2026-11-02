@@ -2,6 +2,11 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
+import {
+  VoucherTemplatesPanel,
+  type VoucherTemplate,
+  type VoucherVariable,
+} from '../components/voucher/VoucherTemplatesPanel';
 
 type TabKey = 'branding' | 'voucher' | 'pelanggan' | 'payment' | 'telegram' | 'integrasi' | 'sistem';
 type Toast = { type: 'success' | 'error'; text: string } | null;
@@ -132,43 +137,9 @@ const InfoRow: React.FC<{ label: string; value: string }> = ({ label, value }) =
   </div>
 );
 
-const SAMPLE_VARS: Record<string, string> = {
-  brand: 'BibitNet',
-  tagline: 'Internet RT/RW',
-  profile: 'HS-1HARI',
-  profile_type: 'hotspot',
-  user_type: 'voucher',
-  username: 'AB3D7K2M',
-  password: '4821',
-  price: 'Rp 5.000',
-  owner: 'Budi',
-  created_by: 'Admin',
-  customer: 'Ibu Sri',
-  status: 'baru dibuat',
-  expires: '-',
-  created_at: '28/10/26',
-  printed_at: '28/10/26, 20.10',
-};
-
-/** Isi variabel dengan contoh, untuk pratinjau di halaman pengaturan. */
-const fillSample = (text: string): string =>
-  String(text ?? '').replace(
-    /\{\{\s*([a-z_]+)\s*\}\}/gi,
-    (match, key: string) => SAMPLE_VARS[key.toLowerCase()] ?? match,
-  );
-
-interface VoucherTemplate {
-  id?: string;
-  name: string;
-  header: string;
-  title: string;
-  lines: string[];
-  footer: string;
-}
-
 interface TemplateCatalog {
   templates: VoucherTemplate[];
-  variables: Array<{ token: string; label: string }>;
+  variables: VoucherVariable[];
 }
 
 const Settings: React.FC = () => {
@@ -223,59 +194,29 @@ const Settings: React.FC = () => {
   // ---- Template voucher (disimpan sebagai JSON di config voucher_templates) ----
   const [catalog, setCatalog] = useState<TemplateCatalog | null>(null);
 
+  // Nilai mentah dari server. Validasi & penyimpanan dilakukan panel template,
+  // server tetap validator terakhir (tanpa tag HTML, variabel dari daftar putih).
+  // Bila config masih kosong, tampilkan template bawaan dari server supaya bisa
+  // langsung diubah — tanpa menulis apa pun sebelum admin menyimpan.
   const voucherTemplates = useMemo<VoucherTemplate[]>(() => {
     try {
       const parsed = JSON.parse(values.voucher_templates || '[]');
-      return Array.isArray(parsed) ? (parsed as VoucherTemplate[]) : [];
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed as VoucherTemplate[];
     } catch {
-      return [];
+      /* config rusak: pakai template bawaan di bawah */
     }
-  }, [values.voucher_templates]);
+    return catalog?.templates ?? [];
+  }, [values.voucher_templates, catalog]);
 
   useEffect(() => {
     if (tab !== 'voucher') return;
     api
       .get<TemplateCatalog>('/api/vouchers/templates')
-      .then((res) => {
-        setCatalog(res.data);
-        // Kosong = server memakai template bawaan. Isi editor dengan template
-        // efektif itu supaya bisa langsung diubah dan disimpan.
-        setValues((v) =>
-          v.voucher_templates
-            ? v
-            : { ...v, voucher_templates: JSON.stringify(res.data.templates ?? []) },
-        );
-      })
+      .then((res) => setCatalog(res.data))
       .catch(() => setCatalog(null));
   }, [tab]);
 
-  const saveTemplates = (next: VoucherTemplate[]) =>
-    set('voucher_templates', JSON.stringify(next));
-
-  const updateTemplate = (index: number, patch: Partial<VoucherTemplate>) =>
-    saveTemplates(voucherTemplates.map((item, i) => (i === index ? { ...item, ...patch } : item)));
-
-  const addTemplate = () =>
-    saveTemplates([
-      ...voucherTemplates,
-      {
-        name: `Template ${voucherTemplates.length + 1}`,
-        header: '{{brand}}',
-        title: 'Voucher {{profile}}',
-        lines: [],
-        footer: '{{printed_at}}',
-      },
-    ]);
-
-  const duplicateTemplate = (index: number) => {
-    const source = voucherTemplates[index];
-    if (!source) return;
-    const copy: VoucherTemplate = { ...source, id: undefined, name: `${source.name} (salinan)` };
-    saveTemplates([...voucherTemplates.slice(0, index + 1), copy, ...voucherTemplates.slice(index + 1)]);
-  };
-
-  const removeTemplate = (index: number) =>
-    saveTemplates(voucherTemplates.filter((_, i) => i !== index));
+  const voucherVariables = catalog?.variables ?? [];
 
   const methods = useMemo(
     () =>
@@ -746,147 +687,14 @@ const Settings: React.FC = () => {
   const renderVoucher = () => (
     <Card
       title="Template Voucher"
-      description="Teks kartu voucher hotspot & PPPoE. Pakai variabel {{...}} — template dipilih saat mencetak."
+      description="Atur kartu voucher hotspot dan PPP. Hanya template aktif yang muncul saat mencetak. Teks kartu hanya boleh memakai variabel dari daftar."
     >
-      <div className="space-y-4">
-        {voucherTemplates.length === 0 && (
-          <p className="text-sm text-slate-400">
-            Belum ada template tersimpan. Server memakai template bawaan sampai Anda menyimpan.
-          </p>
-        )}
-
-        {voucherTemplates.map((template, index) => (
-          <div
-            key={index}
-            className="rounded-lg border border-slate-700/60 bg-slate-900/40 p-4 space-y-3"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-sm font-medium text-slate-200">Template {index + 1}</p>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => duplicateTemplate(index)}
-                  disabled={!isAdmin}
-                  className="px-2 py-1 rounded text-xs text-slate-300 bg-slate-700/40 hover:bg-slate-700 disabled:opacity-50"
-                >
-                  Duplikat
-                </button>
-                <button
-                  type="button"
-                  onClick={() => removeTemplate(index)}
-                  disabled={!isAdmin}
-                  className="px-2 py-1 rounded text-xs text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 disabled:opacity-50"
-                >
-                  Hapus
-                </button>
-              </div>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              <TextField
-                id={`tpl-name-${index}`}
-                label="Nama template"
-                value={template.name ?? ''}
-                onChange={(v) => updateTemplate(index, { name: v })}
-                disabled={!isAdmin}
-                placeholder="Klasik"
-              />
-              <TextField
-                id={`tpl-header-${index}`}
-                label="Baris atas"
-                value={template.header ?? ''}
-                onChange={(v) => updateTemplate(index, { header: v })}
-                disabled={!isAdmin}
-                placeholder="{{brand}}"
-                mono
-              />
-              <TextField
-                id={`tpl-title-${index}`}
-                label="Judul"
-                value={template.title ?? ''}
-                onChange={(v) => updateTemplate(index, { title: v })}
-                disabled={!isAdmin}
-                placeholder="Voucher {{profile}}"
-                mono
-              />
-              <TextField
-                id={`tpl-footer-${index}`}
-                label="Baris kaki"
-                value={template.footer ?? ''}
-                onChange={(v) => updateTemplate(index, { footer: v })}
-                disabled={!isAdmin}
-                placeholder="{{printed_at}}"
-                mono
-              />
-            </div>
-
-            <div>
-              <label
-                className="block text-sm font-medium text-slate-300 mb-1"
-                htmlFor={`tpl-lines-${index}`}
-              >
-                Baris isi (maks 3, satu baris teks per baris)
-              </label>
-              <textarea
-                id={`tpl-lines-${index}`}
-                rows={3}
-                value={(template.lines ?? []).join('\n')}
-                onChange={(event) => updateTemplate(index, { lines: event.target.value.split('\n') })}
-                disabled={!isAdmin}
-                className={`${inputClass} font-mono text-sm`}
-                placeholder={'Harga {{price}}\nPemilik {{owner}}'}
-              />
-            </div>
-          </div>
-        ))}
-
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={addTemplate}
-            disabled={!isAdmin}
-            className="px-3 py-2 rounded-lg text-sm font-medium text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/20 disabled:opacity-50"
-          >
-            + Tambah template
-          </button>
-        </div>
-
-        <div className="rounded-lg border border-slate-700/50 bg-slate-900/40 p-3">
-          <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Variabel tersedia</p>
-          <div className="flex flex-wrap gap-1.5">
-            {(catalog?.variables ?? []).map((item) => (
-              <code
-                key={item.token}
-                title={item.label}
-                className="rounded bg-slate-800 px-1.5 py-0.5 text-[11px] text-cyan-300"
-              >
-                {item.token}
-              </code>
-            ))}
-          </div>
-          <p className="mt-2 text-[11px] text-slate-500">
-            Variabel yang tidak dikenal dibiarkan apa adanya supaya salah tulis terlihat di hasil cetak.
-          </p>
-        </div>
-
-        {voucherTemplates[0] && (
-          <div className="rounded-lg border border-slate-700/50 bg-slate-900/40 p-4">
-            <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Pratinjau kartu</p>
-            <div className="w-64 rounded border border-dashed border-slate-600 p-3 space-y-1">
-              <p className="text-[10px] text-slate-500">{fillSample(voucherTemplates[0].header ?? '')}</p>
-              <p className="text-[11px] text-slate-400">{fillSample(voucherTemplates[0].title ?? '')}</p>
-              <p className="font-mono text-lg font-bold text-white">AB3D7K2M</p>
-              <p className="font-mono text-xs text-white">4821</p>
-              {(voucherTemplates[0].lines ?? []).slice(0, 3).map((line, i) => (
-                <p key={i} className="text-[10px] text-slate-400">
-                  {fillSample(line)}
-                </p>
-              ))}
-              <p className="text-[10px] text-slate-500">{fillSample(voucherTemplates[0].footer ?? '')}</p>
-            </div>
-          </div>
-        )}
-      </div>
+      <VoucherTemplatesPanel
+        templates={voucherTemplates}
+        variables={voucherVariables}
+        canEdit={isAdmin}
+        onSaved={(raw) => set('voucher_templates', raw)}
+      />
     </Card>
   );
 
