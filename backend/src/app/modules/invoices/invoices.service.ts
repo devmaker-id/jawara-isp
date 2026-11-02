@@ -7,8 +7,10 @@ import {
 } from '@nestjs/common';
 import { CreateInvoiceDto, UpdateInvoiceDto } from './dto/invoice.dto';
 import { isMissingOwnerColumn, RequestScope, SYSTEM_SCOPE } from '../auth/request-scope';
+import { FinanceEvent, FinanceEventsRepository } from '../finance/finance-events.repository';
 import {
   Invoice,
+  InvoiceActor,
   InvoiceError,
   InvoiceQuery,
   InvoiceSummary,
@@ -32,7 +34,10 @@ function errorCode(error: unknown): string | undefined {
 
 @Injectable()
 export class InvoicesService {
-  constructor(private readonly repository: InvoicesRepository) {}
+  constructor(
+    private readonly repository: InvoicesRepository,
+    private readonly financeEvents: FinanceEventsRepository,
+  ) {}
 
   private rethrow(error: unknown): never {
     if (isMissingOwnerColumn(error)) {
@@ -47,9 +52,12 @@ export class InvoicesService {
         case 'CUSTOMER_NOT_FOUND':
           throw new NotFoundException(error.message);
         case 'PAID_INVOICE_LOCKED':
-          throw new ConflictException(
-            'Tagihan sudah lunas: nominal dan jatuh tempo tidak dapat diubah',
-          );
+        case 'INVOICE_ALREADY_VOID':
+        case 'INVOICE_HAS_PAYMENTS':
+        case 'DELETE_FORBIDDEN':
+          throw new ConflictException(error.message);
+        case 'INVALID_PERIOD':
+          throw new BadRequestException(error.message);
         case 'INVALID_STATUS':
           throw new BadRequestException(
             'Status lunas/parsial hanya dapat diatur melalui endpoint pembayaran',
@@ -59,6 +67,15 @@ export class InvoicesService {
 
     const code = errorCode(error);
     if (code === 'ER_DUP_ENTRY') {
+      // UNIQUE(customer_id, username, period_start) dari migrasi 032: satu
+      // kewajiban tagihan per layanan & periode.
+      const message = (error as { message?: string })?.message ?? '';
+      if (message.includes('uq_invoices_period')) {
+        throw new ConflictException(
+          'Tagihan untuk akun dan periode ini sudah ada. Periksa daftar tagihan, ' +
+            'atau batalkan (void) tagihan lama bila memang diganti.',
+        );
+      }
       throw new ConflictException('Nomor tagihan bentrok, ulangi penyimpanan');
     }
     if (code === 'ER_NO_REFERENCED_ROW_2' || code === 'ER_NO_REFERENCED_ROW') {
@@ -124,19 +141,27 @@ export class InvoicesService {
     return this.repository.summary(scope).catch((error) => this.rethrow(error));
   }
 
-  create(dto: CreateInvoiceDto): Promise<Invoice> {
-    return this.repository.create(dto).catch((error) => this.rethrow(error));
+  create(dto: CreateInvoiceDto, actor: InvoiceActor): Promise<Invoice> {
+    return this.repository.create(dto, actor).catch((error) => this.rethrow(error));
   }
 
-  update(id: number, dto: UpdateInvoiceDto): Promise<Invoice> {
-    return this.repository.update(id, dto).catch((error) => this.rethrow(error));
+  update(id: number, dto: UpdateInvoiceDto, actor: InvoiceActor): Promise<Invoice> {
+    return this.repository.update(id, dto, actor).catch((error) => this.rethrow(error));
   }
 
-  async remove(id: number): Promise<{ ok: true }> {
-    const deleted = await this.repository.remove(id).catch((error) => this.rethrow(error));
-    if (!deleted) {
-      throw new NotFoundException(`Tagihan dengan ID ${id} tidak ditemukan`);
-    }
-    return { ok: true };
+  void(id: number, reason: string, actor: InvoiceActor): Promise<Invoice> {
+    return this.repository.void(id, reason, actor).catch((error) => this.rethrow(error));
+  }
+
+  // DELETE fisik tidak lagi tersedia; selalu ditolak dengan alasan yang jelas.
+  async remove(): Promise<{ ok: true }> {
+    return this.repository.remove().catch((error) => this.rethrow(error));
+  }
+
+  // Riwayat keuangan satu tagihan. Cakupan reseller diperiksa lewat findOne
+  // (tagihan di luar haknya = 404), bukan lewat filter tabel event.
+  async events(id: number, scope: RequestScope = SYSTEM_SCOPE): Promise<FinanceEvent[]> {
+    await this.findOne(id, scope);
+    return this.financeEvents.list('invoice', id);
   }
 }

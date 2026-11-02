@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsDateString,
   IsEnum,
@@ -11,6 +11,7 @@ import {
   Max,
   MaxLength,
   Min,
+  MinLength,
 } from 'class-validator';
 
 export enum InvoiceStatus {
@@ -20,6 +21,8 @@ export enum InvoiceStatus {
   // Ditambahkan setelah migrasi 001 (enum DB: partial di posisi terakhir).
   // Hanya ditulis oleh alur pembayaran, bukan lewat PATCH tagihan.
   PARTIAL = 'partial',
+  // Ditambahkan migrasi 032. Hanya ditulis oleh endpoint void.
+  VOID = 'void',
 }
 
 // Kolom amount DECIMAL(12,2) → maksimum 10 digit sebelum koma.
@@ -42,6 +45,18 @@ export class CreateInvoiceDto {
   @IsDateString({ strict: true }, { message: DATE_MESSAGE })
   @Matches(DATE_ONLY, { message: DATE_MESSAGE })
   due_date: string;
+
+  // Periode penagihan (migrasi 032). Harus diisi berpasangan; NULL keduanya
+  // untuk tagihan yang memang tidak punya periode (mis. tagihan non-layanan).
+  @IsOptional()
+  @IsDateString({ strict: true }, { message: DATE_MESSAGE })
+  @Matches(DATE_ONLY, { message: DATE_MESSAGE })
+  period_start?: string | null;
+
+  @IsOptional()
+  @IsDateString({ strict: true }, { message: DATE_MESSAGE })
+  @Matches(DATE_ONLY, { message: DATE_MESSAGE })
+  period_end?: string | null;
 
   // Akun RADIUS yang ditagih. Opsional: tagihan non-layanan tetap boleh ada,
   // tetapi tanpa username pembayaran tidak bisa mengaktifkan akun.
@@ -78,6 +93,17 @@ export class UpdateInvoiceDto {
   @Matches(DATE_ONLY, { message: DATE_MESSAGE })
   due_date?: string;
 
+  // Kirim `null` untuk mengosongkan periode; kirim keduanya sekaligus.
+  @IsOptional()
+  @IsDateString({ strict: true }, { message: DATE_MESSAGE })
+  @Matches(DATE_ONLY, { message: DATE_MESSAGE })
+  period_start?: string | null;
+
+  @IsOptional()
+  @IsDateString({ strict: true }, { message: DATE_MESSAGE })
+  @Matches(DATE_ONLY, { message: DATE_MESSAGE })
+  period_end?: string | null;
+
   @IsOptional()
   @IsString()
   @MaxLength(64, { message: 'username maksimal 64 karakter' })
@@ -104,6 +130,15 @@ export class PayInvoiceDto {
   @Matches(DATE_ONLY, { message: DATE_MESSAGE })
   paid_date?: string;
 }
+
+// Alasan wajib: pembatalan tanpa alasan tidak bisa diaudit.
+export class VoidInvoiceDto {
+  @IsString({ message: 'alasan void wajib diisi' })
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @MinLength(5, { message: 'alasan void minimal 5 karakter' })
+  @MaxLength(255, { message: 'alasan void maksimal 255 karakter' })
+  reason: string;
+}
 // Query daftar tagihan (Fase 0: pagination & pencarian di server).
 export class ListInvoicesQueryDto {
   @IsString()
@@ -111,9 +146,9 @@ export class ListInvoicesQueryDto {
   @MaxLength(100)
   search?: string;
 
-  @IsIn(['unpaid', 'paid', 'overdue', 'partial'])
+  @IsIn(['unpaid', 'paid', 'overdue', 'partial', 'void'])
   @IsOptional()
-  status?: 'unpaid' | 'paid' | 'overdue' | 'partial';
+  status?: 'unpaid' | 'paid' | 'overdue' | 'partial' | 'void';
 
   @Type(() => Number)
   @IsInt()

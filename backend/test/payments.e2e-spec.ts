@@ -374,4 +374,42 @@ describe('Payments (e2e)', () => {
       expect(over.body.message).toMatch(/melebihi sisa tagihan/);
     });
   });
+
+  describe('tagihan void tidak bisa dibayar', () => {
+    let invoiceId: number;
+
+    beforeAll(async () => {
+      invoiceId = await makeInvoice(1000);
+      await api()
+        .post(`/api/invoices/${invoiceId}/void`)
+        .set(auth(adminToken))
+        .send({ reason: 'tagihan ganda' })
+        .expect(200);
+    });
+
+    it('pembayaran ditolak → 409 dengan alasan pembatalan', async () => {
+      const res = await api()
+        .post(`/api/invoices/${invoiceId}/payments`)
+        .set(auth(operatorToken))
+        .send({ amount: 100 })
+        .expect(409);
+      expect(res.body.message).toMatch(/sudah dibatalkan/i);
+    });
+
+    it('tidak ada baris pembayaran yang tercatat', async () => {
+      const res = await api()
+        .get(`/api/invoices/${invoiceId}/payments`)
+        .set(auth(operatorToken))
+        .expect(200);
+      expect(res.body).toHaveLength(0);
+    });
+
+    it('tidak muncul sebagai tagihan yang bisa dibayar', async () => {
+      const res = await api()
+        .get('/api/payments/payable-invoices')
+        .set(auth(operatorToken))
+        .expect(200);
+      expect(res.body.rows.some((row: { id: number }) => row.id === invoiceId)).toBe(false);
+    });
+  });
 });

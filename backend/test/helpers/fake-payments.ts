@@ -95,6 +95,13 @@ export function createFakePayments(invoices: FakeInvoices): FakePayments {
       actor: PaymentActor,
     ): Promise<PaymentResult> => {
       const row = invoice(invoiceId);
+      // Sama seperti repository SQL: tagihan void tidak menerima uang baru.
+      if (row.status === InvoiceStatus.VOID) {
+        throw new PaymentError(
+          'INVOICE_VOIDED',
+          `Tagihan dengan ID ${invoiceId} sudah dibatalkan (void) dan tidak dapat dibayar`,
+        );
+      }
 
       if (dto.idempotency_key) {
         const existing = byKey(invoiceId, dto.idempotency_key);
@@ -230,7 +237,8 @@ export function createFakePayments(invoices: FakeInvoices): FakePayments {
             overdue: inv.due_date.slice(0, 10) < today && paid < inv.amount,
           };
         })
-        .filter((row) => row.remaining > 0)
+        // Sama seperti SQL: tagihan void bukan kewajiban yang bisa dibayar.
+        .filter((row) => row.remaining > 0 && row.status !== InvoiceStatus.VOID)
         .filter((row) =>
           like
             ? row.invoice_number.toLowerCase().includes(like) || row.customer_name.toLowerCase().includes(like)

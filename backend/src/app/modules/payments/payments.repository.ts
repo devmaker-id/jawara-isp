@@ -2,11 +2,13 @@ import { Injectable } from '@nestjs/common';
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { DatabaseService } from '../../database/database.service';
 import { ownerFilter, RequestScope, SYSTEM_SCOPE } from '../auth/request-scope';
+import { writeFinanceEvent } from '../finance/finance-events.repository';
 import { CreatePaymentDto, PaymentMethod } from './dto/payment.dto';
 import { nextInvoiceState } from './payments.domain';
 
 export type PaymentErrorCode =
   | 'INVOICE_NOT_FOUND'
+  | 'INVOICE_VOIDED'
   | 'PAYMENT_NOT_FOUND'
   | 'ALREADY_PAID'
   | 'OVERPAY'
@@ -315,7 +317,10 @@ export class PaymentsRepository {
     scope: RequestScope = SYSTEM_SCOPE,
   ): Promise<{ outstanding: number; overdue: number }> {
     const owner = ownerFilter(scope, 'payments');
-    const innerWhere = owner.sql ? ` WHERE ${owner.sql}` : '';
+    // Tagihan void (migrasi 032) bukan kewajiban: tidak dihitung sisa/tunggakan.
+    const conditions = ["i.status <> 'void'"];
+    if (owner.sql) conditions.push(owner.sql);
+    const innerWhere = ` WHERE ${conditions.join(' AND ')}`;
     const row = await this.db.queryOne<
       RowDataPacket & { outstanding: number | string; overdue: number | string }
     >(
@@ -366,7 +371,8 @@ export class PaymentsRepository {
     scope: RequestScope = SYSTEM_SCOPE,
   ): Promise<{ rows: InvoiceBalance[]; total: number }> {
     const like = search ? `%${search}%` : null;
-    const parts: string[] = [];
+    // Tagihan void tidak boleh muncul sebagai tagihan yang bisa dibayar.
+    const parts: string[] = ["i.status <> 'void'"];
     const params: unknown[] = [];
     if (like) {
       parts.push('(i.invoice_number LIKE ? OR i.customer_name LIKE ?)');
@@ -446,6 +452,13 @@ export class PaymentsRepository {
       if (!invoice) {
         throw new PaymentError('INVOICE_NOT_FOUND', `Tagihan dengan ID ${invoiceId} tidak ditemukan`);
       }
+      // Tagihan yang sudah dibatalkan tidak boleh menerima uang baru.
+      if (invoice.status === 'void') {
+        throw new PaymentError(
+          'INVOICE_VOIDED',
+          `Tagihan dengan ID ${invoiceId} sudah dibatalkan (void) dan tidak dapat dibayar`,
+        );
+      }
 
       if (dto.idempotency_key) {
         const existing = await this.findByKey(conn, invoiceId, dto.idempotency_key);
@@ -505,8 +518,17 @@ export class PaymentsRepository {
       }
 
       await this.applyInvoiceState(conn, invoiceId);
+      const created = await this.requirePayment(conn, insertId);
+      // Event audit satu transaksi dengan INSERT pembayaran (migrasi 032).
+      await writeFinanceEvent(conn, {
+        entityType: 'payment',
+        entityId: created.id,
+        action: 'PAYMENT_CREATED',
+        after: this.paymentSnapshot(created),
+        actor,
+      });
       return {
-        payment: await this.requirePayment(conn, insertId),
+        payment: created,
         invoice: await this.invoiceBrief(conn, invoiceId),
         created: true,
       };
@@ -542,10 +564,20 @@ export class PaymentsRepository {
       }
 
       await this.writeVoidAudit(conn, actor, id, payment.invoice_id, Number(payment.amount), reason.trim());
+      const voided = await this.requirePayment(conn, id);
+      await writeFinanceEvent(conn, {
+        entityType: 'payment',
+        entityId: id,
+        action: 'PAYMENT_VOIDED',
+        before: { invoice_id: payment.invoice_id, amount: Number(payment.amount), voided_at: null },
+        after: this.paymentSnapshot(voided),
+        reason: reason.trim(),
+        actor,
+      });
       await this.applyInvoiceState(conn, payment.invoice_id);
 
       return {
-        payment: await this.requirePayment(conn, id),
+        payment: voided,
         invoice: await this.invoiceBrief(conn, payment.invoice_id),
         created: false,
       };
@@ -564,10 +596,11 @@ export class PaymentsRepository {
   }
 
   // Status tagihan SELALU dihitung ulang dari SUM pembayaran sah, termasuk
-  // saat void membuat tagihan kembali unpaid/partial.
+  // saat void membuat tagihan kembali unpaid/partial. Tagihan void (migrasi
+  // 032) tidak pernah dihitung ulang: pembatalannya final.
   private async applyInvoiceState(conn: PoolConnection, invoiceId: number): Promise<void> {
     const invoice = await this.lockInvoice(conn, invoiceId);
-    if (!invoice) return;
+    if (!invoice || invoice.status === 'void') return;
 
     const status = nextInvoiceState(invoice.amount, await this.paidTotal(conn, invoiceId));
     const paidDate: string | null =
@@ -661,13 +694,13 @@ export class PaymentsRepository {
   private async lockInvoice(
     conn: PoolConnection,
     invoiceId: number,
-  ): Promise<{ id: number; amount: number } | null> {
+  ): Promise<{ id: number; amount: number; status: string } | null> {
     const [rows] = await conn.query<InvoiceBriefRow[]>(
-      `SELECT id, amount FROM invoices WHERE id = ? FOR UPDATE`,
+      `SELECT id, amount, status FROM invoices WHERE id = ? FOR UPDATE`,
       [invoiceId],
     );
     const row = rows[0];
-    return row ? { id: row.id, amount: Number(row.amount) } : null;
+    return row ? { id: row.id, amount: Number(row.amount), status: row.status } : null;
   }
 
   private async invoiceBrief(conn: PoolConnection, invoiceId: number): Promise<InvoiceBrief> {
@@ -744,5 +777,22 @@ export class PaymentsRepository {
       `INSERT INTO audit_logs (user_id, action, details, ip_address) VALUES (?, ?, ?, ?)`,
       [actor.id, 'PAYMENT_VOID', JSON.stringify(details), actor.ip.slice(0, 45)],
     );
+  }
+
+  // Snapshot pembayaran untuk finance_events (after_json / before_json).
+  private paymentSnapshot(payment: Payment): Record<string, unknown> {
+    return {
+      invoice_id: payment.invoice_id,
+      invoice_number: payment.invoice_number,
+      amount: payment.amount,
+      method: payment.method,
+      reference: payment.reference,
+      paid_at: payment.paid_at,
+      recorded_by: payment.recorded_by,
+      note: payment.note,
+      voided_at: payment.voided_at,
+      voided_by: payment.voided_by,
+      void_reason: payment.void_reason,
+    };
   }
 }

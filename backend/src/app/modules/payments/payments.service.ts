@@ -66,6 +66,8 @@ export class PaymentsService {
         case 'INVOICE_NOT_FOUND':
         case 'PAYMENT_NOT_FOUND':
           throw new NotFoundException(error.message);
+        case 'INVOICE_VOIDED':
+          throw new ConflictException(error.message);
         case 'ALREADY_PAID':
           throw new ConflictException('Tagihan sudah lunas, tidak ada sisa yang bisa dibayar');
         case 'OVERPAY':

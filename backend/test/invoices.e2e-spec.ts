@@ -2,12 +2,13 @@ import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import request from 'supertest';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { App } from 'supertest/types.js';
 import { AppModule } from './../src/app.module.js';
 import { ConfigService } from './../src/app/config/config.service.js';
 import { UsersRepository } from './../src/app/modules/users/users.repository.js';
 import { InvoicesRepository } from './../src/app/modules/invoices/invoices.repository.js';
+import { FinanceEventsRepository } from './../src/app/modules/finance/finance-events.repository.js';
 import { createFakeUsers, FakeUsers } from './helpers/fake-users.js';
 import { createFakeInvoices, FakeInvoices } from './helpers/fake-invoices.js';
 
@@ -18,6 +19,7 @@ describe('Invoices (e2e)', () => {
   let app: INestApplication<App>;
   let fakeUsers: FakeUsers;
   let fakeInvoices: FakeInvoices;
+  let fakeFinanceEvents: { list: ReturnType<typeof vi.fn> };
   let adminToken: string;
   let operatorToken: string;
   let resellerToken: string;
@@ -25,6 +27,23 @@ describe('Invoices (e2e)', () => {
   beforeAll(async () => {
     fakeUsers = await createFakeUsers();
     fakeInvoices = createFakeInvoices();
+    fakeFinanceEvents = {
+      list: vi.fn().mockResolvedValue([
+        {
+          id: 1,
+          entity_type: 'invoice',
+          entity_id: 1,
+          action: 'INVOICE_CREATED',
+          before_json: null,
+          after_json: { amount: 29700.5 },
+          reason: null,
+          actor_id: 2,
+          actor_name: 'Operator Uji',
+          ip_address: '127.0.0.1',
+          created_at: new Date('2026-03-01T02:00:00Z'),
+        },
+      ]),
+    };
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -33,6 +52,11 @@ describe('Invoices (e2e)', () => {
       .useValue(fakeUsers.repo)
       .overrideProvider(InvoicesRepository)
       .useValue(fakeInvoices.repo)
+      // Riwayat aktivitas dibaca dari finance_events; di e2e cukup di-override
+      // agar tidak menyentuh database. Penulisan event diuji di test unit
+      // (invoices.repository.spec.ts / payments-audit.spec.ts).
+      .overrideProvider(FinanceEventsRepository)
+      .useValue(fakeFinanceEvents)
       .compile();
 
     app = moduleFixture.createNestApplication();
@@ -132,9 +156,136 @@ describe('Invoices (e2e)', () => {
       await api().patch(`/api/invoices/${id}`).set(auth(adminToken)).send({ status: 'paid' }).expect(400);
     });
 
-    it('hapus oleh admin → 200, lalu detail → 404', async () => {
-      await api().delete(`/api/invoices/${id}`).set(auth(adminToken)).expect(200);
-      await api().get(`/api/invoices/${id}`).set(auth(adminToken)).expect(404);
+    it('hapus permanen ditolak → 409 dan tagihan tetap ada', async () => {
+      const res = await api().delete(`/api/invoices/${id}`).set(auth(adminToken)).expect(409);
+      expect(res.body.message).toMatch(/tidak dapat dihapus permanen/i);
+      const detail = await api().get(`/api/invoices/${id}`).set(auth(adminToken)).expect(200);
+      expect(detail.body.id).toBe(id);
+    });
+  });
+
+  describe('periode tagihan', () => {
+    let id: number;
+
+    it('membuat tagihan dengan periode → 201 dan periode tersimpan', async () => {
+      const res = await api()
+        .post('/api/invoices')
+        .set(auth(operatorToken))
+        .send({ ...validPayload, period_start: '2026-03-01', period_end: '2026-03-31' })
+        .expect(201);
+      expect(res.body.period_start).toBe('2026-03-01');
+      expect(res.body.period_end).toBe('2026-03-31');
+      id = res.body.id;
+    });
+
+    it('mengubah periode lewat PATCH → 200', async () => {
+      const res = await api()
+        .patch(`/api/invoices/${id}`)
+        .set(auth(operatorToken))
+        .send({ period_start: '2026-04-01', period_end: '2026-04-30' })
+        .expect(200);
+      expect(res.body.period_start).toBe('2026-04-01');
+      expect(res.body.period_end).toBe('2026-04-30');
+    });
+
+    it('periode hanya satu ujung ditolak → 400', async () => {
+      await api()
+        .post('/api/invoices')
+        .set(auth(adminToken))
+        .send({ ...validPayload, period_start: '2026-03-01' })
+        .expect(400);
+    });
+
+    it('periode akhir sebelum awal ditolak → 400', async () => {
+      const res = await api()
+        .post('/api/invoices')
+        .set(auth(adminToken))
+        .send({ ...validPayload, period_start: '2026-03-31', period_end: '2026-03-01' })
+        .expect(400);
+      expect(res.body.message).toMatch(/periode akhir/i);
+    });
+
+    it('periode bukan format YYYY-MM-DD ditolak → 400', async () => {
+      await api()
+        .post('/api/invoices')
+        .set(auth(adminToken))
+        .send({ ...validPayload, period_start: '2026-03-01T00:00:00Z', period_end: '2026-03-31' })
+        .expect(400);
+    });
+  });
+
+  describe('pembatalan tagihan (void)', () => {
+    let id: number;
+
+    beforeAll(async () => {
+      const res = await api()
+        .post('/api/invoices')
+        .set(auth(adminToken))
+        .send({ ...validPayload, period_start: '2026-05-01', period_end: '2026-05-31' })
+        .expect(201);
+      id = res.body.id;
+    });
+
+    it('alasan wajib: tanpa alasan → 400', async () => {
+      await api().post(`/api/invoices/${id}/void`).set(auth(adminToken)).send({}).expect(400);
+      await api()
+        .post(`/api/invoices/${id}/void`)
+        .set(auth(adminToken))
+        .send({ reason: '   ' })
+        .expect(400);
+    });
+
+    it('resseler tidak boleh membatalkan tagihan → 403', async () => {
+      await api()
+        .post(`/api/invoices/${id}/void`)
+        .set(auth(resellerToken))
+        .send({ reason: 'coba batalkan' })
+        .expect(403);
+    });
+
+    it('operator membatalkan dengan alasan → 200, status void, periode tetap', async () => {
+      const res = await api()
+        .post(`/api/invoices/${id}/void`)
+        .set(auth(operatorToken))
+        .send({ reason: 'salah input periode' })
+        .expect(200);
+
+      expect(res.body.status).toBe('void');
+      expect(res.body.void_reason).toBe('salah input periode');
+      expect(res.body.period_start).toBe('2026-05-01');
+      expect(res.body.period_end).toBe('2026-05-31');
+    });
+
+    it('tagihan void tidak bisa diedit → 409', async () => {
+      await api()
+        .patch(`/api/invoices/${id}`)
+        .set(auth(adminToken))
+        .send({ amount: 1000 })
+        .expect(409);
+    });
+
+    it('void kedua ditolak → 409', async () => {
+      await api()
+        .post(`/api/invoices/${id}/void`)
+        .set(auth(adminToken))
+        .send({ reason: 'ulangi void' })
+        .expect(409);
+    });
+
+    it('tagihan void tetap terbaca dan tidak bisa dihapus → 200 / 409', async () => {
+      const detail = await api().get(`/api/invoices/${id}`).set(auth(adminToken)).expect(200);
+      expect(detail.body.status).toBe('void');
+      await api().delete(`/api/invoices/${id}`).set(auth(adminToken)).expect(409);
+    });
+
+    it('riwayat aktivitas tagihan memuat event audit → 200', async () => {
+      const res = await api().get(`/api/invoices/${id}/events`).set(auth(adminToken)).expect(200);
+      expect(Array.isArray(res.body)).toBe(true);
+      expect(res.body[0]).toMatchObject({ entity_type: 'invoice', action: 'INVOICE_CREATED' });
+    });
+
+    it('riwayat tagihan yang tidak ada → 404', async () => {
+      await api().get('/api/invoices/999999/events').set(auth(adminToken)).expect(404);
     });
   });
 
@@ -170,10 +321,14 @@ describe('Invoices (e2e)', () => {
   });
 
   describe('ID tidak ditemukan', () => {
-    it('get / patch / delete → 404', async () => {
+    it('get / patch → 404', async () => {
       await api().get('/api/invoices/999999').set(auth(adminToken)).expect(404);
       await api().patch('/api/invoices/999999').set(auth(adminToken)).send({ amount: 10 }).expect(404);
-      await api().delete('/api/invoices/999999').set(auth(adminToken)).expect(404);
+    });
+
+    // DELETE tidak lagi melihat ID: operasinya dilarang untuk tagihan mana pun.
+    it('delete → 409 (hapus permanen tidak tersedia)', async () => {
+      await api().delete('/api/invoices/999999').set(auth(adminToken)).expect(409);
     });
   });
 });

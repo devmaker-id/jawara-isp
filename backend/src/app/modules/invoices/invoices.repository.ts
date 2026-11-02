@@ -2,13 +2,28 @@ import { Injectable } from '@nestjs/common';
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { DatabaseService } from '../../database/database.service';
 import { ownerFilter, RequestScope, SYSTEM_SCOPE } from '../auth/request-scope';
+import { writeFinanceEvent } from '../finance/finance-events.repository';
 import { CreateInvoiceDto, InvoiceStatus, UpdateInvoiceDto } from './dto/invoice.dto';
+import { invoiceSnapshot, validateInvoicePeriod } from './invoices.domain';
 
 export type InvoiceErrorCode =
   | 'NOT_FOUND'
   | 'CUSTOMER_NOT_FOUND'
   | 'PAID_INVOICE_LOCKED'
-  | 'INVALID_STATUS';
+  | 'INVALID_STATUS'
+  | 'INVALID_PERIOD'
+  | 'INVOICE_ALREADY_VOID'
+  | 'INVOICE_HAS_PAYMENTS'
+  | 'DELETE_FORBIDDEN';
+
+// Pelaku perubahan tagihan. Disimpan ke audit_logs sebagai snapshot, mengikuti
+// pola PaymentsService (migrasi 002: audit bertahan walau akun dihapus).
+export interface InvoiceActor {
+  id: number;
+  email: string;
+  name: string;
+  ip: string;
+}
 
 // Kesalahan domain tagihan: service menerjemahkannya menjadi respons HTTP.
 // Dilempar dari dalam transaksi agar rollback terjadi sebelum respons dikirim.
@@ -33,8 +48,13 @@ export interface Invoice {
   amount: number;
   status: InvoiceStatus;
   due_date: string;
+  /** Periode penagihan; null untuk tagihan lama/non-layanan. */
+  period_start: string | null;
+  period_end: string | null;
   paid_date: string | null;
   description: string;
+  voided_at: Date | null;
+  void_reason: string | null;
   created_at: Date;
 }
 
@@ -55,8 +75,12 @@ interface InvoiceRow extends RowDataPacket {
   amount: number | string;
   status: string;
   due_date: Date | string;
+  period_start: Date | string | null;
+  period_end: Date | string | null;
   paid_date: Date | string | null;
   description: string;
+  voided_at: Date | null;
+  void_reason: string | null;
   created_at: Date;
 }
 
@@ -65,7 +89,7 @@ interface InvoiceRow extends RowDataPacket {
 const STATUS_EXPR = `CASE WHEN status = 'unpaid' AND due_date < CURDATE() THEN 'overdue' ELSE status END AS status`;
 
 const COLUMNS = `id, invoice_number, customer_id, username, customer_name, amount, ${STATUS_EXPR},
-  due_date, paid_date, description, created_at`;
+  due_date, period_start, period_end, paid_date, description, voided_at, void_reason, created_at`;
 
 function toDateOnly(value: Date | string | null): string | null {
   if (value === null || value === undefined) return null;
@@ -86,15 +110,19 @@ function toInvoice(row: InvoiceRow): Invoice {
     amount: typeof row.amount === 'string' ? Number(row.amount) : row.amount,
     status: row.status as InvoiceStatus,
     due_date: toDateOnly(row.due_date) ?? '',
+    period_start: toDateOnly(row.period_start),
+    period_end: toDateOnly(row.period_end),
     paid_date: toDateOnly(row.paid_date),
     description: row.description,
+    voided_at: row.voided_at ?? null,
+    void_reason: row.void_reason ?? null,
     created_at: row.created_at,
   };
 }
 
 export interface InvoiceQuery {
   search?: string;
-  status?: 'unpaid' | 'paid' | 'overdue' | 'partial';
+  status?: 'unpaid' | 'paid' | 'overdue' | 'partial' | 'void';
   page?: number;
   limit?: number;
 }
@@ -186,6 +214,8 @@ export class InvoicesRepository {
 
   // Ringkasan ikut ter-scope: angka reseller tidak boleh memuat tagihan
   // reseller lain, dan total tidak boleh membocorkan keberadaan data itu.
+  // Tagihan void (migrasi 032) tidak dihitung sebagai uang: dikeluarkan dari
+  // total maupun hitungan status.
   async summary(scope: RequestScope = SYSTEM_SCOPE): Promise<InvoiceSummary> {
     const owner = ownerFilter(scope, 'invoices');
     const where = owner.sql ? ` WHERE ${owner.sql}` : '';
@@ -195,7 +225,8 @@ export class InvoicesRepository {
          SUM(s = 'paid') AS paid,
          SUM(s = 'unpaid') AS unpaid,
          SUM(s = 'overdue') AS overdue
-       FROM (SELECT amount, ${STATUS_EXPR.replace(' AS status', '')} AS s FROM invoices${where}) AS t`,
+       FROM (SELECT amount, ${STATUS_EXPR.replace(' AS status', '')} AS s FROM invoices${where}) AS t
+       WHERE s <> 'void'`,
       owner.params,
     );
     return {
@@ -206,14 +237,18 @@ export class InvoicesRepository {
     };
   }
 
-  async create(dto: CreateInvoiceDto): Promise<Invoice> {
+  async create(dto: CreateInvoiceDto, actor: InvoiceActor): Promise<Invoice> {
+    const periodError = validateInvoicePeriod(dto.period_start, dto.period_end);
+    if (periodError) throw new InvoiceError('INVALID_PERIOD', periodError);
+
     return this.db.withTransaction(async (conn) => {
       const customerName = await this.customerName(conn, dto.customer_id);
       const invoiceNumber = await this.nextInvoiceNumber(conn);
 
       const [result] = await conn.query<ResultSetHeader>(
-        `INSERT INTO invoices (invoice_number, customer_id, username, customer_name, amount, status, due_date, description)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO invoices (invoice_number, customer_id, username, customer_name, amount, status, due_date,
+                               period_start, period_end, description)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           invoiceNumber,
           dto.customer_id,
@@ -222,18 +257,33 @@ export class InvoicesRepository {
           dto.amount,
           dto.status ?? InvoiceStatus.UNPAID,
           dto.due_date,
+          dto.period_start ?? null,
+          dto.period_end ?? null,
           dto.description ?? '',
         ],
       );
 
-      return this.requireById(conn, result.insertId);
+      const created = await this.requireById(conn, result.insertId);
+      // Event audit satu transaksi dengan INSERT: gagal audit = gagal tagihan.
+      await writeFinanceEvent(conn, {
+        entityType: 'invoice',
+        entityId: created.id,
+        action: 'INVOICE_CREATED',
+        after: invoiceSnapshot(created),
+        actor,
+      });
+      return created;
     });
   }
 
-  async update(id: number, dto: UpdateInvoiceDto): Promise<Invoice> {
+  async update(id: number, dto: UpdateInvoiceDto, actor: InvoiceActor): Promise<Invoice> {
     return this.db.withTransaction(async (conn) => {
       const current = await this.lock(conn, id);
 
+      // Tagihan void bersifat final: tidak boleh diedit lagi.
+      if (current.status === InvoiceStatus.VOID) {
+        throw new InvoiceError('INVOICE_ALREADY_VOID', 'Tagihan sudah dibatalkan (void)');
+      }
       // Tagihan lunas adalah catatan pembayaran: nominal dan jatuh tempo tidak
       // boleh diubah lagi (hanya deskripsi).
       if (current.status === InvoiceStatus.PAID && (dto.amount !== undefined || dto.due_date !== undefined)) {
@@ -248,6 +298,18 @@ export class InvoicesRepository {
           'Status lunas/parsial hanya dapat diatur melalui endpoint pembayaran',
         );
       }
+      if (dto.status === InvoiceStatus.VOID) {
+        throw new InvoiceError('INVALID_STATUS', 'Gunakan endpoint void untuk membatalkan tagihan');
+      }
+
+      // Periode divalidasi sebagai satu kesatuan: nilai yang tidak dikirim
+      // memakai nilai tersimpan, jadi mengubah salah satu ujung saja tetap
+      // diperiksa terhadap pasangannya.
+      const nextPeriodStart =
+        dto.period_start !== undefined ? dto.period_start : current.period_start;
+      const nextPeriodEnd = dto.period_end !== undefined ? dto.period_end : current.period_end;
+      const periodError = validateInvoicePeriod(nextPeriodStart, nextPeriodEnd);
+      if (periodError) throw new InvoiceError('INVALID_PERIOD', periodError);
 
       const fields: string[] = [];
       const params: unknown[] = [];
@@ -268,6 +330,14 @@ export class InvoicesRepository {
         fields.push('due_date = ?');
         params.push(dto.due_date);
       }
+      if (dto.period_start !== undefined) {
+        fields.push('period_start = ?');
+        params.push(dto.period_start ?? null);
+      }
+      if (dto.period_end !== undefined) {
+        fields.push('period_end = ?');
+        params.push(dto.period_end ?? null);
+      }
       if (dto.description !== undefined) {
         fields.push('description = ?');
         params.push(dto.description);
@@ -282,13 +352,74 @@ export class InvoicesRepository {
         await conn.query(`UPDATE invoices SET ${fields.join(', ')} WHERE id = ?`, params);
       }
 
-      return this.requireById(conn, id);
+      const updated = await this.requireById(conn, id);
+      await writeFinanceEvent(conn, {
+        entityType: 'invoice',
+        entityId: id,
+        action: 'INVOICE_UPDATED',
+        before: invoiceSnapshot(current),
+        after: invoiceSnapshot(updated),
+        actor,
+      });
+      return updated;
     });
   }
 
-  async remove(id: number): Promise<boolean> {
-    const result = await this.db.execute('DELETE FROM invoices WHERE id = ?', [id]);
-    return result.affectedRows > 0;
+  // Pembatalan resmi menggantikan DELETE. Idempoten dalam arti: pembatalan
+  // kedua ditolak dengan pesan jelas, bukan diam-diam diabaikan.
+  async void(id: number, reason: string, actor: InvoiceActor): Promise<Invoice> {
+    return this.db.withTransaction(async (conn) => {
+      const current = await this.lock(conn, id);
+      if (current.status === InvoiceStatus.VOID) {
+        throw new InvoiceError(
+          'INVOICE_ALREADY_VOID',
+          `Tagihan ${current.invoice_number} sudah dibatalkan sebelumnya`,
+        );
+      }
+
+      // Uang yang sudah masuk tidak boleh hilang karena tagihannya dibatalkan.
+      // Koreksi dilakukan lewat void pembayaran (mekanisme yang sudah ada).
+      const [rows] = await conn.query<(RowDataPacket & { n: number | string })[]>(
+        `SELECT COUNT(*) AS n FROM payments WHERE invoice_id = ? AND voided_at IS NULL`,
+        [id],
+      );
+      if (Number(rows[0]?.n ?? 0) > 0) {
+        throw new InvoiceError(
+          'INVOICE_HAS_PAYMENTS',
+          'Tagihan masih punya pembayaran sah. Batalkan (void) pembayarannya lebih dulu, ' +
+            'lalu ulangi pembatalan tagihan.',
+        );
+      }
+
+      await conn.query(
+        `UPDATE invoices
+            SET status = ?, voided_at = NOW(), voided_by = ?, void_reason = ?
+          WHERE id = ?`,
+        [InvoiceStatus.VOID, actor.id, reason.trim(), id],
+      );
+
+      const voided = await this.requireById(conn, id);
+      await writeFinanceEvent(conn, {
+        entityType: 'invoice',
+        entityId: id,
+        action: 'INVOICE_VOIDED',
+        before: invoiceSnapshot(current),
+        after: invoiceSnapshot(voided),
+        reason,
+        actor,
+      });
+      return voided;
+    });
+  }
+
+  // DELETE fisik dihapus dari alur aplikasi: nomor tagihan tidak boleh bolong
+  // dan relasi ke pembayaran tidak boleh lenyap tanpa jejak.
+  async remove(): Promise<never> {
+    throw new InvoiceError(
+      'DELETE_FORBIDDEN',
+      'Tagihan tidak dapat dihapus permanen. Gunakan pembatalan (void) dengan alasan ' +
+        'agar nomor tagihan dan riwayatnya tetap tersimpan.',
+    );
   }
 
   private async select(conn: PoolConnection, id: number, lock: boolean): Promise<Invoice | null> {

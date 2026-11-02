@@ -16,7 +16,7 @@ import {
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
-import { CreateInvoiceDto, ListInvoicesQueryDto, UpdateInvoiceDto, PayInvoiceDto } from './dto/invoice.dto';
+import { CreateInvoiceDto, ListInvoicesQueryDto, UpdateInvoiceDto, PayInvoiceDto, VoidInvoiceDto } from './dto/invoice.dto';
 import { InvoicesService } from './invoices.service';
 import { AuthenticatedRequest, JwtAuthGuard } from '../auth/auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -24,6 +24,22 @@ import { Roles } from '../auth/roles.decorator';
 import { RequestScope, Scope } from '../auth/request-scope';
 import { PaymentsService } from '../payments/payments.service';
 import { PaymentActor } from '../payments/payments.repository';
+import { InvoiceActor } from './invoices.repository';
+
+// Pelaku dari token (bukan body). Dipakai untuk audit finance_events: id/nama/
+// email dari akun yang login, IP mengikuti pola PaymentsService.
+function actorOf(req: AuthenticatedRequest): InvoiceActor {
+  const account = req.account;
+  if (!account) {
+    throw new UnauthorizedException('Pelaku perubahan tagihan tidak teridentifikasi');
+  }
+  return {
+    id: account.id,
+    email: account.email,
+    name: account.name,
+    ip: req.ip ?? req.socket?.remoteAddress ?? 'tidak-diketahui',
+  };
+}
 
 // Tagihan berisi data finansial seluruh pelanggan. Resseler belum punya
 // relasi kepemilikan, jadi tidak diberi akses. Penghapusan tagihan
@@ -73,8 +89,8 @@ export class InvoicesController {
   @Post()
   @Roles('admin', 'operator')
   @HttpCode(HttpStatus.CREATED)
-  create(@Body() createDto: CreateInvoiceDto) {
-    return this.invoicesService.create(createDto);
+  create(@Body() createDto: CreateInvoiceDto, @Req() req: AuthenticatedRequest) {
+    return this.invoicesService.create(createDto, actorOf(req));
   }
 
   // Jalur lama dipertahankan demi kompatibilitas UI/klien, tetapi TIDAK lagi
@@ -103,13 +119,39 @@ export class InvoicesController {
 
   @Patch(':id')
   @Roles('admin', 'operator')
-  update(@Param('id', ParseIntPipe) id: number, @Body() updateDto: UpdateInvoiceDto) {
-    return this.invoicesService.update(id, updateDto);
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() updateDto: UpdateInvoiceDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.invoicesService.update(id, updateDto, actorOf(req));
   }
 
+  // Pembatalan resmi. Alasan wajib (validasi DTO) dan tercatat di finance_events.
+  @Post(':id/void')
+  @Roles('admin', 'operator')
+  @HttpCode(HttpStatus.OK)
+  void(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: VoidInvoiceDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.invoicesService.void(id, dto.reason, actorOf(req));
+  }
+
+  // Riwayat aktivitas keuangan tagihan (finance_events): waktu, aktor,
+  // tindakan, nilai sebelum/sesudah, dan alasan.
+  @Get(':id/events')
+  @Roles('admin', 'operator', 'resseler')
+  events(@Param('id', ParseIntPipe) id: number, @Scope() scope: RequestScope) {
+    return this.invoicesService.events(id, scope);
+  }
+
+  // Jalur lama: selalu ditolak 409. Nomor tagihan & riwayat pembayaran tidak
+  // boleh lenyap; gunakan POST :id/void.
   @Delete(':id')
   @Roles('admin')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.invoicesService.remove(id);
+  remove() {
+    return this.invoicesService.remove();
   }
 }

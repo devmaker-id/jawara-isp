@@ -390,8 +390,8 @@ export class DashboardService {
       SELECT
         (SELECT COUNT(*) FROM customers) AS total_customers,
         (SELECT COUNT(*) FROM packages WHERE is_active = 1) AS active_packages,
-        (SELECT COUNT(*) FROM invoices) AS total_invoices,
-        (SELECT COUNT(*) FROM invoices WHERE status <> 'paid') AS unpaid_count,
+        (SELECT COUNT(*) FROM invoices WHERE status <> 'void') AS total_invoices,
+        (SELECT COUNT(*) FROM invoices WHERE status NOT IN ('paid', 'void')) AS unpaid_count,
         (SELECT COALESCE(SUM(i.amount - COALESCE(p.paid, 0)), 0)
            FROM invoices i
            LEFT JOIN (
@@ -400,7 +400,7 @@ export class DashboardService {
               WHERE voided_at IS NULL
               GROUP BY invoice_id
            ) p ON p.invoice_id = i.id
-          WHERE i.status <> 'paid') AS unpaid_total,
+          WHERE i.status NOT IN ('paid', 'void')) AS unpaid_total,
         (SELECT COALESCE(SUM(amount), 0) FROM payments
           WHERE voided_at IS NULL AND DATE(paid_at) = CURDATE()) AS today_revenue,
         (SELECT COUNT(*) FROM payments
