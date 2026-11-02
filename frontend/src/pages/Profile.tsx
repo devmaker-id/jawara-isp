@@ -10,8 +10,17 @@ interface ProfileForm {
   address: string;
 }
 
+/** Pesan error dari server (Nest: { message }, controller lama: { error }). */
+const serverMessage = (error: unknown, fallback: string): string => {
+  const data = (error as { response?: { data?: { message?: unknown; error?: unknown } } })?.response?.data;
+  const message = data?.message ?? data?.error;
+  if (Array.isArray(message)) return message.join(', ');
+  if (typeof message === 'string' && message.trim().length > 0) return message;
+  return fallback;
+};
+
 const Profile: React.FC = () => {
-  const { user, logout } = useAuth();
+  const { user, logout, refreshUser } = useAuth();
   const navigate = useNavigate();
 
   const [form, setForm] = useState<ProfileForm>({
@@ -57,13 +66,15 @@ const Profile: React.FC = () => {
       const res = await api.post('/api/auth/profile', { name: form.name, phone: form.phone, address: form.address });
       if (!res.data.ok) {
         setStatus({ type: 'error', text: res.data.error || 'Gagal menyimpan profil' });
-        return;
+      } else {
+        setStatus({ type: 'success', text: 'Profil berhasil diperbarui' });
+        await refreshUser();
       }
-      setStatus({ type: 'success', text: 'Profil berhasil diperbarui' });
-    } catch {
-      setStatus({ type: 'error', text: 'Gagal menghubungi server' });
+    } catch (error) {
+      setStatus({ type: 'error', text: serverMessage(error, 'Gagal menghubungi server') });
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -107,15 +118,33 @@ const Profile: React.FC = () => {
       });
       if (!res.data.ok) {
         setPhotoStatus({ type: 'error', text: res.data.error || 'Gagal upload foto' });
-        return;
+      } else {
+        setPhotoStatus({ type: 'success', text: 'Foto profil berhasil diperbarui' });
+        setPhotoFile(null);
+        setPhotoPreview(res.data.avatar ?? null);
+        await refreshUser();
       }
-      setPhotoStatus({ type: 'success', text: 'Foto profil berhasil diperbarui' });
+    } catch (error) {
+      setPhotoStatus({ type: 'error', text: serverMessage(error, 'Gagal menghubungi server') });
+    } finally {
+      setPhotoLoading(false);
+    }
+  };
+
+  const handlePhotoRemove = async () => {
+    setPhotoLoading(true);
+    setPhotoStatus(null);
+    try {
+      await api.delete('/api/auth/avatar');
       setPhotoFile(null);
       setPhotoPreview(null);
-    } catch {
-      setPhotoStatus({ type: 'error', text: 'Gagal menghubungi server' });
+      setPhotoStatus({ type: 'success', text: 'Foto profil dihapus' });
+      await refreshUser();
+    } catch (error) {
+      setPhotoStatus({ type: 'error', text: serverMessage(error, 'Gagal menghapus foto') });
+    } finally {
+      setPhotoLoading(false);
     }
-    setPhotoLoading(false);
   };
 
   const handlePasswordSave = async () => {
@@ -134,17 +163,22 @@ const Profile: React.FC = () => {
       const res = await api.post('/api/auth/password', {
         currentPassword: passForm.currentPassword,
         newPassword: passForm.newPassword,
+        // Backend membandingkan newPassword dengan confirmPassword; tanpa ini
+        // setiap perubahan password ditolak "konfirmasi tidak cocok".
+        confirmPassword: passForm.confirmPassword,
       });
       if (!res.data.ok) {
         setPassStatus({ type: 'error', text: res.data.error || 'Gagal mengupdate password' });
-        return;
+      } else {
+        setPassStatus({ type: 'success', text: 'Password berhasil diperbarui' });
+        setPassForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
       }
-      setPassStatus({ type: 'success', text: 'Password berhasil diperbarui' });
-      setPassForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
-    } catch {
-      setPassStatus({ type: 'error', text: 'Gagal menghubungi server' });
+    } catch (error) {
+      setPassStatus({ type: 'error', text: serverMessage(error, 'Gagal menghubungi server') });
+    } finally {
+      // Tanpa finally, tombol tetap "Menyimpan..." setelah server menolak.
+      setPassLoading(false);
     }
-    setPassLoading(false);
   };
 
   // Guard: only authenticated users can access
@@ -186,8 +220,8 @@ const Profile: React.FC = () => {
       <section className="bg-slate-800/40 rounded-xl border border-slate-700/50 p-5 space-y-4">
         <div className="flex items-center gap-4">
           <div className="w-24 h-24 rounded-full overflow-hidden border-2 border-slate-600 bg-slate-700 flex-shrink-0">
-            {photoPreview ? (
-              <img src={photoPreview} alt="Profil" className="w-full h-full object-cover" />
+            {photoPreview || user.avatar ? (
+              <img src={photoPreview ?? user.avatar ?? ''} alt="Profil" className="w-full h-full object-cover" />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-slate-500">
                 <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -211,12 +245,13 @@ const Profile: React.FC = () => {
             )}
           </div>
         </div>
-        {photoPreview && (
+        {(photoPreview || user.avatar) && (
           <button
             type="button"
             onClick={() => {
               setPhotoFile(null);
               setPhotoPreview(null);
+              if (user.avatar) void handlePhotoRemove();
             }}
             className="text-xs text-slate-500 hover:text-slate-300 transition"
           >

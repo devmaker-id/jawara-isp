@@ -70,6 +70,23 @@ interface VoucherProfileRow {
   total: number;
 }
 
+interface RevenueSnapshot {
+  today: string;
+  month_start: string;
+  today_revenue: number;
+  today_payments: number;
+  today_vouchers: number;
+  today_voucher_cost: number;
+  today_margin: number;
+  month_revenue: number;
+  month_payments: number;
+  month_vouchers: number;
+  month_voucher_cost: number;
+  month_margin: number;
+  /** 'all' = admin melihat semua pemilik; 'own' = hanya data akun ini. */
+  scope: 'all' | 'own';
+}
+
 interface DashboardData {
   total_customers: number;
   active_packages: number;
@@ -78,6 +95,7 @@ interface DashboardData {
   unpaid_total: number;
   today_revenue: number;
   today_payments: number;
+  revenue: RevenueSnapshot;
   server: ServerMetrics;
   online: OnlineCounts;
   auth: AuthHealth;
@@ -183,12 +201,35 @@ const Dashboard: React.FC = () => {
           </div>
 
           <div className="mt-3 grid gap-3 sm:grid-cols-3">
+            {/* Pendapatan = uang masuk dari tagihan DAN penjualan voucher.
+                Cakupan mengikuti akun: admin melihat semua pemilik, operator
+                hanya transaksi yang ia catat/miliki. */}
             <Card>
-              <p className="text-xs text-slate-400">Pendapatan hari ini</p>
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-xs text-slate-400">Pendapatan hari ini</p>
+                <span className="rounded bg-slate-700/60 px-1.5 py-0.5 text-[10px] text-slate-300">
+                  {data.revenue.scope === 'all' ? 'semua pemilik' : 'milik Anda'}
+                </span>
+              </div>
               <p className="mt-1 text-lg font-semibold text-emerald-300">
-                {rupiah(data.today_revenue)}
+                {rupiah(data.revenue.today_revenue)}
               </p>
-              <p className="text-[11px] text-slate-500">{data.today_payments} pembayaran</p>
+              <div className="mt-1 space-y-0.5 text-[11px] text-slate-500">
+                <p>Tagihan: {rupiah(data.revenue.today_payments)}</p>
+                <p>
+                  Voucher: {rupiah(data.revenue.today_vouchers)}
+                  <span className="ml-1 text-slate-600">
+                    (laba {rupiah(data.revenue.today_margin)})
+                  </span>
+                </p>
+                <p className="pt-1 text-slate-400">
+                  Bulan ini {rupiah(data.revenue.month_revenue)}
+                  <span className="text-slate-600">
+                    {' '}
+                    · voucher {rupiah(data.revenue.month_vouchers)}
+                  </span>
+                </p>
+              </div>
             </Card>
             <Card>
               <p className="text-xs text-slate-400">Online hotspot</p>

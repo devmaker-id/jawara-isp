@@ -21,6 +21,7 @@ import MikrotikHotspot from './pages/mikrotik/Hotspot';
 import MikrotikPpp from './pages/mikrotik/Ppp';
 import MikrotikRouting from './pages/mikrotik/Routing';
 import MikrotikLog from './pages/mikrotik/Log';
+import OnlineSessions from './pages/sesi/OnlineSessions';
 import OltDevices from './pages/olt/Devices';
 import OltOnu from './pages/olt/Onu';
 import RadiusRingkasan from './pages/freeradius/Ringkasan';
@@ -37,6 +38,32 @@ import LayananPpp from './pages/layanan/ServiceProfile';
 import VoucherManagement from './pages/voucher/VoucherManagement';
 import ToolsImport from './pages/tools/Import';
 import ToolsExport from './pages/tools/Export';
+
+/**
+ * Halaman yang hanya boleh dibuka role tertentu.
+ *
+ * Menyembunyikan menu saja tidak cukup: alamatnya masih bisa diketik langsung.
+ * Backend tetap menolak (403), tetapi di sini pengguna dikembalikan ke halaman
+ * yang memang haknya — bukan melihat halaman kosong berisi pesan galat.
+ */
+const RoleRoute: React.FC<{ roles: string[]; children: React.ReactNode }> = ({
+  roles,
+  children,
+}) => {
+  const { user, loading } = useAuth();
+  if (loading) {
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <div className="h-12 w-12 animate-spin rounded-full border-b-2 border-cyan-400"></div>
+      </div>
+    );
+  }
+  if (!user) return <Navigate to="/login" replace />;
+  if (!roles.includes(user.role)) {
+    return <Navigate to={user.role === 'resseler' ? '/layanan/hotspot' : '/'} replace />;
+  }
+  return <>{children}</>;
+};
 
 const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading } = useAuth();
@@ -202,6 +229,14 @@ const AppContent: React.FC = () => {
             }
           />
           <Route
+            path="/sesi"
+            element={
+              <PrivateRoute>
+                <OnlineSessions />
+              </PrivateRoute>
+            }
+          />
+          <Route
             path="/mikrotik/log"
             element={
               <PrivateRoute>
@@ -212,17 +247,17 @@ const AppContent: React.FC = () => {
           <Route
             path="/olt"
             element={
-              <PrivateRoute>
+              <RoleRoute roles={['admin', 'operator']}>
                 <OltDevices />
-              </PrivateRoute>
+              </RoleRoute>
             }
           />
           <Route
             path="/olt/onu"
             element={
-              <PrivateRoute>
+              <RoleRoute roles={['admin', 'operator']}>
                 <OltOnu />
-              </PrivateRoute>
+              </RoleRoute>
             }
           />
           <Route

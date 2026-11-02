@@ -18,6 +18,50 @@
   --danger: #f87171;
   --drawer-width: 300px;
   --drawer-max-width: 320px;
+
+  /* Skala slate tema malam = nilai asli Tailwind. Dipakai tailwind.config.js
+     lewat rgb(var(--slate-N) / <alpha-value>). */
+  --slate-50: 248 250 252;
+  --slate-100: 241 245 249;
+  --slate-200: 226 232 240;
+  --slate-300: 203 213 225;
+  --slate-400: 148 163 184;
+  --slate-500: 100 116 139;
+  --slate-600: 71 85 105;
+  --slate-700: 51 65 85;
+  --slate-800: 30 41 59;
+  --slate-900: 15 23 42;
+  --slate-950: 2 6 23;
+  color-scheme: dark;
+}
+
+/* ===== Tema siang =====
+   Skala slate dibalik: 900 (latar halaman) jadi terang, 800 (kartu) jadi putih,
+   dan teks terang (100-300) jadi gelap. Aksen hijau/kuning/merah digelapkan
+   supaya tetap lolos kontras di latar putih. */
+html[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f1f5f9;
+  --card: #ffffff;
+  --card-hover: #f8fafc;
+  --border: #cbd5e1;
+  --text: #0f172a;
+  --text-muted: #475569;
+  /* Aksen utama digelapkan supaya teks putih di atasnya tetap terbaca. */
+  --primary: #0e7490;
+  --brand-primary: #0e7490;
+
+  --slate-50: 15 23 42;
+  --slate-100: 15 23 42;
+  --slate-200: 30 41 59;
+  --slate-300: 51 65 85;
+  --slate-400: 71 85 105;
+  --slate-500: 71 85 105;
+  --slate-600: 100 116 139;
+  --slate-700: 203 213 225;
+  --slate-800: 255 255 255;
+  --slate-900: 241 245 249;
+  --slate-950: 255 255 255;
 }
 
 @media (max-width: 767.98px) {
@@ -92,4 +136,187 @@ body {
   .page-container {
     padding-inline: 32px;
   }
+}
+
+/* ===== Koreksi warna aksen pada tema siang =====
+   Skala slate sudah dibalik lewat variable; bagian ini hanya menyesuaikan
+   teks terang dan aksen yang akan tenggelam di latar putih. */
+html[data-theme='light'] .text-white {
+  color: #0f172a;
+}
+
+/* Teks putih di atas tombol/lencana berwarna harus tetap putih. */
+html[data-theme='light'] [class*='bg-cyan-5'].text-white,
+html[data-theme='light'] [class*='bg-cyan-6'].text-white,
+html[data-theme='light'] [class*='bg-emerald-5'].text-white,
+html[data-theme='light'] [class*='bg-emerald-6'].text-white,
+html[data-theme='light'] [class*='bg-red-5'].text-white,
+html[data-theme='light'] [class*='bg-red-6'].text-white,
+html[data-theme='light'] [class*='bg-rose-5'].text-white,
+html[data-theme='light'] [class*='bg-amber-5'].text-white,
+html[data-theme='light'] [class*='bg-indigo-5'].text-white,
+html[data-theme='light'] [class*='bg-blue-5'].text-white,
+html[data-theme='light'] [class*='bg-purple-5'].text-white,
+html[data-theme='light'] [class*='bg-gradient'].text-white,
+html[data-theme='light'] [class*='bg-gradient'] .text-white,
+html[data-theme='light'] [class*='bg-brand'].text-white,
+/* ikon di dalam tombol berwarna */
+html[data-theme='light'] [class*='bg-cyan-5'] .text-white,
+html[data-theme='light'] [class*='bg-cyan-6'] .text-white,
+html[data-theme='light'] [class*='bg-emerald-5'] .text-white,
+html[data-theme='light'] [class*='bg-red-5'] .text-white,
+html[data-theme='light'] [class*='bg-rose-5'] .text-white,
+html[data-theme='light'] [class*='bg-amber-5'] .text-white {
+  color: #ffffff;
+}
+
+/* hover:text-white pada tombol ikon: jangan sampai hilang di latar terang. */
+html[data-theme='light'] .hover\:text-white:hover {
+  color: #0f172a;
+}
+
+html[data-theme='light'] .text-emerald-200,
+html[data-theme='light'] .text-emerald-300,
+html[data-theme='light'] .text-emerald-400 {
+  color: #065f46;
+}
+
+html[data-theme='light'] .text-cyan-200,
+html[data-theme='light'] .text-cyan-300,
+html[data-theme='light'] .text-cyan-400,
+html[data-theme='light'] .text-cyan-500 {
+  color: #155e75;
+}
+
+html[data-theme='light'] .text-amber-200,
+html[data-theme='light'] .text-amber-300,
+html[data-theme='light'] .text-amber-400 {
+  color: #92400e;
+}
+
+html[data-theme='light'] .text-red-300,
+html[data-theme='light'] .text-red-400 {
+  color: #991b1b;
+}
+
+html[data-theme='light'] .text-rose-100,
+html[data-theme='light'] .text-rose-200,
+html[data-theme='light'] .text-rose-300,
+html[data-theme='light'] .text-rose-400 {
+  color: #9f1239;
+}
+
+html[data-theme='light'] .text-orange-400 {
+  color: #9a3412;
+}
+
+/* ===== Kotak pesan (info/sukses/peringatan/galat) pada tema siang =====
+   Latar 500/10 di atas putih nyaris tak berwarna dan teks 100/200 jadi
+   pucat (mis. text-rose-200 = #fecdd3 di atas putih: tak terbaca). Di mode
+   siang pakai pasangan tint 100 + teks 800 + garis tepi 300 (kontras > 6:1)
+   tanpa mengubah kelas di komponen. */
+html[data-theme='light'] [class*='bg-emerald-500/10'] {
+  background-color: #d1fae5; /* emerald-100 */
+}
+
+html[data-theme='light'] [class*='bg-rose-500/10'] {
+  background-color: #ffe4e6; /* rose-100 */
+}
+
+html[data-theme='light'] [class*='bg-red-500/10'] {
+  background-color: #fee2e2; /* red-100 */
+}
+
+html[data-theme='light'] [class*='bg-amber-500/10'] {
+  background-color: #fef3c7; /* amber-100 */
+}
+
+html[data-theme='light'] [class*='bg-cyan-500/10'] {
+  background-color: #cffafe; /* cyan-100 */
+}
+
+html[data-theme='light'] [class*='bg-orange-500/10'] {
+  background-color: #ffedd5; /* orange-100 */
+}
+
+html[data-theme='light'] [class*='border-emerald-500/3'],
+html[data-theme='light'] [class*='border-emerald-500/4'] {
+  border-color: #6ee7b7; /* emerald-300 */
+}
+
+html[data-theme='light'] [class*='border-rose-500/3'],
+html[data-theme='light'] [class*='border-rose-500/4'] {
+  border-color: #fda4af; /* rose-300 */
+}
+
+html[data-theme='light'] [class*='border-red-500/3'],
+html[data-theme='light'] [class*='border-red-500/4'] {
+  border-color: #fca5a5; /* red-300 */
+}
+
+html[data-theme='light'] [class*='border-amber-500/3'],
+html[data-theme='light'] [class*='border-amber-500/4'] {
+  border-color: #fcd34d; /* amber-300 */
+}
+
+html[data-theme='light'] [class*='border-cyan-500/3'],
+html[data-theme='light'] [class*='border-cyan-500/4'] {
+  border-color: #67e8f9; /* cyan-300 */
+}
+
+html[data-theme='light'] [class*='border-orange-500/3'] {
+  border-color: #fdba74; /* orange-300 */
+}
+
+/* Scrim modal: kelas bg-slate-900/70 membaca skala slate yang dibalik di tema
+   siang, sehingga overlay jadi terang dan halaman di belakang tetap terlihat
+   aktif. Paksa gelap transparan. */
+html[data-theme='light'] [class*='bg-slate-900/70'] {
+  background-color: rgba(15, 23, 42, 0.5);
+}
+
+/* Garis tepi kartu/input dipertegas supaya tidak menyatu dengan latar terang. */
+html[data-theme='light'] [class*='border-slate-700'] {
+  border-color: #cbd5e1;
+}
+
+html[data-theme='light'] [class*='border-slate-600'] {
+  border-color: #b6c2d1;
+}
+
+html[data-theme='light'] .bg-slate-800 {
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+/* Kolom isian: beri tepi yang jelas (kecuali saat fokus, biar aksen tetap terlihat). */
+html[data-theme='light'] input:not(:focus),
+html[data-theme='light'] select:not(:focus),
+html[data-theme='light'] textarea:not(:focus) {
+  border-color: #b6c2d1;
+}
+
+html[data-theme='light'] ::placeholder,
+html[data-theme='light'] .placeholder-slate-400,
+html[data-theme='light'] .placeholder-slate-500 {
+  color: #64748b;
+}
+
+/* Lencana status: teks hijau/kuning dibuat lebih tua agar terbaca di latar pucat. */
+html[data-theme='light'] .text-emerald-500 {
+  color: #047857;
+}
+
+html[data-theme='light'] .text-amber-500 {
+  color: #92400e;
+}
+
+/* Tombol aksen solid: cyan terang terlalu muda untuk teks putih. */
+html[data-theme='light'] .bg-cyan-500,
+html[data-theme='light'] .bg-cyan-600 {
+  background-color: #0e7490;
+}
+
+html[data-theme='light'] .hover\:bg-cyan-400:hover,
+html[data-theme='light'] .hover\:bg-cyan-500:hover {
+  background-color: #155e75;
 }

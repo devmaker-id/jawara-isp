@@ -8,6 +8,8 @@ interface User {
   role: string;
   phone?: string;
   address?: string;
+  /** Path foto profil (`/api/uploads/...`); null bila belum ada. */
+  avatar?: string | null;
   createdAt: string;
 }
 
@@ -16,6 +18,8 @@ interface AuthContextType {
   token: string | null;
   login: (email: string, password: string) => Promise<boolean>;
   logout: () => void;
+  /** Baca ulang akun dari server (mis. setelah ubah profil/foto). */
+  refreshUser: () => Promise<User | null>;
   loading: boolean;
 }
 
@@ -46,6 +50,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     // sesi — pengguna tetap masuk dan diminta mencoba lagi, agar gangguan
     // server tidak mengeluarkan seluruh staf dari panel.
     api.get('/api/auth/me')
+      .then((response) => {
+        // Terapkan data akun terbaru (foto, nama, role) supaya sesi lama tidak
+        // menampilkan data basi dari localStorage.
+        if (response.data) {
+          setUser(response.data);
+          localStorage.setItem('user', JSON.stringify(response.data));
+        }
+      })
       .catch((error) => {
         if (classifySessionFailure(error) !== 'unauthenticated') return;
         localStorage.removeItem('token');
@@ -85,6 +97,19 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     // lewat router, jadi panel tidak perlu dimuat ulang.
   };
 
+  // Baca ulang akun dari server; dipakai setelah profil/foto diubah supaya
+  // header dan halaman lain langsung memakai data terbaru.
+  const refreshUser = async (): Promise<User | null> => {
+    try {
+      const response = await api.get<User>('/api/auth/me');
+      setUser(response.data);
+      localStorage.setItem('user', JSON.stringify(response.data));
+      return response.data;
+    } catch {
+      return null;
+    }
+  };
+
   // 401 dari request mana pun: akhiri sesi tanpa memuat ulang halaman.
   useEffect(() => {
     const onExpired = () => {
@@ -96,7 +121,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, loading }}>
+    <AuthContext.Provider value={{ user, token, login, logout, refreshUser, loading }}>
       {children}
     </AuthContext.Provider>
   );

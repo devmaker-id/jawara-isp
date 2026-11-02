@@ -98,6 +98,11 @@ const EMPTY: FormState = {
 const GroupProfile: React.FC = () => {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
+  // Perangkat MikroTik hanya dibutuhkan untuk provisioning, dan itu hak
+  // admin/operator. Reseller tidak boleh menggantungkan halaman ini pada
+  // endpoint perangkat: kalau tetap diminta, halamannya gagal total (403)
+  // padahal daftar group-nya sendiri boleh dibaca.
+  const canProvision = user?.role === 'admin' || user?.role === 'operator';
 
   const [rows, setRows] = useState<GroupRow[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
@@ -118,19 +123,23 @@ const GroupProfile: React.FC = () => {
     loadedOnce.current = true;
     setError(null);
     try {
-      const [groups, deviceList] = await Promise.all([
-        api.get<GroupRow[]>('/api/profiles/groups'),
-        // Endpoint perangkat membungkus daftar dalam { ready, rows }.
-        api.get<{ rows: Device[] }>('/api/mikrotik/devices'),
-      ]);
+      const groups = await api.get<GroupRow[]>('/api/profiles/groups');
       setRows(groups.data);
-      setDevices(deviceList.data.rows ?? []);
+
+      if (canProvision) {
+        // Endpoint perangkat membungkus daftar dalam { ready, rows }. Kegagalan
+        // di sini tidak boleh menggagalkan daftar group.
+        const deviceList = await api
+          .get<{ rows: Device[] }>('/api/mikrotik/devices')
+          .catch(() => ({ data: { rows: [] as Device[] } }));
+        setDevices(deviceList.data.rows ?? []);
+      }
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [canProvision]);
 
   useEffect(() => {
     void load();
@@ -551,7 +560,11 @@ const GroupProfile: React.FC = () => {
         </div>
       )}
 
-      {devices.length === 0 && !loading && (
+      {/* Peringatan ini hanya relevan bagi yang memang boleh membuat/mengubah
+          group profile. Reseller tidak punya izin `group.create` dan tidak
+          bisa membuka menu MikroTik, jadi baginya peringatan ini menyesatkan:
+          daftar perangkat memang tidak pernah diminta. */}
+      {canProvision && devices.length === 0 && !loading && (
         <div className="mt-4">
           <InfoNote tone="warn">
             Belum ada perangkat MikroTik terdaftar. Tambahkan di menu MikroTik → Perangkat

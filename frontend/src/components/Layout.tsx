@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useBranding } from '../contexts/BrandingContext';
 import { menuItems, MenuItemConfig } from '../config/menu';
 import UsageLookupDialog from './net/UsageLookupDialog';
+import { useTheme } from '../hooks/useTheme';
 
 const MenuIcon: React.FC = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -14,6 +15,20 @@ const MenuIcon: React.FC = () => (
 const CloseIcon: React.FC = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+  </svg>
+);
+
+const SunIcon: React.FC = () => (
+  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="4" strokeWidth={2} />
+    <path strokeLinecap="round" strokeWidth={2} d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4" />
+  </svg>
+);
+
+const MoonIcon: React.FC = () => (
+  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+      d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z" />
   </svg>
 );
 
@@ -213,6 +228,7 @@ const Layout: React.FC = () => {
   const location = useLocation();
   const { user, logout } = useAuth();
   const brand = useBranding();
+  const { isDark, toggle: toggleTheme } = useTheme();
 
   // Filter kosmetik berbasis role. Penegakan akses tetap di RolesGuard backend.
   const visibleMenu = menuItems.filter(
@@ -283,6 +299,15 @@ const Layout: React.FC = () => {
         <div className="flex items-center gap-2.5">
           <button
             type="button"
+            onClick={toggleTheme}
+            title={isDark ? 'Mode siang' : 'Mode malam'}
+            aria-label={isDark ? 'Aktifkan mode siang' : 'Aktifkan mode malam'}
+            className="rounded-lg border border-slate-700/60 p-2 text-slate-300 transition hover:border-slate-600 hover:bg-slate-700/40 hover:text-white"
+          >
+            {isDark ? <SunIcon /> : <MoonIcon />}
+          </button>
+          <button
+            type="button"
             onClick={() => setUsageOpen(true)}
             title="Cek pemakaian user"
             aria-label="Cek pemakaian user"
@@ -302,8 +327,12 @@ const Layout: React.FC = () => {
                 aria-expanded={accountOpen}
                 className="flex items-center gap-2.5 rounded-lg border-l border-slate-700/50 py-1.5 pl-3 pr-2 transition hover:bg-slate-700/40"
               >
-                <div className="w-8 h-8 rounded-full bg-slate-600 flex items-center justify-center text-sm font-medium text-slate-200">
-                  {user.name.charAt(0).toUpperCase()}
+                <div className="w-8 h-8 rounded-full bg-slate-600 flex items-center justify-center text-sm font-medium text-slate-200 overflow-hidden">
+                  {user.avatar ? (
+                    <img src={user.avatar} alt={user.name} className="w-full h-full object-cover" />
+                  ) : (
+                    user.name.charAt(0).toUpperCase()
+                  )}
                 </div>
                 <span className="text-sm text-slate-300 hidden md:inline">{user.name}</span>
                 <span className="text-xs text-slate-400 hidden sm:inline">{user.role}</span>
