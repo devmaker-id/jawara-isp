@@ -76,7 +76,9 @@ function pageContent(cards: VoucherCard[]): string {
     if (card.title) out += text(x + 8, top - 26, 8, 'F1', 0.2, card.title);
     out += text(x + 8, top - 46, 15, 'F2', 0, card.username);
     if (card.password) out += text(x + 8, top - 60, 10, 'F3', 0, card.password);
-    card.lines.slice(0, 3).forEach((line, i) => {
+    // `lines` opsional saat runtime: kartu tanpa isi tambahan tetap harus bisa
+    // dicetak, bukan menggagalkan seluruh PDF.
+    (card.lines ?? []).slice(0, 3).forEach((line, i) => {
       out += text(x + 8, top - 73 - i * 8.5, 6.5, 'F1', 0.35, line);
     });
     if (card.footer) out += text(x + 8, top - 95, 6, 'F1', 0.5, card.footer);

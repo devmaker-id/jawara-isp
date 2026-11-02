@@ -5,12 +5,16 @@ import { WhatsAppService } from '../src/app/modules/whatsapp/whatsapp.service';
 // PDF dibuat tanpa pustaka, jadi yang diuji adalah strukturnya: header, trailer,
 // jumlah halaman, dan bahwa teks voucher benar-benar tertulis di stream.
 describe('buildVoucherPdf', () => {
+  // Bentuk kartu mengikuti VoucherCard yang dipakai produksi (ProfilesService.toCards):
+  // header/judul/lines sudah berupa teks jadi, baris isi maksimal 3.
   const cards = (count: number) =>
     Array.from({ length: count }, (_, i) => ({
-      profile: 'HS-2HARI',
+      header: 'BibitNet',
+      title: 'Voucher Hotspot',
       username: `UJI${String(i).padStart(3, '0')}`,
       password: `PW${1000 + i}`,
-      meta: 'voucher · ready-to-use',
+      lines: ['Profil HS-2HARI', 'voucher · ready-to-use'],
+      footer: 'Berlaku mulai login pertama',
     }));
 
   it('menghasilkan PDF 1.4 yang bisa dibaca', () => {
@@ -28,9 +32,9 @@ describe('buildVoucherPdf', () => {
   });
 
   it('memecah ke halaman berikutnya saat kartu melebihi satu halaman', () => {
-    // 24 kartu per halaman A4 (3 kolom x 8 baris).
-    const onePage = buildVoucherPdf(cards(24)).toString('latin1');
-    const twoPages = buildVoucherPdf(cards(25)).toString('latin1');
+    // 21 kartu per halaman A4 (3 kolom x 7 baris; CARD_H 100 + GAP 10).
+    const onePage = buildVoucherPdf(cards(21)).toString('latin1');
+    const twoPages = buildVoucherPdf(cards(22)).toString('latin1');
     expect(onePage).toContain('/Count 1');
     expect(twoPages).toContain('/Count 2');
   });
@@ -43,9 +47,30 @@ describe('buildVoucherPdf', () => {
 
   it('meloloskan karakter yang merusak sintaks PDF', () => {
     const pdf = buildVoucherPdf([
-      { profile: 'A (B) \\ C', username: 'X', password: 'Y', meta: 'z' },
+      {
+        header: 'A (B) \\ C',
+        title: '',
+        username: 'X',
+        password: 'Y',
+        lines: ['z'],
+        footer: '',
+      },
     ]).toString('latin1');
     expect(pdf).toContain('A \\(B\\) \\\\ C');
+  });
+
+  it('tetap mencetak kartu tanpa baris tambahan (lines tidak wajib saat runtime)', () => {
+    const card = {
+      header: 'BibitNet',
+      title: 'Voucher',
+      username: 'TANPALINES',
+      password: 'PW',
+      footer: '',
+    } as unknown as Parameters<typeof buildVoucherPdf>[0][number];
+
+    const pdf = buildVoucherPdf([card]).toString('latin1');
+    expect(pdf.startsWith('%PDF-1.4')).toBe(true);
+    expect(pdf).toContain('(TANPALINES)');
   });
 });
 
