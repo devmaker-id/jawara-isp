@@ -16,6 +16,18 @@ export interface Customer {
   name: string;
   /** Nomor Internet: identitas permanen pelanggan. */
   internet_no?: string | null;
+  /** ONU yang terpasang (null = belum ada / masih inventaris). */
+  onu?: {
+    id: number;
+    olt: string;
+    port: string;
+    onu_id: string;
+    serial_number: string | null;
+    mac: string | null;
+    name: string | null;
+    online: boolean;
+    rx_power: number | null;
+  } | null;
   email: string;
   phone: string;
   address: string;

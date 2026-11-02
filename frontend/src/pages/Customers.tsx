@@ -41,6 +41,18 @@ interface Customer {
   /** Akun yang membuat baris ini (jejak, bukan hak akses). */
   created_by?: number | null;
   created_by_name?: string | null;
+  /** ONU yang terpasang. null = belum ada (masih inventaris). */
+  onu?: {
+    id: number;
+    olt: string;
+    port: string;
+    onu_id: string;
+    serial_number: string | null;
+    mac: string | null;
+    name: string | null;
+    online: boolean;
+    rx_power: number | null;
+  } | null;
   accounts?: CustomerAccount[];
 }
 
@@ -159,6 +171,8 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
   const { user } = useAuth();
   const canDelete = user?.role === 'admin';
   const canAssignOwner = user?.role === 'admin';
+  // Pemasangan/pelepasan ONU mengikuti izin backend (`olt.update`): admin & operator.
+  const canManageOnu = user?.role === 'admin' || user?.role === 'operator';
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [total, setTotal] = useState(0);
@@ -183,6 +197,7 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Customer | null>(null);
+  const [onuBusy, setOnuBusy] = useState(false);
   const [form, setForm] = useState<CustomerForm>(EMPTY_FORM);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -332,6 +347,34 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
     setModalOpen(false);
     setEditing(null);
     setFormError(null);
+  };
+
+  /**
+   * Lepas ONU dari pelanggan ini. ONU tetap ada di inventaris — yang dihapus
+   * hanya relasinya, jadi teknisi bisa memasangnya lagi kapan saja.
+   */
+  const releaseOnu = async () => {
+    const onu = editing?.onu;
+    if (!onu) return;
+    const label = onu.serial_number || onu.mac || `#${onu.id}`;
+    if (
+      !window.confirm(
+        `Lepas ONU ${label} dari pelanggan ini? ONU tetap tersimpan sebagai inventaris.`,
+      )
+    ) {
+      return;
+    }
+    setOnuBusy(true);
+    try {
+      await api.post(`/api/olt/onus/${onu.id}/release`, {});
+      const fresh = await api.get(`/api/customers/${editing!.id}`);
+      setEditing(fresh.data);
+      await load();
+    } catch (error) {
+      setFormError(readError(error, 'Gagal melepas ONU.'));
+    } finally {
+      setOnuBusy(false);
+    }
   };
 
   const validate = (): string | null => {
@@ -610,6 +653,7 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
                   <tr className="text-left text-slate-400 border-b border-slate-700/50 bg-slate-700/30">
                     <th className="px-4 py-3 font-medium">Nama</th>
                     <th className="px-4 py-3 font-medium">No. Internet</th>
+                    <th className="px-4 py-3 font-medium">ONU</th>
                     <th className="px-4 py-3 font-medium">Kontak</th>
                     <th className="px-4 py-3 font-medium">Akun RADIUS</th>
                     <th className="px-4 py-3 font-medium">Status</th>
@@ -636,6 +680,21 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
                         <td className="px-4 py-3">
                           {customer.internet_no ? (
                             <span className="font-mono text-xs text-cyan-300">{customer.internet_no}</span>
+                          ) : (
+                            <span className="text-xs text-slate-500">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {customer.onu ? (
+                            <div className="leading-tight">
+                              <div className="font-mono text-xs text-slate-200">
+                                {customer.onu.serial_number || customer.onu.mac || `#${customer.onu.id}`}
+                              </div>
+                              <div className="text-[10px] text-slate-500">
+                                {customer.onu.online ? 'online' : 'offline'}
+                                {customer.onu.rx_power !== null ? ` · ${customer.onu.rx_power} dBm` : ''}
+                              </div>
+                            </div>
                           ) : (
                             <span className="text-xs text-slate-500">—</span>
                           )}
@@ -731,6 +790,12 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
                         <p className="text-xs text-cyan-300 font-mono">
                           {customer.internet_no ?? 'belum ada nomor'}
                         </p>
+                        {customer.onu && (
+                          <p className="text-[11px] text-slate-400 font-mono">
+                            ONU {customer.onu.serial_number || customer.onu.mac || `#${customer.onu.id}`}
+                            {customer.onu.online ? ' · online' : ''}
+                          </p>
+                        )}
                         <p className="text-xs text-slate-400 truncate">{customer.email}</p>
                         <p className="text-xs text-slate-400">{customer.phone}</p>
                       </div>
@@ -838,6 +903,41 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
                       ? 'Nomor sudah terbit — identitas permanen, tidak dapat diubah.'
                       : 'Nomor dibuat otomatis oleh server dan tidak bisa diubah setelah terbit.'}
                   </p>
+                </div>
+
+                <div className="sm:col-span-2 rounded-lg border border-slate-700/60 bg-slate-900/40 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-slate-300">ONU terpasang</p>
+                      {editing?.onu ? (
+                        <p className="mt-1 break-words font-mono text-xs text-slate-200">
+                          {editing.onu.serial_number || editing.onu.mac || `#${editing.onu.id}`}
+                          <span className="text-slate-500">
+                            {' '}
+                            · {editing.onu.olt} {editing.onu.port}/{editing.onu.onu_id}
+                          </span>
+                          <span className={editing.onu.online ? 'text-emerald-400' : 'text-slate-500'}>
+                            {' '}
+                            · {editing.onu.online ? 'online' : 'offline'}
+                          </span>
+                        </p>
+                      ) : (
+                        <p className="mt-1 text-xs text-slate-500">
+                          Belum ada ONU terpasang. Pasang dari menu OLT → Inventori ONU.
+                        </p>
+                      )}
+                    </div>
+                    {editing?.onu && canManageOnu && (
+                      <button
+                        type="button"
+                        onClick={() => void releaseOnu()}
+                        disabled={onuBusy}
+                        className="shrink-0 text-xs font-medium text-red-400 transition hover:text-red-300 disabled:opacity-60"
+                      >
+                        {onuBusy ? 'Melepas…' : 'Lepas ONU'}
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="sm:col-span-2">
