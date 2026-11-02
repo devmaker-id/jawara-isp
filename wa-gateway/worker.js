@@ -161,6 +161,9 @@ async function start() {
           chat_id: String(key.remoteJid),
           chat_type: key.remoteJid.endsWith('@g.us') ? 'group' : 'dm',
           sender: key.participant ? jidNumber(key.participant) : jidNumber(key.remoteJid),
+          // WhatsApp makin sering memakai LID; alt JID memberi nomor telepon asli
+          // supaya allowlist nomor tetap bekerja.
+          sender_alt: jidNumber(key.participantAlt || key.remoteJidAlt || ''),
           sender_jid: key.participant || key.remoteJid,
           text: String(text).slice(0, 4000),
           mentioned,

@@ -70,6 +70,7 @@ export class WaIngestService implements OnModuleInit, OnModuleDestroy {
       chatId: message.chat_id,
       chatType: message.chat_type,
       sender: message.sender,
+      senderAlt: message.sender_alt,
       text: message.text,
       mentioned: (message as WorkerMessage & { mentioned?: boolean }).mentioned === true,
     });

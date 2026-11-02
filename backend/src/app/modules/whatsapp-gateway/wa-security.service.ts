@@ -58,6 +58,8 @@ export class WaSecurityService {
     chatId: string;
     chatType: 'dm' | 'group';
     sender: string;
+    /** Nomor telepon asli (alt JID) saat pengirim diwakili LID. */
+    senderAlt?: string;
     text: string;
     mentioned: boolean;
   }): Promise<InboundCheck> {
@@ -71,8 +73,9 @@ export class WaSecurityService {
     const allowedNumbers = new Set(list.filter((row) => row.kind === 'number').map((row) => norm(row.value)));
     const allowedGroups = new Set(list.filter((row) => row.kind === 'group').map((row) => row.value));
 
-    const sender = norm(input.sender);
-    const isAdmin = adminNumbers.has(sender);
+    const kandidat = [norm(input.sender), norm(input.senderAlt ?? '')].filter(Boolean);
+    const sender = kandidat[0] ?? '';
+    const isAdmin = kandidat.some((value) => adminNumbers.has(value));
     const isCommand = input.text.trim().startsWith('/');
 
     if (input.chatType === 'group') {
@@ -84,7 +87,7 @@ export class WaSecurityService {
       return { allowed: true, isAdmin };
     }
 
-    if (policy.dmPolicy === 'allowlist' && !allowedNumbers.has(sender)) {
+    if (policy.dmPolicy === 'allowlist' && !kandidat.some((value) => allowedNumbers.has(value))) {
       return { allowed: false, isAdmin, reason: 'nomor tidak terdaftar' };
     }
     return { allowed: true, isAdmin };

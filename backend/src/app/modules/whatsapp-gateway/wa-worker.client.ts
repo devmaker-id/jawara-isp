@@ -26,6 +26,8 @@ export interface WorkerMessage {
   chat_id: string;
   chat_type: 'dm' | 'group';
   sender: string;
+  /** Nomor telepon asli bila WhatsApp mengirim LID. */
+  sender_alt?: string;
   sender_jid: string;
   text: string;
   at: string;
