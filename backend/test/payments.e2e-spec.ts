@@ -174,6 +174,33 @@ describe('Payments (e2e)', () => {
     });
   });
 
+  describe('kontrak body pembayaran', () => {
+    // Regresi: UI pernah mengirim `paid_date` (nama kolom invoice) ke endpoint
+    // pembayaran. DTO hanya mengenal `paid_at`, dan ValidationPipe menolak field
+    // asing — pengguna melihat "property paid_date should not exist".
+    it('menolak field paid_date; nama yang benar adalah paid_at', async () => {
+      const id = await makeInvoice(1000);
+      const res = await api()
+        .post(`/api/invoices/${id}/payments`)
+        .set(auth(operatorToken))
+        .send({ amount: 100, paid_date: '2026-11-03' })
+        .expect(400);
+
+      expect(JSON.stringify(res.body.message)).toContain('paid_date');
+    });
+
+    it('menerima paid_at sebagai tanggal pembayaran', async () => {
+      const id = await makeInvoice(1000);
+      const res = await api()
+        .post(`/api/invoices/${id}/payments`)
+        .set(auth(operatorToken))
+        .send({ amount: 100, paid_at: '2026-11-03' })
+        .expect(201);
+
+      expect(String(res.body.payment.paid_at)).toContain('2026-11-03');
+    });
+  });
+
   describe('idempotensi kunci', () => {
     const key = 'kunci-uji-0001';
     let id: number;

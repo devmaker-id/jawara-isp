@@ -536,7 +536,9 @@ const Invoices: React.FC = () => {
       const res = await api.post(`/api/invoices/${payTarget.id}/payments`, {
         amount: value,
         method: payForm.method,
-        paid_date: payForm.paid_date,
+        // Nama field backend adalah `paid_at` (tanggal saja). Mengirim
+        // `paid_date` ditolak ValidationPipe: "property paid_date should not exist".
+        paid_at: payForm.paid_date,
         reference: payForm.reference.trim() || undefined,
         note: payForm.note.trim() || undefined,
         idempotency_key: payKey,

@@ -269,7 +269,9 @@ const Payments: React.FC = () => {
         invoice_id: selectedInvoice.id,
         amount: value,
         method: form.method,
-        paid_date: form.paid_date,
+        // Backend memakai `paid_at` (tanggal saja); `paid_date` ditolak
+        // ValidationPipe dengan pesan "property paid_date should not exist".
+        paid_at: form.paid_date,
         reference: form.reference.trim() || undefined,
         note: form.note.trim() || undefined,
         idempotency_key: idempotencyKey,
