@@ -37,7 +37,6 @@ describe('SettingsService', () => {
       'pelanggan',
       'payment',
       'telegram',
-      'whatsapp',
       'integrasi',
     ]);
   });
@@ -75,15 +74,13 @@ describe('SettingsService', () => {
 
   it('tidak pernah mengirim nilai rahasia, hanya status terisi', async () => {
     const { service } = makeService({
-      findValues: vi
-        .fn()
-        .mockResolvedValue({ telegram_bot_token: '123456:rahasia', whatsapp_api_token: '' }),
+      findValues: vi.fn().mockResolvedValue({ telegram_bot_token: '123456:rahasia' }),
     });
     const view = await service.get();
 
     expect(view.values.telegram_bot_token).toBe(SECRET_MASK);
     expect(view.secrets_set.telegram_bot_token).toBe(true);
-    expect(view.secrets_set.whatsapp_api_token).toBe(false);
+    expect(view.secrets_set.freeradius_secret).toBe(false);
     expect(JSON.stringify(view)).not.toContain('rahasia');
   });
 
@@ -130,18 +127,27 @@ describe('SettingsService', () => {
     );
   });
 
-  it('menolak telegram_enabled/whatsapp_enabled selain 0/1', async () => {
+  it('menolak telegram_enabled selain 0/1', async () => {
     const { service } = makeService();
     await expect(service.update({ telegram_enabled: 'ya' })).rejects.toBeInstanceOf(
       BadRequestException,
     );
   });
 
+  // Pengaturan WhatsApp lama sudah dihapus (gateway punya menu sendiri).
+  // Kuncinya harus ditolak sebagai kunci asing, bukan diam-diam tersimpan.
+  it('menolak kunci whatsapp_* yang sudah dihapus', async () => {
+    const { service, raw } = makeService();
+    for (const key of ['whatsapp_enabled', 'whatsapp_api_token', 'whatsapp_provider']) {
+      await expect(service.update({ [key]: 'x' })).rejects.toBeInstanceOf(BadRequestException);
+    }
+    expect(raw.upsert).not.toHaveBeenCalled();
+  });
+
   it('placeholder rahasia tidak menimpa token yang tersimpan', async () => {
     const { service, saved } = makeService();
     await service.update({
       telegram_bot_token: SECRET_MASK,
-      whatsapp_api_token: '',
       brand_name: 'BibitNet',
     });
 
@@ -150,8 +156,8 @@ describe('SettingsService', () => {
 
   it('token baru tetap disimpan bila diisi', async () => {
     const { service, saved } = makeService();
-    await service.update({ whatsapp_api_token: 'token-baru-123' });
-    expect(saved[0]).toEqual({ whatsapp_api_token: 'token-baru-123' });
+    await service.update({ telegram_bot_token: 'token-baru-123' });
+    expect(saved[0]).toEqual({ telegram_bot_token: 'token-baru-123' });
   });
 
   it('menolak permintaan tanpa nilai', async () => {

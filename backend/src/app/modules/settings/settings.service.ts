@@ -133,7 +133,7 @@ export class SettingsService {
     if (toSave.payment_mode !== undefined && !PAYMENT_MODES.includes(toSave.payment_mode)) {
       throw new BadRequestException('payment_mode harus manual atau gateway');
     }
-    for (const flag of ['telegram_enabled', 'whatsapp_enabled']) {
+    for (const flag of ['telegram_enabled']) {
       if (toSave[flag] !== undefined && !['0', '1'].includes(toSave[flag])) {
         throw new BadRequestException(`${flag} harus 0 atau 1`);
       }

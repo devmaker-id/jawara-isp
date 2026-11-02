@@ -23,15 +23,9 @@ export const SETTING_KEYS = [
   'telegram_enabled',
   'telegram_bot_token',
   'telegram_chat_id',
-  // WhatsApp bot
-  'whatsapp_enabled',
   // Penomoran: angka awal Nomor Internet. Kosong = nomor tidak diterbitkan
   // otomatis (pelanggan baru tetap bisa dibuat tanpa nomor).
   'internet_no_start',
-  'whatsapp_provider',
-  'whatsapp_api_url',
-  'whatsapp_api_token',
-  'whatsapp_sender',
   // Integrasi perangkat jaringan
   'mikrotik_host',
   'mikrotik_port',
@@ -68,14 +62,9 @@ export const SETTING_DEFAULTS: Record<SettingKey, string> = {
   telegram_enabled: '0',
   telegram_bot_token: '',
   telegram_chat_id: '',
-  whatsapp_enabled: '0',
   // Kosong = Nomor Internet tidak diterbitkan otomatis. Isi angka awal
   // (mis. 1312013) hanya setelah pemilik menetapkan seri penomoran.
   internet_no_start: '',
-  whatsapp_provider: '',
-  whatsapp_api_url: '',
-  whatsapp_api_token: '',
-  whatsapp_sender: '',
   mikrotik_host: '',
   mikrotik_port: '1998',
   mikrotik_user: '',
@@ -93,7 +82,6 @@ export const SETTING_DEFAULTS: Record<SettingKey, string> = {
 export const SECRET_KEYS: ReadonlySet<SettingKey> = new Set<SettingKey>([
   'payment_gateway_server_key',
   'telegram_bot_token',
-  'whatsapp_api_token',
   // Password API router dan secret RADIUS tidak pernah dikirim balik ke browser.
   'mikrotik_password',
   'freeradius_secret',
@@ -118,13 +106,6 @@ export const SETTING_GROUPS: Record<string, SettingKey[]> = {
     'payment_gateway_server_key',
   ],
   telegram: ['telegram_enabled', 'telegram_bot_token', 'telegram_chat_id'],
-  whatsapp: [
-    'whatsapp_enabled',
-    'whatsapp_provider',
-    'whatsapp_api_url',
-    'whatsapp_api_token',
-    'whatsapp_sender',
-  ],
   integrasi: [
     'mikrotik_host',
     'mikrotik_port',

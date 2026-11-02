@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import api from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 
-type TabKey = 'branding' | 'voucher' | 'pelanggan' | 'payment' | 'telegram' | 'whatsapp' | 'integrasi' | 'sistem';
+type TabKey = 'branding' | 'voucher' | 'pelanggan' | 'payment' | 'telegram' | 'integrasi' | 'sistem';
 type Toast = { type: 'success' | 'error'; text: string } | null;
 
 interface SettingsView {
@@ -18,7 +18,6 @@ const TABS: Array<{ key: TabKey; label: string; hint: string }> = [
   { key: 'pelanggan', label: 'Pelanggan', hint: 'Angka awal Nomor Internet' },
   { key: 'payment', label: 'Pembayaran', hint: 'Manual (tunai/transfer/QRIS) atau payment gateway' },
   { key: 'telegram', label: 'Telegram', hint: 'Bot notifikasi tagihan' },
-  { key: 'whatsapp', label: 'WhatsApp Bot', hint: 'Gateway pesan WhatsApp' },
   { key: 'integrasi', label: 'Integrasi', hint: 'MikroTik (RouterOS API) & FreeRADIUS' },
   { key: 'sistem', label: 'Sistem', hint: 'Informasi koneksi & keamanan' },
 ];
@@ -31,12 +30,6 @@ const GATEWAY_PROVIDERS = [
   { value: 'doku', label: 'DOKU' },
 ];
 
-const WHATSAPP_PROVIDERS = [
-  { value: '', label: 'Belum dipilih' },
-  { value: 'wablas', label: 'Wablas' },
-  { value: 'fonnte', label: 'Fonnte' },
-  { value: 'baileys', label: 'Baileys (WhatsApp Web)' },
-];
 
 const PAYMENT_METHODS = [
   { key: 'cash', label: 'Tunai' },
@@ -612,76 +605,6 @@ const Settings: React.FC = () => {
     </Card>
   );
 
-  const renderWhatsapp = () => (
-    <Card
-      title="WhatsApp Bot"
-      description="Gateway pengiriman pesan tagihan dan pengingat ke pelanggan."
-    >
-      <Toggle
-        id="whatsapp_enabled"
-        label="Aktifkan WhatsApp bot"
-        checked={values.whatsapp_enabled === '1'}
-        onChange={(checked) => set('whatsapp_enabled', checked ? '1' : '0')}
-        disabled={!isAdmin}
-      />
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div>
-          <label
-            className="block text-sm font-medium text-slate-300 mb-1"
-            htmlFor="whatsapp_provider"
-          >
-            Penyedia
-          </label>
-          <select
-            id="whatsapp_provider"
-            value={values.whatsapp_provider ?? ''}
-            onChange={(e) => set('whatsapp_provider', e.target.value)}
-            disabled={!isAdmin}
-            className={inputClass}
-          >
-            {WHATSAPP_PROVIDERS.map((p) => (
-              <option key={p.value} value={p.value}>
-                {p.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <TextField
-          id="whatsapp_sender"
-          label="Nomor pengirim"
-          value={values.whatsapp_sender ?? ''}
-          onChange={(v) => set('whatsapp_sender', v)}
-          disabled={!isAdmin}
-          placeholder="6281234567890"
-          mono
-        />
-        <TextField
-          id="whatsapp_api_url"
-          label="Base URL API"
-          value={values.whatsapp_api_url ?? ''}
-          onChange={(v) => set('whatsapp_api_url', v)}
-          disabled={!isAdmin}
-          placeholder="https://api.fonnte.com"
-          mono
-        />
-        <TextField
-          id="whatsapp_api_token"
-          label="API token"
-          type="password"
-          value={values.whatsapp_api_token ?? ''}
-          onChange={(v) => set('whatsapp_api_token', v)}
-          disabled={!isAdmin}
-          hint={secretHint('whatsapp_api_token')}
-          placeholder="Tidak ditampilkan"
-          mono
-        />
-      </div>
-      <p className="text-xs text-slate-500">
-        Koneksi ke penyedia belum diuji dari halaman ini; pengiriman pesan menyusul.
-      </p>
-    </Card>
-  );
-
   const renderSistem = () => (
     <div className="space-y-4">
       <Card title="Integrasi Database" description="Nilai dari konfigurasi server (baca saja).">
@@ -971,8 +894,6 @@ const Settings: React.FC = () => {
         return renderPayment();
       case 'telegram':
         return renderTelegram();
-      case 'whatsapp':
-        return renderWhatsapp();
       case 'integrasi':
         return renderIntegrasi();
       case 'sistem':

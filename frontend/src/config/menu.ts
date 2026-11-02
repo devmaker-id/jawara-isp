@@ -155,7 +155,6 @@ export const menuItems: MenuItemConfig[] = [
       { path: '/settings?tab=voucher', label: 'Template Voucher' },
       { path: '/settings?tab=payment', label: 'Pembayaran & Gateway' },
       { path: '/settings?tab=telegram', label: 'Telegram' },
-      { path: '/settings?tab=whatsapp', label: 'WhatsApp Bot' },
       { path: '/settings?tab=integrasi', label: 'Integrasi' },
       { path: '/settings?tab=sistem', label: 'Sistem' },
     ],
