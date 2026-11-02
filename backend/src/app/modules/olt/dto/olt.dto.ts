@@ -159,3 +159,37 @@ export class UpdateOltDeviceDto {
   @IsBoolean()
   is_active?: boolean;
 }
+/**
+ * Pemasangan ONU ke pelanggan.
+ *
+ * Pelanggan ditunjuk lewat `internet_no` (cara teknisi bekerja) atau
+ * `customer_id`. Minimal salah satu wajib; kalau tidak, service menolak.
+ */
+export class AssignOnuDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'customer_id harus angka.' })
+  @Min(1, { message: 'customer_id tidak valid.' })
+  customer_id?: number;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^[0-9]{4,20}$/, { message: 'Nomor Internet harus 4-20 digit angka.' })
+  internet_no?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  move?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255, { message: 'Catatan maksimal 255 karakter.' })
+  note?: string;
+}
+
+export class ReleaseOnuDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(255, { message: 'Catatan maksimal 255 karakter.' })
+  note?: string;
+}

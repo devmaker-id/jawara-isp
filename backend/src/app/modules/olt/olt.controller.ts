@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -18,7 +19,7 @@ import { JwtAuthGuard } from '../auth/auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { PermissionGuard, RequirePermission } from '../permissions/permission.guard';
-import { CreateOltDeviceDto, UpdateOltDeviceDto } from './dto/olt.dto';
+import { AssignOnuDto, CreateOltDeviceDto, ReleaseOnuDto, UpdateOltDeviceDto } from './dto/olt.dto';
 import { OltService } from './olt.service';
 
 type Actor = { userId: number; ip: string };
@@ -111,6 +112,7 @@ export class OltController {
     @Query('online') online?: string,
     @Query('search') search?: string,
     @Query('max_rx') maxRx?: string,
+    @Query('assigned') assigned?: string,
     @Query('page') page?: string,
     @Query('size') size?: string,
   ) {
@@ -119,8 +121,52 @@ export class OltController {
       online: online === undefined || online === '' ? undefined : online === 'true' || online === '1',
       search: search?.trim() || undefined,
       maxRx: maxRx ? Number(maxRx) : undefined,
+      assigned: assigned === 'true' || assigned === '1' ? 'assigned'
+        : assigned === 'false' || assigned === '0' ? 'unassigned'
+        : undefined,
       page: page ? Number(page) : undefined,
       size: size ? Number(size) : undefined,
     });
+  }
+
+  // ===== pemasangan ONU ke pelanggan =====
+  @Get('onus/:id/history')
+  @Roles('admin', 'operator')
+  @RequirePermission('olt.view')
+  onuHistory(@Param('id', ParseIntPipe) id: number) {
+    return this.service.onuHistory(id);
+  }
+
+  @Post('onus/:id/assign')
+  @Roles('admin', 'operator')
+  @RequirePermission('olt.update')
+  assignOnu(
+    @Req() request: Request,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: AssignOnuDto,
+  ) {
+    if (dto.customer_id === undefined && !dto.internet_no) {
+      throw new BadRequestException('Isi Nomor Internet pelanggan atau pilih pelanggan terlebih dahulu.');
+    }
+    return this.service.assignOnu(id, dto, actorOf(request));
+  }
+
+  @Post('onus/:id/release')
+  @Roles('admin', 'operator')
+  @RequirePermission('olt.update')
+  releaseOnu(
+    @Req() request: Request,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ReleaseOnuDto,
+  ) {
+    return this.service.releaseOnu(id, dto.note, actorOf(request));
+  }
+
+  // ONU milik satu pelanggan — dipakai halaman detail pelanggan.
+  @Get('customers/:customerId/onu')
+  @Roles('admin', 'operator')
+  @RequirePermission('olt.view')
+  customerOnu(@Param('customerId', ParseIntPipe) customerId: number) {
+    return this.service.customerOnu(customerId);
   }
 }

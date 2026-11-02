@@ -19,6 +19,8 @@ export interface Customer {
    * diaktifkan operator).
    */
   internet_no: string | null;
+  /** ONU yang terpasang untuk pelanggan ini. null = belum ada / masih inventaris. */
+  onu?: CustomerOnu | null;
   email: string;
   phone: string;
   address: string;
@@ -35,6 +37,19 @@ export interface Customer {
   created_at: Date;
   /** Akun RADIUS milik pelanggan ini (identitas layanan yang sebenarnya). */
   accounts?: CustomerAccount[];
+}
+
+/** ONU yang terpasang untuk pelanggan — ringkas, tanpa data internal OLT. */
+export interface CustomerOnu {
+  id: number;
+  olt: string;
+  port: string;
+  onu_id: string;
+  serial_number: string | null;
+  mac: string | null;
+  name: string | null;
+  online: boolean;
+  rx_power: number | null;
 }
 
 /** Satu akun RADIUS yang tertaut ke pelanggan. */
@@ -62,6 +77,7 @@ interface CustomerRow extends RowDataPacket {
   created_by_name: string | null;
   name: string;
   internet_no: string | null;
+  onu_json?: unknown;
   email: string;
   phone: string;
   address: string;
@@ -75,6 +91,7 @@ function toCustomer(row: CustomerRow): Customer {
     id: row.id,
     name: row.name,
     internet_no: (row.internet_no as string | null) ?? null,
+    onu: toOnu(row.onu_json),
     email: row.email,
     phone: row.phone,
     address: row.address,
@@ -94,7 +111,34 @@ function toCustomer(row: CustomerRow): Customer {
 const COLUMNS =
   'id, name, internet_no, email, phone, address, is_active, status, created_at, owner_id, created_by, ' +
   '(SELECT u.name FROM users u WHERE u.id = customers.owner_id) AS owner_name, ' +
-  '(SELECT u.name FROM users u WHERE u.id = customers.created_by) AS created_by_name';
+  '(SELECT u.name FROM users u WHERE u.id = customers.created_by) AS created_by_name, ' +
+  `(SELECT JSON_OBJECT('id', o.id, 'olt', d.name, 'port', o.port_id, 'onu_id', o.onu_id,
+                       'serial_number', o.serial_number, 'mac', o.onu_mac, 'name', o.onu_name,
+                       'online', o.online, 'rx_power', o.rx_power_onu)
+      FROM olt_onus o JOIN olt_devices d ON d.id = o.olt_id
+     WHERE o.customer_id = customers.id LIMIT 1) AS onu_json`;
+
+/** JSON ONU dari database → objek API. Aman untuk nilai string maupun objek. */
+function toOnu(value: unknown): CustomerOnu | null {
+  if (!value) return null;
+  let raw: Record<string, unknown>;
+  try {
+    raw = typeof value === 'string' ? JSON.parse(value) : (value as Record<string, unknown>);
+  } catch {
+    return null;
+  }
+  return {
+    id: Number(raw.id),
+    olt: String(raw.olt ?? ''),
+    port: String(raw.port ?? ''),
+    onu_id: String(raw.onu_id ?? ''),
+    serial_number: (raw.serial_number as string | null) ?? null,
+    mac: (raw.mac as string | null) ?? null,
+    name: (raw.name as string | null) ?? null,
+    online: Number(raw.online) === 1,
+    rx_power: raw.rx_power === null || raw.rx_power === undefined ? null : Number(raw.rx_power),
+  };
+}
 
 /** Baris status dari database bisa null pada data lama; anggap 'active'. */
 export function normaliseStatus(value: string | null | undefined): CustomerStatus {

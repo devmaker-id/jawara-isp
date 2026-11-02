@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { RowDataPacket } from 'mysql2/promise';
+import type { PoolConnection, RowDataPacket } from 'mysql2/promise';
 import { DatabaseService } from '../../database/database.service';
 import type { OltOnu } from './driver/olt-driver';
 
@@ -60,6 +60,10 @@ export interface OltOnuRow {
   id: number;
   olt_id: number;
   olt_name?: string;
+  /** Pelanggan pemilik ONU. null = ONU masih inventaris. */
+  customer_id: number | null;
+  customer_name?: string | null;
+  internet_no?: string | null;
   port_id: string;
   onu_id: string;
   serial_number: string | null;
@@ -85,6 +89,8 @@ export interface OltOnuFilter {
   search?: string;
   /** Hanya ONU dengan Rx di bawah nilai ini (dBm). */
   maxRx?: number;
+  /** 'assigned' = sudah dipasang di pelanggan; 'unassigned' = masih inventaris. */
+  assigned?: 'assigned' | 'unassigned';
   /** 1-based. */
   page?: number;
   size?: number;
@@ -210,12 +216,16 @@ export class OltRepository {
       params.push(filter.online ? 1 : 0);
     }
     if (filter.search) {
+      // Nama pelanggan & Nomor Internet ikut dicari: teknisi biasanya memegang
+      // salah satu dari keduanya, bukan serial ONU.
       where.push(
-        '(o.onu_id LIKE ? OR o.serial_number LIKE ? OR o.onu_mac LIKE ? OR o.description LIKE ? OR o.onu_name LIKE ?)',
+        '(o.onu_id LIKE ? OR o.serial_number LIKE ? OR o.onu_mac LIKE ? OR o.description LIKE ? OR o.onu_name LIKE ? OR c.name LIKE ? OR c.internet_no LIKE ?)',
       );
       const needle = `%${filter.search}%`;
-      params.push(needle, needle, needle, needle, needle);
+      params.push(needle, needle, needle, needle, needle, needle, needle);
     }
+    if (filter.assigned === 'assigned') where.push('o.customer_id IS NOT NULL');
+    if (filter.assigned === 'unassigned') where.push('o.customer_id IS NULL');
     if (filter.maxRx !== undefined) {
       where.push('o.rx_power_onu IS NOT NULL AND o.rx_power_onu <= ?');
       params.push(filter.maxRx);
@@ -240,14 +250,16 @@ export class OltRepository {
               COALESCE(SUM(o.rx_power_onu IS NOT NULL AND o.rx_power_onu < -27), 0) AS weak
          FROM olt_onus o
          JOIN olt_devices d ON d.id = o.olt_id
+         LEFT JOIN customers c ON c.id = o.customer_id
         WHERE ${clause}`,
       params,
     );
 
     const rows = await this.db.query<RowDataPacket>(
-      `SELECT o.*, d.name AS olt_name
+      `SELECT o.*, d.name AS olt_name, c.name AS customer_name, c.internet_no
          FROM olt_onus o
          JOIN olt_devices d ON d.id = o.olt_id
+         LEFT JOIN customers c ON c.id = o.customer_id
         WHERE ${clause}
         ORDER BY d.name, o.port_id, CAST(o.onu_id AS UNSIGNED)
         LIMIT ${size} OFFSET ${offset}`,
@@ -437,6 +449,220 @@ export class OltRepository {
         ORDER BY id DESC
         LIMIT ${safeLimit}`,
       [oltId],
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Pemasangan ONU ke pelanggan
+  // -------------------------------------------------------------------------
+
+  /** Satu ONU lengkap dengan nama OLT dan pemiliknya (kalau sudah dipasang). */
+  async findOnu(id: number): Promise<OltOnuRow | null> {
+    const row = await this.db.queryOne<RowDataPacket>(
+      `SELECT o.*, d.name AS olt_name, c.name AS customer_name, c.internet_no
+         FROM olt_onus o
+         JOIN olt_devices d ON d.id = o.olt_id
+         LEFT JOIN customers c ON c.id = o.customer_id
+        WHERE o.id = ?`,
+      [id],
+    );
+    return (row as OltOnuRow | null) ?? null;
+  }
+
+  /** Pelanggan untuk pemasangan ONU: dipilih lewat id atau Nomor Internet. */
+  async findCustomer(input: {
+    id?: number;
+    internetNo?: string;
+  }): Promise<{ id: number; name: string; internet_no: string | null } | null> {
+    if (input.id !== undefined && Number.isFinite(Number(input.id))) {
+      return this.db.queryOne<{ id: number; name: string; internet_no: string | null }>(
+        'SELECT id, name, internet_no FROM customers WHERE id = ?',
+        [input.id],
+      );
+    }
+    if (input.internetNo) {
+      return this.db.queryOne<{ id: number; name: string; internet_no: string | null }>(
+        'SELECT id, name, internet_no FROM customers WHERE internet_no = ?',
+        [input.internetNo],
+      );
+    }
+    return null;
+  }
+
+  /** Semua ONU milik satu pelanggan (maksimal satu menurut unique index). */
+  async onusOfCustomer(customerId: number): Promise<OltOnuRow[]> {
+    const rows = await this.db.query<RowDataPacket>(
+      `SELECT o.*, d.name AS olt_name, c.name AS customer_name, c.internet_no
+         FROM olt_onus o
+         JOIN olt_devices d ON d.id = o.olt_id
+         LEFT JOIN customers c ON c.id = o.customer_id
+        WHERE o.customer_id = ?`,
+      [customerId],
+    );
+    return rows as OltOnuRow[];
+  }
+
+  /**
+   * Pasang ONU ke pelanggan.
+   *
+   * Semua pemeriksaan dilakukan di dalam satu transaksi dengan SELECT ... FOR
+   * UPDATE: dua operator yang menekan "Pasang" bersamaan tidak bisa membuat
+   * satu pelanggan punya dua ONU atau satu ONU dipakai dua pelanggan.
+   *
+   * Kode error yang dikembalikan (dipakai service untuk memilih pesan):
+   *   ONU_NOT_FOUND, CUSTOMER_NOT_FOUND, ONU_TAKEN, CUSTOMER_HAS_ONU
+   */
+  async assignOnu(input: {
+    onuId: number;
+    customerId: number;
+    actorId: number;
+    note?: string;
+    /** true = izinkan memindahkan ONU yang sudah terpasang di pelanggan lain. */
+    move?: boolean;
+  }): Promise<{ action: 'assign' | 'move'; previousCustomerId: number | null }> {
+    return this.db.withTransaction(async (conn) => {
+      const [onuRows] = await conn.query<RowDataPacket[]>(
+        `SELECT o.id, o.customer_id, o.olt_id, o.port_id, o.onu_id, o.serial_number, o.onu_name, d.name AS olt_name
+           FROM olt_onus o JOIN olt_devices d ON d.id = o.olt_id
+          WHERE o.id = ? FOR UPDATE`,
+        [input.onuId],
+      );
+      const onu = onuRows[0];
+      if (!onu) throw Object.assign(new Error('ONU tidak ditemukan'), { code: 'ONU_NOT_FOUND' });
+
+      const [customerRows] = await conn.query<RowDataPacket[]>(
+        'SELECT id, name, internet_no FROM customers WHERE id = ? FOR UPDATE',
+        [input.customerId],
+      );
+      const customer = customerRows[0];
+      if (!customer) {
+        throw Object.assign(new Error('Pelanggan tidak ditemukan'), { code: 'CUSTOMER_NOT_FOUND' });
+      }
+
+      if (onu.customer_id !== null && Number(onu.customer_id) !== Number(customer.id)) {
+        // Pindah pemilik harus dinyatakan terang-terangan (`move: true`), supaya
+        // salah pilih ONU tidak diam-diam mencabut perangkat pelanggan lain.
+        if (!input.move) {
+          throw Object.assign(new Error('ONU sudah dipakai pelanggan lain'), { code: 'ONU_TAKEN' });
+        }
+      }
+
+      const [owned] = await conn.query<RowDataPacket[]>(
+        'SELECT id FROM olt_onus WHERE customer_id = ? AND id <> ? FOR UPDATE',
+        [customer.id, input.onuId],
+      );
+      if (owned.length > 0) {
+        throw Object.assign(new Error('Pelanggan sudah punya ONU'), { code: 'CUSTOMER_HAS_ONU' });
+      }
+
+      if (onu.customer_id !== null && Number(onu.customer_id) === Number(customer.id)) {
+        // Sudah terpasang di pelanggan yang sama: tidak ada perubahan, jangan
+        // menulis riwayat palsu.
+        return { action: 'assign' as const, previousCustomerId: Number(customer.id) };
+      }
+
+      const previousCustomerId = onu.customer_id === null ? null : Number(onu.customer_id);
+      await conn.query('UPDATE olt_onus SET customer_id = ? WHERE id = ?', [customer.id, input.onuId]);
+      await this.writeHistory(conn, {
+        onuId: input.onuId,
+        label: this.onuLabel(onu),
+        action: previousCustomerId === null ? 'assign' : 'move',
+        fromCustomerId: previousCustomerId,
+        toCustomerId: Number(customer.id),
+        actorId: input.actorId,
+        note: input.note,
+      });
+      return { action: previousCustomerId === null ? ('assign' as const) : ('move' as const), previousCustomerId };
+    });
+  }
+
+  /** Lepas ONU dari pelanggan. ONU tetap ada sebagai inventaris. */
+  async releaseOnu(input: {
+    onuId: number;
+    actorId: number;
+    note?: string;
+  }): Promise<{ previousCustomerId: number | null }> {
+    return this.db.withTransaction(async (conn) => {
+      const [rows] = await conn.query<RowDataPacket[]>(
+        `SELECT o.id, o.customer_id, o.olt_id, o.port_id, o.onu_id, o.serial_number, o.onu_name, d.name AS olt_name
+           FROM olt_onus o JOIN olt_devices d ON d.id = o.olt_id
+          WHERE o.id = ? FOR UPDATE`,
+        [input.onuId],
+      );
+      const onu = rows[0];
+      if (!onu) throw Object.assign(new Error('ONU tidak ditemukan'), { code: 'ONU_NOT_FOUND' });
+
+      const previousCustomerId = onu.customer_id === null ? null : Number(onu.customer_id);
+      if (previousCustomerId === null) {
+        // Sudah inventaris: tidak ada yang perlu dilepas.
+        return { previousCustomerId: null };
+      }
+
+      await conn.query('UPDATE olt_onus SET customer_id = NULL WHERE id = ?', [input.onuId]);
+      await this.writeHistory(conn, {
+        onuId: input.onuId,
+        label: this.onuLabel(onu),
+        action: 'release',
+        fromCustomerId: previousCustomerId,
+        toCustomerId: null,
+        actorId: input.actorId,
+        note: input.note,
+      });
+      return { previousCustomerId };
+    });
+  }
+
+  /** Riwayat pemasangan satu ONU, terbaru lebih dulu. */
+  async onuHistory(onuId: number, limit = 50): Promise<RowDataPacket[]> {
+    const safeLimit = Math.min(Math.max(limit, 1), 200);
+    return this.db.query<RowDataPacket>(
+      `SELECT h.id, h.onu_id, h.onu_label, h.action, h.from_customer_id, h.to_customer_id,
+              h.actor_id, h.note, h.created_at,
+              cf.name AS from_customer_name, ct.name AS to_customer_name,
+              u.name AS actor_name
+         FROM onu_assignment_history h
+         LEFT JOIN customers cf ON cf.id = h.from_customer_id
+         LEFT JOIN customers ct ON ct.id = h.to_customer_id
+         LEFT JOIN users u ON u.id = h.actor_id
+        WHERE h.onu_id = ?
+        ORDER BY h.id DESC
+        LIMIT ${safeLimit}`,
+      [onuId],
+    );
+  }
+
+  /** Label ONU yang disimpan di riwayat supaya tetap terbaca setelah sync. */
+  private onuLabel(onu: RowDataPacket): string {
+    const parts = [onu.olt_name, `${onu.port_id}/${onu.onu_id}`];
+    if (onu.serial_number) parts.push(String(onu.serial_number));
+    return parts.filter(Boolean).join(' · ').slice(0, 190);
+  }
+
+  private async writeHistory(
+    conn: PoolConnection,
+    values: {
+      onuId: number;
+      label: string;
+      action: 'assign' | 'release' | 'move';
+      fromCustomerId: number | null;
+      toCustomerId: number | null;
+      actorId: number;
+      note?: string;
+    },
+  ): Promise<void> {
+    await conn.query(
+      `INSERT INTO onu_assignment_history
+         (onu_id, onu_label, action, from_customer_id, to_customer_id, actor_id, note)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        values.onuId,
+        values.label,
+        values.action,
+        values.fromCustomerId,
+        values.toCustomerId,
+        values.actorId > 0 ? values.actorId : null,
+        values.note?.slice(0, 255) ?? null,
+      ],
     );
   }
 

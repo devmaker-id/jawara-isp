@@ -367,6 +367,111 @@ export class OltService {
     return { rows: await this.repository.listRuns(id) };
   }
 
+  // -------------------------------------------------------------------------
+  // Pemasangan ONU <-> pelanggan
+  // -------------------------------------------------------------------------
+
+  /** ONU milik satu pelanggan (0 atau 1 baris). */
+  async customerOnu(customerId: number) {
+    const rows = await this.repository.onusOfCustomer(customerId);
+    return {
+      rows: rows.map((row) => ({
+        ...row,
+        online: Number(row.online) === 1,
+        rx_power_onu: this.number(row.rx_power_onu),
+        last_seen_at: new Date(row.last_seen_at).toISOString(),
+      })),
+    };
+  }
+
+  /**
+   * Pasang ONU ke pelanggan.
+   *
+   * Pelanggan bisa ditunjuk lewat `internet_no` (cara yang dipakai teknisi)
+   * atau `customer_id`. Semua penolakan memakai pesan manusia, bukan kode SQL.
+   */
+  async assignOnu(
+    onuId: number,
+    dto: { customer_id?: number; internet_no?: string; note?: string; move?: boolean },
+    actor: { userId: number; ip: string },
+  ) {
+    const customer = await this.repository.findCustomer({
+      id: dto.customer_id,
+      internetNo: dto.internet_no?.trim(),
+    });
+    if (!customer) {
+      throw new NotFoundException(
+        dto.internet_no
+          ? `Pelanggan dengan Nomor Internet ${dto.internet_no} tidak ditemukan`
+          : `Pelanggan #${dto.customer_id} tidak ditemukan`,
+      );
+    }
+
+    try {
+      const result = await this.repository.assignOnu({
+        onuId,
+        customerId: Number(customer.id),
+        actorId: actor.userId,
+        note: dto.note,
+        move: dto.move === true,
+      });
+      await this.audit(actor, 'olt.onu.assign', {
+        onu_id: onuId,
+        customer_id: Number(customer.id),
+        internet_no: customer.internet_no,
+        action: result.action,
+      });
+      return {
+        ok: true,
+        onu_id: onuId,
+        customer_id: Number(customer.id),
+        internet_no: customer.internet_no,
+        action: result.action,
+      };
+    } catch (error) {
+      this.rethrowAssign(error);
+    }
+  }
+
+  /** Lepas ONU dari pelanggan; ONU tetap ada sebagai inventaris. */
+  async releaseOnu(onuId: number, note: string | undefined, actor: { userId: number; ip: string }) {
+    try {
+      const result = await this.repository.releaseOnu({ onuId, actorId: actor.userId, note });
+      if (result.previousCustomerId !== null) {
+        await this.audit(actor, 'olt.onu.release', {
+          onu_id: onuId,
+          customer_id: result.previousCustomerId,
+        });
+      }
+      return { ok: true, onu_id: onuId, previous_customer_id: result.previousCustomerId };
+    } catch (error) {
+      this.rethrowAssign(error);
+    }
+  }
+
+  async onuHistory(onuId: number) {
+    const onu = await this.repository.findOnu(onuId);
+    if (!onu) throw new NotFoundException(`ONU #${onuId} tidak ditemukan`);
+    return { onu, rows: await this.repository.onuHistory(onuId) };
+  }
+
+  private rethrowAssign(error: unknown): never {
+    const code = (error as { code?: string })?.code;
+    if (code === 'ONU_NOT_FOUND') throw new NotFoundException('ONU tidak ditemukan');
+    if (code === 'CUSTOMER_NOT_FOUND') throw new NotFoundException('Pelanggan tidak ditemukan');
+    if (code === 'ONU_TAKEN') {
+      throw new ConflictException(
+        'ONU ini sudah terpasang di pelanggan lain. Lepas dulu dari pelanggan tersebut sebelum dipindahkan.',
+      );
+    }
+    if (code === 'CUSTOMER_HAS_ONU') {
+      throw new ConflictException(
+        'Pelanggan ini sudah punya ONU terpasang. Satu pelanggan hanya boleh punya satu ONU — lepas ONU lama dulu.',
+      );
+    }
+    throw error;
+  }
+
   /**
    * Baca redaman dengan satu percobaan ulang.
    *
