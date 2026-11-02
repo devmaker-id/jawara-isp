@@ -115,6 +115,7 @@ export async function createFakeUsers(): Promise<FakeUsers> {
       return updated;
     },
     remove: async (id: number) => accounts.delete(id),
+    logAudit: async () => undefined,
   } as unknown as UsersRepository;
 
   return { repo, accounts, references };

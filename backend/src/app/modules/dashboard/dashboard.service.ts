@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DatabaseService } from '../../database/database.service';
+import { RequestScope, SYSTEM_SCOPE } from '../auth/request-scope';
+import { SalesService } from '../sales/sales.service';
 import { readServerMetrics, ServerMetrics } from './system-metrics';
 
 // Ringkasan dashboard: metrik host, hitungan sesi online dari perangkat, dan
@@ -11,9 +13,12 @@ export interface DashboardSummary {
   total_invoices: number;
   unpaid_count: number;
   unpaid_total: number;
+  /** Pendapatan hari ini = pembayaran tagihan + penjualan voucher. */
   today_revenue: number;
   today_payments: number;
   server: ServerMetrics;
+  /** Rincian pendapatan harian & bulanan sesuai cakupan akun. */
+  revenue: RevenueSnapshot;
   online: OnlineCounts;
   /** Log autentikasi RADIUS 24 jam terakhir. */
   auth: AuthHealth;
@@ -22,6 +27,45 @@ export interface DashboardSummary {
   /** Sebaran voucher per profil layanan. */
   vouchers: VoucherProfileRow[];
 }
+
+/**
+ * Angka pendapatan untuk kartu dashboard.
+ *
+ * `scope` dihitung di server: admin melihat seluruh pemilik/role, sedangkan
+ * operator & reseller hanya melihat miliknya sendiri (lihat
+ * VoucherSalesRepository.revenueFilter).
+ */
+export interface RevenueSnapshot {
+  today: string;
+  month_start: string;
+  today_revenue: number;
+  today_payments: number;
+  today_vouchers: number;
+  today_voucher_cost: number;
+  today_margin: number;
+  month_revenue: number;
+  month_payments: number;
+  month_vouchers: number;
+  month_voucher_cost: number;
+  month_margin: number;
+  scope: 'all' | 'own';
+}
+
+const EMPTY_REVENUE: RevenueSnapshot = {
+  today: '',
+  month_start: '',
+  today_revenue: 0,
+  today_payments: 0,
+  today_vouchers: 0,
+  today_voucher_cost: 0,
+  today_margin: 0,
+  month_revenue: 0,
+  month_payments: 0,
+  month_vouchers: 0,
+  month_voucher_cost: 0,
+  month_margin: 0,
+  scope: 'own',
+};
 
 export interface OnlineCounts {
   hotspot: number | null;
@@ -118,22 +162,40 @@ export class DashboardService {
   private readonly logger = new Logger(DashboardService.name);
 
 
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly sales: SalesService,
+  ) {}
 
-  async summary(): Promise<DashboardSummary> {
+  async summary(scope: RequestScope = SYSTEM_SCOPE): Promise<DashboardSummary> {
     // Dashboard = wajah layanan RADIUS. Tidak ada satu pun panggilan API
     // perangkat dari sini: monitoring MikroTik hanya di menu MikroTik, supaya
     // koneksi API ke router tidak terus-menerus dibuat oleh halaman yang
     // dibuka sepanjang hari.
-    const [billing, server, online, auth, expiring, vouchers] = await Promise.all([
+
+    const [billing, server, online, auth, expiring, vouchers, revenue] = await Promise.all([
       this.billing(),
       readServerMetrics(),
       this.online(),
       this.authHealth(),
       this.expiringSoon(),
       this.vouchersByProfile(),
+      this.sales.revenueSnapshot(scope).catch(() => EMPTY_REVENUE),
     ]);
-    return { ...billing, server, online, auth, expiring, vouchers };
+
+    // Angka kartu "pendapatan hari ini" mengikuti cakupan akun, sama seperti
+    // angka di menu Laporan — bukan angka global yang hanya bisa dilihat admin.
+    return {
+      ...billing,
+      today_revenue: revenue.today_revenue,
+      today_payments: revenue.today_payments + revenue.today_vouchers,
+      server,
+      online,
+      auth,
+      expiring,
+      vouchers,
+      revenue,
+    };
   }
 
   /**

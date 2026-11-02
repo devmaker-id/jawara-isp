@@ -99,9 +99,11 @@ export class PermissionsController {
   }
 
   // ---- Antrean persetujuan hapus ------------------------------------------
+  // Keputusan di sini ditentukan ROLE (reseller mengajukan, operator/admin
+  // memutuskan). Memakai izin customer.* sebagai penjaga akan ikut membuka
+  // antrean untuk reseller, karena reseller memang punya customer.update.
   @Get('approvals')
   @Roles('admin', 'operator')
-  @RequirePermission('customer.update')
   approvals(@Query('status') status?: string) {
     const value = (status ?? 'pending') as ApprovalStatus | 'all';
     return this.approval.list(value);

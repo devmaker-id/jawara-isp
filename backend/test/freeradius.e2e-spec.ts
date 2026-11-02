@@ -59,6 +59,9 @@ describe('FreeRADIUS (e2e)', () => {
     },
     updateNas: async () => undefined,
     deleteNas: async () => 1,
+    nasReferences: async () => ({ accounting: 0, auth_log: 0 }),
+    nasDeletionSnapshot: async () => ({ nas: [], radacct: [], radpostauth: [] }),
+    purgeNas: async () => ({ accounting: 0, auth_log: 0, nas: 1 }),
     countNasUsingAddress: async (nasname: string) =>
       state.nas.filter((row) => row.nasname === nasname).length,
     listNasAddresses: async () => state.nas.map((row) => row.nasname),

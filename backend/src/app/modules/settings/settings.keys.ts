@@ -8,6 +8,8 @@ export const SETTING_KEYS = [
   'brand_primary_color',
   'brand_logo_url',
   'brand_footer_text',
+  // Template cetak voucher (JSON array; lihat voucher-template.ts)
+  'voucher_templates',
   // Pembayaran: manual (tunai/transfer/QRIS) atau payment gateway
   'payment_mode',
   'payment_methods',
@@ -49,6 +51,9 @@ export const SETTING_DEFAULTS: Record<SettingKey, string> = {
   // Boleh diganti URL lain dari Pengaturan -> Branding.
   brand_logo_url: '/branding/logo-default.png',
   brand_footer_text: '',
+  // Dikosongkan = pakai template bawaan di voucher-template.ts. Halaman
+  // Pengaturan → Template Voucher menulis JSON ini.
+  voucher_templates: '',
   payment_mode: 'manual',
   payment_methods: 'cash,transfer,qris',
   payment_instructions: '',
@@ -90,10 +95,11 @@ export const SECRET_KEYS: ReadonlySet<SettingKey> = new Set<SettingKey>([
 
 export const SECRET_MASK = '********';
 
-export const MAX_VALUE_LENGTH = 1000;
+export const MAX_VALUE_LENGTH = 20000;
 
 export const SETTING_GROUPS: Record<string, SettingKey[]> = {
   branding: ['brand_name', 'brand_tagline', 'brand_primary_color', 'brand_logo_url', 'brand_footer_text'],
+  voucher: ['voucher_templates'],
   payment: [
     'payment_mode',
     'payment_methods',

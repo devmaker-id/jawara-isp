@@ -122,11 +122,19 @@ export class CustomersController {
   }
 
   // Status pelanggan: active / expired / suspend / disable.
+  //
+  // Reseller boleh mengubah status pelanggan MILIKNYA (izin customer.update),
+  // jadi cakupan data (scope) wajib diteruskan — tanpa itu reseller bisa
+  // menyentuh pelanggan akun lain hanya dengan menebak id.
   @Patch(':id/status')
-  @Roles('admin', 'operator')
+  @Roles('admin', 'operator', 'resseler')
   @RequirePermission('customer.update')
-  updateStatus(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateCustomerStatusDto) {
-    return this.customersService.setStatus(id, dto.status);
+  updateStatus(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateCustomerStatusDto,
+    @Scope() scope: RequestScope,
+  ) {
+    return this.customersService.setStatus(id, dto.status, scope);
   }
 
   @Patch(':id')

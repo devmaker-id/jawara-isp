@@ -290,10 +290,11 @@ export class CustomersService {
   async setStatus(
     id: number,
     status: 'active' | 'expired' | 'suspend' | 'disable',
+    scope: RequestScope = SYSTEM_SCOPE,
   ): Promise<Customer> {
-    await this.requireCustomer(id);
+    await this.requireCustomer(id, scope);
     await this.repository.update(id, { status }).catch((error) => this.rethrow(error));
-    return this.findOne(id);
+    return this.findOne(id, scope);
   }
 
   async update(id: number, dto: UpdateCustomerDto): Promise<Customer> {

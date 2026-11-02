@@ -221,6 +221,17 @@ export class AdminService {
     if (!deleted) {
       throw new NotFoundException(`Pengguna dengan ID ${id} tidak ditemukan`);
     }
+
+    // Jejak penghapusan: baris akun sudah hilang, jadi catatan ini yang
+    // menjelaskan siapa menghapus akun apa dan kapan.
+    await this.users
+      .logAudit?.(actorId ?? 0, 'USER_DELETED', {
+        target_user_id: id,
+        email: user.email,
+        role: user.role,
+        at: new Date().toISOString(),
+      })
+      .catch(() => undefined);
     return { ok: true };
   }
 }

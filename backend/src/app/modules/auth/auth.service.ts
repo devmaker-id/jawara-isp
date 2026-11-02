@@ -106,12 +106,10 @@ export class AuthService {
     return updated ? toPublicUser(updated) : null;
   }
 
-  // Kolom avatar belum ada di skema. Perubahan hanya dikembalikan ke pemanggil,
-  // tidak disimpan — menghindari klaim tersimpan padahal tidak.
-  async updateAvatar(email: string, avatar: string): Promise<PublicUser | null> {
-    const user = await this.users.findByEmail(email).catch(toAuthFailure);
-    if (!user) return null;
-    return toPublicUser(user);
+  // Foto profil disimpan sebagai path di kolom `users.avatar` (migrasi 027).
+  async updateAvatar(email: string, avatar: string | null): Promise<PublicUser | null> {
+    const user = await this.users.updateAvatar(email, avatar).catch(toAuthFailure);
+    return user ? toPublicUser(user) : null;
   }
 
   async updatePassword(

@@ -7,6 +7,7 @@ import {
   HttpStatus,
   UnauthorizedException,
   Get,
+  Delete,
   UseGuards,
   UploadedFile,
   UseInterceptors,
@@ -19,7 +20,7 @@ import { JwtAuthGuard, AuthenticatedRequest } from './auth.guard';
 import { toPublicUser } from './auth.mapper';
 import { LoginRateLimitService } from './login-rate-limit.service';
 import * as crypto from 'crypto';
-import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
 // Use fixed absolute path for uploads (compiled dist directory)
@@ -27,6 +28,14 @@ const UPLOAD_DIR = '/home/devmaker/jawara-isp/backend/dist/uploads';
 if (!existsSync(UPLOAD_DIR)) {
   mkdirSync(UPLOAD_DIR, { recursive: true, mode: 0o755 });
 }
+
+// MIME yang diterima → ekstensi berkas. Nama dari klien tidak dipercaya.
+const AVATAR_EXT: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+};
 
 function extractBearerToken(req: Request): string | null {
   const header = req.headers.authorization;
@@ -157,14 +166,17 @@ export class AuthController {
       newPassword,
     );
     if (!success) {
-      throw new UnauthorizedException('Gagal update password (password saat ini mungkin salah)');
+      // 200 + ok:false, bukan 401: frontend memperlakukan 401 sebagai sesi
+      // berakhir, sehingga salah mengetik password lama akan mengeluarkan
+      // pengguna dari panel. 401 di sini bukan soal sesi, tapi soal isian.
+      return { ok: false, error: 'Password saat ini salah' };
     }
     return { ok: true };
   }
 
   @Post('avatar')
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(FileInterceptor('avatar'))
+  @UseInterceptors(FileInterceptor('avatar', { limits: { fileSize: 2 * 1024 * 1024 } }))
   async uploadAvatar(
     @UploadedFile() file: any,
     @Req() req: Request,
@@ -190,25 +202,59 @@ export class AuthController {
       return { error: 'Ukuran file maksimal 2 MB.' };
     }
 
-    // Generate unique filename
-    const ext = file.originalname.split('.').pop()?.toLowerCase() || 'jpg';
-    const filename = `${authenticatedEmail}_${crypto.randomBytes(16).toString('hex')}.${ext}`;
+    // Ekstensi ditentukan dari MIME yang sudah divalidasi, bukan dari nama berkas
+    // kiriman klien (nama bisa berisi ekstensi palsu).
+    const ext = AVATAR_EXT[file.mimetype] ?? 'jpg';
+    const filename = `${authenticatedEmail.replace(/[^a-zA-Z0-9._@-]/g, '_')}_${crypto.randomBytes(16).toString('hex')}.${ext}`;
     const filePath = join(UPLOAD_DIR, filename);
 
     // Simpan file
     writeFileSync(filePath, file.buffer);
 
-    // Update user avatar URL
-    const user = await this.authService.updateAvatar(authenticatedEmail, `/uploads/${filename}`);
+    const user = await this.authService.updateAvatar(authenticatedEmail, `/api/uploads/${filename}`);
     if (!user) {
       return { error: 'Pengguna tidak ditemukan' };
     }
 
-    // Kolom avatar belum ada di skema, jadi file tersimpan tetapi tidak dapat
-    // direferensikan ulang. Laporkan apa adanya, jangan mengaku berhasil.
-    return {
-      ok: false,
-      error: 'Penyimpanan foto profil belum aktif. Fitur ini menunggu migrasi kolom avatar.',
-    };
+    // Hapus berkas lama supaya folder unggahan tidak menumpuk.
+    const previous = (req as any).account?.avatar as string | undefined;
+    if (previous?.startsWith('/api/uploads/')) {
+      const oldPath = join(UPLOAD_DIR, previous.slice('/api/uploads/'.length));
+      if (oldPath !== filePath && existsSync(oldPath)) {
+        try {
+          unlinkSync(oldPath);
+        } catch {
+          // Berkas lama gagal dihapus bukan alasan menggagalkan unggahan baru.
+        }
+      }
+    }
+
+    return { ok: true, avatar: user.avatar };
+  }
+
+  /** Hapus foto profil: kosongkan kolom dan buang berkasnya. */
+  @Delete('avatar')
+  @UseGuards(JwtAuthGuard)
+  async removeAvatar(@Req() req: Request) {
+    const authenticatedEmail = (req as any).user?.email;
+    if (!authenticatedEmail) {
+      return { error: 'Tidak dapat mengakses' };
+    }
+    const previous = (req as any).account?.avatar as string | undefined;
+    const user = await this.authService.updateAvatar(authenticatedEmail, null);
+    if (!user) {
+      return { error: 'Pengguna tidak ditemukan' };
+    }
+    if (previous?.startsWith('/api/uploads/')) {
+      const oldPath = join(UPLOAD_DIR, previous.slice('/api/uploads/'.length));
+      if (existsSync(oldPath)) {
+        try {
+          unlinkSync(oldPath);
+        } catch {
+          // Berkas hilang/bentrok bukan alasan menggagalkan permintaan.
+        }
+      }
+    }
+    return { ok: true };
   }
 }

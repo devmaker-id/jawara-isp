@@ -1,5 +1,6 @@
 import { Controller, Get, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/auth.guard';
+import { RequestScope, Scope } from '../auth/request-scope';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { DashboardService } from './dashboard.service';
@@ -13,7 +14,7 @@ export class DashboardController {
   constructor(private readonly dashboard: DashboardService) {}
 
   @Get()
-  summary() {
-    return this.dashboard.summary();
+  summary(@Scope() scope: RequestScope) {
+    return this.dashboard.summary(scope);
   }
 }

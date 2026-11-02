@@ -1,10 +1,18 @@
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { json, urlencoded } from 'express';
+import { join } from 'node:path';
 import { AppModule } from './app.module';
 import { ConfigService } from './app/config/config.service';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // Foto profil disajikan di /api/uploads supaya ikut jalur proxy frontend
+  // (vite hanya meneruskan /api) dan tidak perlu aturan tambahan.
+  app.useStaticAssets(join(__dirname, 'uploads'), {
+    prefix: '/api/uploads/',
+    maxAge: '7d',
+  });
   // Impor database mengirim isi file sebagai teks di body JSON; batas bawaan
   // Express (100kb) terlalu kecil untuk dump .sql satu tabel.
   app.use(json({ limit: '32mb' }));

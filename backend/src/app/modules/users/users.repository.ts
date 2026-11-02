@@ -11,6 +11,8 @@ export interface UserRecord {
   role: Role;
   phone: string | null;
   address: string | null;
+  /** Path foto profil (`/api/uploads/...`), null bila belum ada. */
+  avatar: string | null;
   is_active: boolean;
   /** Administrator utama: satu-satunya akun yang tidak boleh dihapus. */
   is_primary: boolean;
@@ -28,6 +30,7 @@ export interface CreateUserRecord {
   role: Role;
   phone?: string | null;
   address?: string | null;
+  avatar?: string | null;
   is_active?: boolean;
 }
 
@@ -51,6 +54,7 @@ interface UserRow {
   role: string;
   phone: string | null;
   address: string | null;
+  avatar: string | null;
   is_active: number | boolean;
   is_primary: number | boolean;
   created_at: Date;
@@ -58,7 +62,7 @@ interface UserRow {
 }
 
 const COLUMNS =
-  'id, name, email, password_hash, role, phone, address, is_active, is_primary, created_at, updated_at';
+  'id, name, email, password_hash, role, phone, address, avatar, is_active, is_primary, created_at, updated_at';
 
 function toRecord(row: UserRow): UserRecord {
   return {
@@ -69,6 +73,7 @@ function toRecord(row: UserRow): UserRecord {
     role: row.role as Role,
     phone: row.phone,
     address: row.address,
+    avatar: row.avatar ?? null,
     // MySQL BOOLEAN = TINYINT(1) → 1/0
     is_active: row.is_active === 1 || row.is_active === true,
     is_primary: row.is_primary === 1 || row.is_primary === true,
@@ -222,6 +227,20 @@ export class UsersRepository {
     return result;
   }
 
+  /**
+   * Catat tindakan pada akun ke audit_logs.
+   *
+   * Penghapusan akun dulu tidak meninggalkan jejak apa pun: setelah barisnya
+   * hilang, tidak ada cara mengetahui siapa yang menghapus dan kapan. Untuk
+   * akun yang boleh dihapus permanen, jejak itu justru satu-satunya bukti.
+   */
+  async logAudit(actorId: number, action: string, details: Record<string, unknown>): Promise<void> {
+    await this.db.execute(
+      'INSERT INTO audit_logs (user_id, action, details, ip_address) VALUES (?, ?, ?, ?)',
+      [actorId, action, JSON.stringify(details), 'panel'],
+    );
+  }
+
   // Dipakai autentikasi untuk membedakan "akun belum dikonfigurasi" (tabel
   // kosong) dari "kredensial salah" — dua kondisi yang butuh respons berbeda.
   async countAll(): Promise<number> {
@@ -308,6 +327,10 @@ export class UsersRepository {
       fields.push('address = ?');
       params.push(data.address);
     }
+    if (data.avatar !== undefined) {
+      fields.push('avatar = ?');
+      params.push(data.avatar);
+    }
     if (data.is_active !== undefined) {
       fields.push('is_active = ?');
       params.push(data.is_active ? 1 : 0);
@@ -321,6 +344,12 @@ export class UsersRepository {
     const result = await this.db.execute(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`, params);
     if (result.affectedRows === 0) return null;
     return this.findById(id);
+  }
+
+  /** Simpan path foto profil (null = hapus foto). */
+  async updateAvatar(email: string, avatar: string | null): Promise<UserRecord | null> {
+    await this.db.execute('UPDATE users SET avatar = ? WHERE email = ?', [avatar, email]);
+    return this.findByEmail(email);
   }
 
   async remove(id: number): Promise<boolean> {

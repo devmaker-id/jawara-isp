@@ -49,7 +49,7 @@ export class OltController {
 
   // ===== perangkat =====
   @Get('devices')
-  @Roles('admin', 'operator', 'resseler')
+  @Roles('admin', 'operator')
   @RequirePermission('olt.view')
   devices() {
     return this.service.listDevices();
@@ -96,7 +96,7 @@ export class OltController {
   }
 
   @Get('devices/:id/runs')
-  @Roles('admin', 'operator', 'resseler')
+  @Roles('admin', 'operator')
   @RequirePermission('olt.view')
   runs(@Param('id', ParseIntPipe) id: number) {
     return this.service.listRuns(id);
@@ -104,7 +104,7 @@ export class OltController {
 
   // ===== inventori =====
   @Get('onus')
-  @Roles('admin', 'operator', 'resseler')
+  @Roles('admin', 'operator')
   @RequirePermission('olt.view')
   onus(
     @Query('olt_id') oltId?: string,
