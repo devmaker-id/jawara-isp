@@ -97,9 +97,11 @@ const baris = [
 
 // ONU hanya ditampilkan bila memang ada relasinya. Saat ini belum ada, jadi
 // barisnya dihilangkan — bukan dikarang.
-if (c.onu?.serial_number || c.onu?.onu_name) {
-  baris.push(['ONU', [c.onu.onu_name, c.onu.serial_number].filter(Boolean).join(' · ')]);
-  if (c.onu.rx_power_onu != null) baris.push(['Redaman', `${c.onu.rx_power_onu} dBm`]);
+if (c.onu?.serial_number || c.onu?.onu_name || c.onu?.name) {
+  baris.push(['ONU', [c.onu.name, c.onu.serial_number].filter(Boolean).join(' · ')]);
+  if (c.onu.rx_power !== null && c.onu.rx_power !== undefined) {
+    baris.push(['Redaman', `${c.onu.rx_power} dBm`]);
+  }
 }
 
 const lebar = Math.max(...baris.map(([k]) => k.length));
