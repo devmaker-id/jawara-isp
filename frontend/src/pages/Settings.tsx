@@ -140,6 +140,7 @@ const InfoRow: React.FC<{ label: string; value: string }> = ({ label, value }) =
 interface TemplateCatalog {
   templates: VoucherTemplate[];
   variables: VoucherVariable[];
+  brand: { brand: string; tagline: string };
 }
 
 const Settings: React.FC = () => {
@@ -199,9 +200,17 @@ const Settings: React.FC = () => {
   // Bila config masih kosong, tampilkan template bawaan dari server supaya bisa
   // langsung diubah — tanpa menulis apa pun sebelum admin menyimpan.
   const voucherTemplates = useMemo<VoucherTemplate[]>(() => {
+    // Template lama tersimpan tanpa HTML. Server sudah mengubahnya ke HTML saat
+    // katalog dibaca, jadi ambil bentuk itu agar editor tidak kosong.
+    const fromCatalog = new Map((catalog?.templates ?? []).map((row) => [row.id, row.html]));
     try {
       const parsed = JSON.parse(values.voucher_templates || '[]');
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed as VoucherTemplate[];
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return (parsed as VoucherTemplate[]).map((row) => ({
+          ...row,
+          html: row.html || (row.id ? fromCatalog.get(row.id) ?? '' : ''),
+        }));
+      }
     } catch {
       /* config rusak: pakai template bawaan di bawah */
     }
@@ -692,6 +701,7 @@ const Settings: React.FC = () => {
       <VoucherTemplatesPanel
         templates={voucherTemplates}
         variables={voucherVariables}
+        brand={catalog?.brand ?? { brand: '', tagline: '' }}
         canEdit={isAdmin}
         onSaved={(raw) => set('voucher_templates', raw)}
       />

@@ -16,6 +16,7 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import { FALLBACK_TEXT_TEMPLATE } from './voucher-template';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { PermissionGuard, RequirePermission } from '../permissions/permission.guard';
@@ -329,10 +330,12 @@ export class VouchersController {
     const templates = await this.service.voucherTemplates();
     const template = templates.find((item) => item.id === query.template) ?? templates[0];
     const brand = await this.service.voucherBrand();
+    // Template HTML hanya dirender di browser admin. PDF dari server memakai
+    // mesin teks bawaan supaya tidak ada HTML pengguna yang ditafsirkan di sini.
     const pdf = this.service.buildVoucherPdf(
-      ProfilesService.toCards(rows, template, brand),
+      ProfilesService.toCards(rows, FALLBACK_TEXT_TEMPLATE, brand),
       footer,
-      template.layout,
+      template?.layout,
     );
     response
       .status(200)

@@ -30,11 +30,12 @@ import { finalPrice, toRadiusMapping } from './profile-mapping';
 import { BURST_FACTOR } from './rate-limit';
 import { buildVoucherPdf, PdfLayout, VoucherCard } from './voucher-pdf';
 import {
-  DEFAULT_TEMPLATES,
+  FALLBACK_TEXT_TEMPLATE,
   fillTemplate,
   parseTemplates,
   TEMPLATE_VARIABLES,
   type VoucherTemplate,
+  type VoucherTextTemplate,
 } from './voucher-template';
 import { SettingsService } from '../settings/settings.service';
 import {
@@ -1406,21 +1407,23 @@ export class ProfilesService {
   }
 
   /**
-   * Template kartu voucher yang AKTIF (Pengaturan → Template Voucher).
-   *
-   * Template yang dinonaktifkan tidak ditawarkan saat mencetak. Bila semua
-   * dinonaktifkan, pencetakan tetap berjalan memakai template bawaan supaya
-   * tidak ada layar kosong tanpa penjelasan.
+   * Semua template voucher (aktif dan nonaktif). Panel pengaturan butuh yang
+   * nonaktif juga untuk ditampilkan/diaktifkan kembali; penyaringan saat
+   * mencetak dilakukan pada template yang aktif saja.
    */
   async voucherTemplates(): Promise<VoucherTemplate[]> {
-    const all = parseTemplates(await this.settings.rawValue('voucher_templates'));
-    const enabled = all.filter((template) => template.enabled);
-    return enabled.length > 0 ? enabled : DEFAULT_TEMPLATES.filter((template) => template.enabled);
+    return parseTemplates(await this.settings.rawValue('voucher_templates'));
   }
 
   /** Daftar template + variabel yang sah, untuk dialog cetak dan halaman pengaturan. */
   async voucherTemplateCatalog() {
-    return { templates: await this.voucherTemplates(), variables: TEMPLATE_VARIABLES };
+    return {
+      templates: await this.voucherTemplates(),
+      variables: TEMPLATE_VARIABLES,
+      // Brand ikut dikirim: pencetakan HTML terjadi di browser, jadi panel butuh
+      // nilainya untuk mengisi {{brand}}/{{tagline}}.
+      brand: await this.voucherBrand(),
+    };
   }
 
   /** Identitas brand untuk variabel {{brand}}/{{tagline}}. */
@@ -1449,7 +1452,7 @@ export class ProfilesService {
       expires_at?: string | null;
       created_at?: string | null;
     }>,
-    template: VoucherTemplate = DEFAULT_TEMPLATES[0],
+    template: VoucherTextTemplate = FALLBACK_TEXT_TEMPLATE,
     brand: { brand: string; tagline: string } = { brand: '', tagline: '' },
     printedAt: Date = new Date(),
   ): VoucherCard[] {
@@ -1514,9 +1517,9 @@ export class ProfilesService {
     );
     const phoneByCustomer = new Map(customers.map((row) => [Number(row.id), row.phone ?? '']));
 
-    // Template & brand dipakai untuk semua PDF yang dikirim (template pertama).
-    const templates = await this.voucherTemplates();
-    const template = templates[0];
+    // PDF WhatsApp memakai mesin teks bawaan: HTML template hanya dirender di
+    // browser admin, jadi server tidak mencoba menafsirkan HTML pengguna.
+    const template = FALLBACK_TEXT_TEMPLATE;
     const brand = await this.voucherBrand();
 
     const sent: string[] = [];
@@ -1543,12 +1546,7 @@ export class ProfilesService {
         phone: target,
         caption,
         filename: `voucher-${row.username}.pdf`,
-        pdf: buildVoucherPdf(
-          ProfilesService.toCards([row], template, brand),
-          'Voucher',
-          undefined,
-          template.layout,
-        ),
+        pdf: buildVoucherPdf(ProfilesService.toCards([row], template, brand)),
       });
       pdfAttached = result.pdf_attached;
       note = result.note;

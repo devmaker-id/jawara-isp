@@ -12,6 +12,21 @@ import {
   errorMessage,
 } from '../../components/net/NetUI';
 import { TablePager, useTablePager } from '../../components/TablePager';
+import {
+  buildPrintDocument,
+  cardFromRow,
+  printHtmlDocument,
+  type VoucherPrintBrand,
+  type VoucherPrintLayout,
+} from '../../utils/voucher-print';
+
+interface PrintTemplate {
+  id: string;
+  name: string;
+  html?: string;
+  enabled?: boolean;
+  layout?: VoucherPrintLayout;
+}
 
 /**
  * Voucher Management — satu halaman per tipe layanan.
@@ -202,7 +217,8 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
   const [printOpen, setPrintOpen] = useState(false);
   const [printUseSelection, setPrintUseSelection] = useState(true);
   const [printTemplate, setPrintTemplate] = useState('');
-  const [templates, setTemplates] = useState<Array<{ id: string; name: string }>>([]);
+  const [templates, setTemplates] = useState<PrintTemplate[]>([]);
+  const [printBrand, setPrintBrand] = useState<VoucherPrintBrand>({ brand: '', tagline: '' });
   const [printStatus, setPrintStatus] = useState<'' | Status>('new-created');
   const [printProfile, setPrintProfile] = useState('');
   const [printOwner, setPrintOwner] = useState('');
@@ -260,8 +276,11 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
   // Template cetak dari Pengaturan → Template Voucher.
   useEffect(() => {
     api
-      .get<{ templates: Array<{ id: string; name: string }> }>('/api/vouchers/templates')
-      .then((res) => setTemplates(Array.isArray(res.data?.templates) ? res.data.templates : []))
+      .get<{ templates: PrintTemplate[]; brand?: VoucherPrintBrand }>('/api/vouchers/templates')
+      .then((res) => {
+        setTemplates(Array.isArray(res.data?.templates) ? res.data.templates : []);
+        if (res.data?.brand) setPrintBrand(res.data.brand);
+      })
       .catch(() => setTemplates([]));
   }, []);
 
@@ -436,7 +455,7 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
   const openPrint = () => {
     if (!hasSelection) return;
     setPrintUseSelection(true);
-    setPrintTemplate(templates[0]?.id ?? '');
+    setPrintTemplate(templates.find((row) => row.enabled !== false)?.id ?? '');
     setPrintStatus('new-created');
     setPrintProfile(profileFilter);
     setPrintOwner(ownerFilter);
@@ -456,7 +475,7 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
     setBusy(true);
     setError(null);
     try {
-      let ids: number[] = [...selected];
+      let chosen: VoucherRow[] = useSelection ? rows.filter((row) => selected.has(row.id)) : [];
       if (!useSelection) {
         const { data } = await api.get<VoucherRow[]>('/api/vouchers', {
           params: {
@@ -469,22 +488,42 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
             date_to: printTo || undefined,
           },
         });
-        ids = (Array.isArray(data) ? data : []).map((row) => row.id);
+        chosen = Array.isArray(data) ? data : [];
       }
-      if (ids.length === 0) {
+      if (chosen.length === 0) {
         setError('Tidak ada voucher yang cocok dengan kriteria cetak.');
         return;
       }
-      await fetchFile(
-        `/api/vouchers/export.pdf?profile_type=${type}&ids=${ids.join(',')}` +
-          (printTemplate ? `&template=${encodeURIComponent(printTemplate)}` : ''),
-        `voucher-${type}-${new Date().toISOString().slice(0, 10)}.pdf`,
-        true,
+
+      const template = templates.find((item) => item.id === printTemplate) ?? templates[0];
+      if (!template?.html) {
+        // Template lama tanpa HTML: pakai PDF bawaan server.
+        await fetchFile(
+          `/api/vouchers/export.pdf?profile_type=${type}&ids=${chosen.map((row) => row.id).join(',')}`,
+          `voucher-${type}-${new Date().toISOString().slice(0, 10)}.pdf`,
+          true,
+        );
+        setPrintOpen(false);
+        setToast(`${chosen.length} voucher disiapkan untuk dicetak (PDF bawaan).`);
+        return;
+      }
+
+      // Cetak di browser dengan template HTML/CSS milik admin. Dokumen dibuat
+      // dari iframe sandbox; tidak ada HTML yang dirender di server.
+      const printedAt = new Date().toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' });
+      printHtmlDocument(
+        buildPrintDocument(
+          template.html,
+          chosen.map((row) => cardFromRow(row)),
+          template.layout ?? { columns: 3, marginMm: 8.5, gapMm: 3.5 },
+          printBrand,
+          printedAt,
+        ),
       );
       setPrintOpen(false);
       setToast(
-        `${ids.length} voucher disiapkan untuk dicetak (PDF)` +
-          (ids.length >= 500 ? ' — batas 500 per cetak, persempit kriteria bila perlu.' : '.'),
+        `${chosen.length} voucher dikirim ke dialog cetak browser — pilih "Save as PDF" bila ingin berkas` +
+          (chosen.length >= 500 ? ' (batas 500 per cetak).' : '.'),
       );
     } catch (err) {
       setError(readError(err));
@@ -628,7 +667,7 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
                     onClick={() => { setMenuOpen(false); openPrint(); }}
                     disabled={busy || !hasSelection}
                   >
-                    Cetak voucher (PDF)…
+                    Cetak voucher…
                   </MenuItem>
                   <MenuItem
                     onClick={() => { setMenuOpen(false); void exportCsv(); }}
@@ -950,14 +989,17 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
                 className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
               >
                 {templates.length === 0 && <option value="">Template bawaan</option>}
-                {templates.map((template) => (
-                  <option key={template.id} value={template.id}>
-                    {template.name}
-                  </option>
-                ))}
+                {templates
+                  .filter((template) => template.enabled !== false)
+                  .map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.name}
+                    </option>
+                  ))}
               </select>
               <p className="mt-1 text-[11px] text-slate-500">
-                Template diatur di Pengaturan → Template Voucher.
+                Template diatur di Pengaturan → Template Voucher (HTML/CSS). Cetak memakai dialog browser —
+                pilih &quot;Save as PDF&quot; bila ingin menyimpan berkas.
               </p>
             </div>
 
@@ -1061,7 +1103,7 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
                 Batal
               </Button>
               <Button variant="primary" onClick={() => void printVoucher()} disabled={busy}>
-                {busy ? 'Menyiapkan…' : 'Cetak PDF'}
+                {busy ? 'Menyiapkan…' : 'Cetak'}
               </Button>
             </div>
           </div>
