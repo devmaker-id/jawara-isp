@@ -114,7 +114,9 @@ export const VoucherTemplatesPanel: React.FC<{
   const [confirmIndex, setConfirmIndex] = useState<number | null>(null);
   const [draft, setDraft] = useState<VoucherTemplate | null>(null);
   const [draftIndex, setDraftIndex] = useState(-1);
-  const [height, setHeight] = useState<string>('460px');
+  // Di layar kecil modal dibagi jadi 3 tab supaya tidak perlu scroll jauh.
+  const [pane, setPane] = useState<'kode' | 'pratinjau' | 'variabel'>('kode');
+  const [height, setHeight] = useState<string>(() => (window.innerWidth < 1024 ? '320px' : '460px'));
   const [previewKind, setPreviewKind] = useState<'voucher' | 'member'>('voucher');
   const [previewCount, setPreviewCount] = useState<1 | 4 | 8>(4);
   const editorRef = useRef<CodeEditorHandle | null>(null);
@@ -216,6 +218,105 @@ export const VoucherTemplatesPanel: React.FC<{
 
   const lines = draft ? draft.html.split('\n').length : 0;
 
+  // Baris tabel untuk layar >= md (di mobile dipakai daftar kartu).
+  const tableRows = list.map((row, index) => (
+    <tr key={`${row.name}-${index}`} className="hover:bg-slate-800/40">
+      <td className={cellClass}>
+        <p className="flex items-center gap-2 font-medium text-slate-200">
+          {row.name || '(tanpa nama)'}
+          {index === defaultIndex && (
+            <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 text-[10px] text-cyan-300">default</span>
+          )}
+        </p>
+        <p className="max-w-[340px] truncate font-mono text-xs text-slate-500">
+          {row.html.split('\n').find((line) => line.includes('{{'))?.trim() ?? '—'}
+        </p>
+      </td>
+      <td className={`${cellClass} font-mono text-xs`}>
+        {row.layout.columns} kolom · {row.layout.marginMm} mm · jarak {row.layout.gapMm} mm
+      </td>
+      <td className={cellClass}>
+        <span
+          className={`rounded-full px-2 py-0.5 text-xs ${
+            row.enabled ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-600/30 text-slate-400'
+          }`}
+        >
+          {row.enabled ? 'Aktif' : 'Nonaktif'}
+        </span>
+      </td>
+      <td className={`${cellClass} font-mono text-xs`}>
+        {row.html.length.toLocaleString('id-ID')} / {MAX_HTML.toLocaleString('id-ID')}
+      </td>
+      <td className={cellClass}>
+        {confirmIndex === index ? (
+          <span className="flex items-center gap-2">
+            <span className="text-xs text-slate-400">Hapus template ini?</span>
+            <button
+              type="button"
+              onClick={() => remove(index)}
+              className="rounded bg-rose-600 px-2 py-1 text-xs text-white hover:bg-rose-500"
+            >
+              Ya
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmIndex(null)}
+              className="rounded bg-slate-700 px-2 py-1 text-xs text-slate-200"
+            >
+              Batal
+            </button>
+          </span>
+        ) : (
+          <span className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => openEdit(index)}
+              disabled={!canEdit}
+              className="rounded bg-slate-700/60 px-2 py-1 text-xs text-slate-100 hover:bg-slate-700 disabled:opacity-40"
+            >
+              Ubah
+            </button>
+            <button
+              type="button"
+              onClick={() => duplicate(index)}
+              disabled={!canEdit || busy || list.length >= MAX_TEMPLATES}
+              className="rounded bg-slate-700/40 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-40"
+            >
+              Gandakan
+            </button>
+            {index !== defaultIndex && (
+              <button
+                type="button"
+                onClick={() => makeDefault(index)}
+                disabled={!canEdit || busy}
+                className="rounded bg-cyan-600/15 px-2 py-1 text-xs text-cyan-300 hover:bg-cyan-600/25 disabled:opacity-40"
+              >
+                Jadikan default
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => toggleEnabled(index)}
+              disabled={!canEdit || busy}
+              className="rounded bg-slate-700/40 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-40"
+            >
+              {row.enabled ? 'Nonaktifkan' : 'Aktifkan'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmIndex(index)}
+              disabled={!canEdit}
+              className="rounded bg-rose-500/10 px-2 py-1 text-xs text-rose-300 hover:bg-rose-500/20 disabled:opacity-40"
+            >
+              Hapus
+            </button>
+          </span>
+        )}
+      </td>
+    </tr>
+  ));
+
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -237,7 +338,8 @@ export const VoucherTemplatesPanel: React.FC<{
         <p className={`text-sm ${message.type === 'ok' ? 'text-emerald-400' : 'text-rose-400'}`}>{message.text}</p>
       )}
 
-      <div className="overflow-x-auto rounded-lg border border-slate-700/60">
+      {/* Desktop: tabel penuh */}
+      <div className="hidden overflow-x-auto rounded-lg border border-slate-700/60 md:block">
         <table className="min-w-full divide-y divide-slate-700/60">
           <thead className="bg-slate-800/60">
             <tr>
@@ -249,345 +351,375 @@ export const VoucherTemplatesPanel: React.FC<{
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800">
-            {list.length === 0 && (
-              <tr>
-                <td colSpan={5} className="px-4 py-6 text-sm text-slate-400">
-                  Belum ada template. Server memakai template bawaan sampai Anda membuat satu.
-                </td>
-              </tr>
-            )}
-            {list.map((row, index) => (
-              <tr key={`${row.name}-${index}`} className="hover:bg-slate-800/40">
-                <td className={cellClass}>
-                  <p className="font-medium text-slate-200 flex items-center gap-2">
-                    {row.name || '(tanpa nama)'}
-                    {index === defaultIndex && (
-                      <span className="px-1.5 py-0.5 rounded text-[10px] bg-cyan-500/15 text-cyan-300">default</span>
-                    )}
-                  </p>
-                  <p className="text-xs text-slate-500 font-mono truncate max-w-[340px]">
-                    {row.html.split('\n').find((line) => line.includes('{{'))?.trim() ?? '—'}
-                  </p>
-                </td>
-                <td className={`${cellClass} font-mono text-xs`}>
-                  {row.layout.columns} kolom · {row.layout.marginMm} mm · jarak {row.layout.gapMm} mm
-                </td>
-                <td className={cellClass}>
-                  <span
-                    className={`px-2 py-0.5 rounded-full text-xs ${
-                      row.enabled ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-600/30 text-slate-400'
-                    }`}
-                  >
-                    {row.enabled ? 'Aktif' : 'Nonaktif'}
-                  </span>
-                </td>
-                <td className={`${cellClass} font-mono text-xs`}>
-                  {row.html.length.toLocaleString('id-ID')} / {MAX_HTML.toLocaleString('id-ID')}
-                </td>
-                <td className={cellClass}>
-                  {confirmIndex === index ? (
-                    <span className="flex items-center gap-2">
-                      <span className="text-xs text-slate-400">Hapus template ini?</span>
-                      <button
-                        type="button"
-                        onClick={() => remove(index)}
-                        className="px-2 py-1 rounded text-xs bg-rose-600 text-white hover:bg-rose-500"
-                      >
-                        Ya
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmIndex(null)}
-                        className="px-2 py-1 rounded text-xs bg-slate-700 text-slate-200"
-                      >
-                        Batal
-                      </button>
-                    </span>
-                  ) : (
-                    <span className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => openEdit(index)}
-                        disabled={!canEdit}
-                        className="px-2 py-1 rounded text-xs bg-slate-700/60 text-slate-100 hover:bg-slate-700 disabled:opacity-40"
-                      >
-                        Ubah
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => duplicate(index)}
-                        disabled={!canEdit || busy || list.length >= MAX_TEMPLATES}
-                        className="px-2 py-1 rounded text-xs bg-slate-700/40 text-slate-200 hover:bg-slate-700 disabled:opacity-40"
-                      >
-                        Gandakan
-                      </button>
-                      {index !== defaultIndex && (
-                        <button
-                          type="button"
-                          onClick={() => makeDefault(index)}
-                          disabled={!canEdit || busy}
-                          className="px-2 py-1 rounded text-xs bg-cyan-600/15 text-cyan-300 hover:bg-cyan-600/25 disabled:opacity-40"
-                        >
-                          Jadikan default
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => toggleEnabled(index)}
-                        disabled={!canEdit || busy}
-                        className="px-2 py-1 rounded text-xs bg-slate-700/40 text-slate-200 hover:bg-slate-700 disabled:opacity-40"
-                      >
-                        {row.enabled ? 'Nonaktifkan' : 'Aktifkan'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmIndex(index)}
-                        disabled={!canEdit}
-                        className="px-2 py-1 rounded text-xs bg-rose-500/10 text-rose-300 hover:bg-rose-500/20 disabled:opacity-40"
-                      >
-                        Hapus
-                      </button>
-                    </span>
-                  )}
-                </td>
-              </tr>
-            ))}
+            {tableRows}
           </tbody>
         </table>
       </div>
 
+      {/* Mobile: daftar kartu, aksi tidak terpotong */}
+      <div className="space-y-3 md:hidden">
+        {list.length === 0 && (
+          <p className="rounded-lg border border-slate-700/60 p-4 text-sm text-slate-400">
+            Belum ada template. Server memakai template bawaan sampai Anda membuat satu.
+          </p>
+        )}
+        {list.map((row, index) => (
+          <div key={`m-${row.name}-${index}`} className="rounded-lg border border-slate-700/60 bg-slate-800/40 p-3">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-slate-200">{row.name || '(tanpa nama)'}</p>
+                <p className="mt-0.5 text-[11px] text-slate-400">
+                  {row.layout.columns} kolom · {row.layout.marginMm} mm · {row.html.length.toLocaleString('id-ID')} kar.
+                </p>
+              </div>
+              <span
+                className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] ${
+                  row.enabled ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-600/30 text-slate-400'
+                }`}
+              >
+                {row.enabled ? 'Aktif' : 'Nonaktif'}
+              </span>
+            </div>
+            {index === defaultIndex && (
+              <p className="mt-1 text-[11px] text-cyan-300">Template default saat mencetak</p>
+            )}
+            {confirmIndex === index ? (
+              <div className="mt-2 flex items-center gap-2">
+                <span className="text-xs text-slate-300">Hapus template ini?</span>
+                <button
+                  type="button"
+                  onClick={() => remove(index)}
+                  className="rounded bg-rose-600 px-3 py-1.5 text-xs text-white"
+                >
+                  Ya
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmIndex(null)}
+                  className="rounded bg-slate-700 px-3 py-1.5 text-xs text-slate-100"
+                >
+                  Batal
+                </button>
+              </div>
+            ) : (
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => openEdit(index)}
+                  disabled={!canEdit}
+                  className="rounded bg-cyan-600 px-3 py-2 text-xs font-medium text-white disabled:opacity-40"
+                >
+                  Ubah kode
+                </button>
+                <button
+                  type="button"
+                  onClick={() => duplicate(index)}
+                  disabled={!canEdit || busy || list.length >= MAX_TEMPLATES}
+                  className="rounded bg-slate-700 px-3 py-2 text-xs text-slate-100 disabled:opacity-40"
+                >
+                  Gandakan
+                </button>
+                <button
+                  type="button"
+                  onClick={() => toggleEnabled(index)}
+                  disabled={!canEdit || busy}
+                  className="rounded bg-slate-700/60 px-3 py-2 text-xs text-slate-100 disabled:opacity-40"
+                >
+                  {row.enabled ? 'Nonaktifkan' : 'Aktifkan'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmIndex(index)}
+                  disabled={!canEdit}
+                  className="rounded bg-rose-500/10 px-3 py-2 text-xs text-rose-300 disabled:opacity-40"
+                >
+                  Hapus
+                </button>
+                {index !== defaultIndex && (
+                  <button
+                    type="button"
+                    onClick={() => makeDefault(index)}
+                    disabled={!canEdit || busy}
+                    className="col-span-2 rounded bg-cyan-600/15 px-3 py-2 text-xs text-cyan-300 disabled:opacity-40"
+                  >
+                    Jadikan default
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
       {draft && (
-        <div className="fixed inset-0 z-50 bg-black/70 p-0 sm:p-6 overflow-y-auto">
-          <div className="mx-auto w-full max-w-[1500px] rounded-none sm:rounded-xl border border-slate-700 bg-slate-900 shadow-2xl">
-            <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b border-slate-700 bg-slate-800/80">
-              <span className="h-2.5 w-2.5 rounded-full bg-rose-500/80" />
-              <span className="h-2.5 w-2.5 rounded-full bg-amber-400/80" />
-              <span className="h-2.5 w-2.5 rounded-full bg-emerald-500/80" />
-              <p className="ml-2 font-mono text-xs text-slate-300 truncate">{draft.name || 'tanpa-nama'}.html</p>
-              <span className="text-[11px] text-slate-500">
+        <div className="fixed inset-0 z-50 flex bg-black/70 sm:p-6">
+          <div className="mx-auto flex h-full w-full max-w-[1500px] flex-col overflow-hidden border border-slate-700 bg-slate-800 shadow-2xl sm:h-auto sm:max-h-[92vh] sm:rounded-xl">
+            {/* Kepala: tetap terlihat saat isi digulir */}
+            <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-700 px-3 py-2 sm:px-4">
+              <p className="min-w-0 flex-1 truncate font-mono text-xs text-slate-300">
+                {draft.name || 'tanpa-nama'}.html
+              </p>
+              <span className="text-[11px] text-slate-400">
                 {lines.toLocaleString('id-ID')} baris · {draft.html.length.toLocaleString('id-ID')} karakter
               </span>
               <span
-                className={`ml-auto text-[11px] font-medium ${
+                className={`text-[11px] font-medium ${
                   draftErrors.length === 0 ? 'text-emerald-400' : 'text-rose-400'
                 }`}
               >
                 {draftErrors.length === 0 ? 'valid' : `${draftErrors.length} masalah`}
               </span>
+              <button
+                type="button"
+                onClick={() => setDraft(null)}
+                aria-label="Tutup editor"
+                className="rounded bg-slate-700 px-2 py-1 text-xs text-slate-200 sm:hidden"
+              >
+                ✕
+              </button>
             </div>
 
-            <div className="grid xl:grid-cols-[1fr_360px]">
-              {/* Kolom editor */}
-              <div className="p-4 space-y-3 min-w-0">
-                <div className="flex flex-wrap items-end gap-3">
-                  <label className="flex-1 min-w-[180px]">
-                    <span className="block text-[10px] uppercase tracking-wider text-slate-500 mb-1">
-                      Nama template
-                    </span>
-                    <input
-                      value={draft.name}
-                      maxLength={40}
-                      onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                      className="w-full px-2 py-1.5 rounded bg-slate-800 border border-slate-700 text-sm text-slate-200 focus:border-cyan-500 outline-none"
-                      placeholder="Klasik"
-                    />
-                  </label>
-                  <div>
-                    <span className="block text-[10px] uppercase tracking-wider text-slate-500 mb-1">
-                      Tinggi editor
-                    </span>
-                    <div className="flex gap-1">
-                      {HEIGHTS.map((item) => (
-                        <button
-                          key={item.key}
-                          type="button"
-                          onClick={() => setHeight(item.value)}
-                          className={`px-2 py-1.5 rounded text-xs border ${
-                            height === item.value
-                              ? 'border-cyan-500 bg-cyan-500/10 text-cyan-300'
-                              : 'border-slate-700 text-slate-400 hover:border-slate-500'
-                          }`}
-                        >
-                          {item.label}
-                        </button>
-                      ))}
+            {/* Tab khusus layar kecil: satu panel per layar */}
+            <div className="flex shrink-0 gap-1 border-b border-slate-700 px-3 py-2 xl:hidden">
+              {(
+                [
+                  ['kode', 'Kode'],
+                  ['pratinjau', 'Pratinjau'],
+                  ['variabel', 'Variabel'],
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setPane(key)}
+                  className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium ${
+                    pane === key ? 'bg-cyan-600 text-white' : 'bg-slate-700/50 text-slate-200'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
+              <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
+                {/* Panel Kode */}
+                <div className={`${pane === 'kode' ? 'block' : 'hidden'} min-w-0 space-y-3 xl:block`}>
+                  <div className="flex flex-wrap items-end gap-3">
+                    <label className="min-w-[180px] flex-1">
+                      <span className="mb-1 block text-[11px] font-medium uppercase tracking-wider text-slate-400">
+                        Nama template
+                      </span>
+                      <input
+                        value={draft.name}
+                        maxLength={40}
+                        onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                        className="w-full rounded bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none ring-1 ring-slate-700 focus:ring-cyan-500"
+                        placeholder="Klasik"
+                      />
+                    </label>
+                    <div className="hidden sm:block">
+                      <span className="mb-1 block text-[11px] font-medium uppercase tracking-wider text-slate-400">
+                        Tinggi editor
+                      </span>
+                      <div className="flex gap-1">
+                        {HEIGHTS.map((item) => (
+                          <button
+                            key={item.key}
+                            type="button"
+                            onClick={() => setHeight(item.value)}
+                            className={`rounded border px-2 py-1.5 text-xs ${
+                              height === item.value
+                                ? 'border-cyan-500 bg-cyan-500/10 text-cyan-300'
+                                : 'border-slate-700 text-slate-300 hover:border-slate-500'
+                            }`}
+                          >
+                            {item.label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <CodeEditor
-                  ref={editorRef}
-                  value={draft.html}
-                  onChange={(html) => setDraft((current) => (current ? { ...current, html } : current))}
-                  height={height}
-                  ariaLabel="Editor HTML template voucher"
-                />
-                <p className="text-[11px] text-slate-500">
-                  Scroll vertikal & horizontal ada di dalam editor. Seret sudut kanan bawah untuk mengatur tinggi.
-                  Tab = 2 spasi, Ctrl/Cmd+F mencari, Ctrl/Cmd+Z undo.
-                </p>
-
-                {draftErrors.length > 0 && (
-                  <ul className="text-xs text-rose-400 space-y-1 border border-rose-500/30 bg-rose-500/5 rounded p-3">
-                    {draftErrors.map((error) => (
-                      <li key={error}>• {error}</li>
-                    ))}
-                  </ul>
-                )}
-
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800">
-                  <label className="flex items-center gap-2 text-sm text-slate-300">
-                    <input
-                      type="checkbox"
-                      checked={draft.enabled}
-                      onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })}
-                      className="h-4 w-4 rounded border-slate-600 bg-slate-800"
-                    />
-                    Aktif — tampil sebagai pilihan saat mencetak
-                  </label>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setDraft(null)}
-                      className="px-3 py-2 rounded-lg bg-slate-800 text-sm text-slate-200 hover:bg-slate-700"
-                    >
-                      Batal
-                    </button>
-                    <button
-                      type="button"
-                      onClick={saveDraft}
-                      disabled={busy || draftErrors.length > 0}
-                      className="px-3 py-2 rounded-lg bg-cyan-600 text-sm font-medium text-white hover:bg-cyan-500 disabled:opacity-50"
-                    >
-                      {busy ? 'Menyimpan…' : 'Simpan template'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Kolom pratinjau + variabel */}
-              <aside className="border-t xl:border-t-0 xl:border-l border-slate-700 p-4 space-y-4">
-                <div>
-                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                    <p className="text-[10px] uppercase tracking-wider text-slate-500">Pratinjau</p>
-                    <div className="flex gap-1">
-                      {(['voucher', 'member'] as const).map((kind) => (
-                        <button
-                          key={kind}
-                          type="button"
-                          onClick={() => setPreviewKind(kind)}
-                          className={`px-2 py-0.5 rounded text-[11px] border ${
-                            previewKind === kind
-                              ? 'border-cyan-500 text-cyan-300 bg-cyan-500/10'
-                              : 'border-slate-700 text-slate-400'
-                          }`}
-                        >
-                          {kind === 'voucher' ? 'Voucher' : 'Member'}
-                        </button>
-                      ))}
-                      <select
-                        value={previewCount}
-                        onChange={(e) => setPreviewCount(Number(e.target.value) as 1 | 4 | 8)}
-                        className="rounded border border-slate-700 bg-slate-800 px-1 py-0.5 text-[11px] text-slate-300"
-                        aria-label="Jumlah contoh kartu"
-                      >
-                        <option value={1}>1 kartu</option>
-                        <option value={4}>4 kartu</option>
-                        <option value={8}>8 kartu</option>
-                      </select>
-                    </div>
-                  </div>
-                  <iframe
-                    title="Pratinjau template voucher"
-                    sandbox=""
-                    srcDoc={preview}
-                    className="w-full rounded border border-slate-700 bg-white"
-                    style={{ height: 300 }}
+                  <CodeEditor
+                    ref={editorRef}
+                    value={draft.html}
+                    onChange={(html) => setDraft((current) => (current ? { ...current, html } : current))}
+                    height={height}
+                    ariaLabel="Editor HTML template voucher"
                   />
-                  <p className="text-[10px] text-slate-500 mt-1">
-                    Renderer yang sama dengan cetak. Data contoh, tidak menyimpan apa pun.
+                  <p className="text-[11px] leading-relaxed text-slate-400">
+                    Scroll ada di dalam editor. Seret sudut kanan bawah untuk mengubah tinggi. Tab = 2 spasi,
+                    Ctrl/Cmd+F mencari, Ctrl/Cmd+Z undo.
                   </p>
+
+                  {draftErrors.length > 0 && (
+                    <ul className="space-y-1 rounded border border-rose-500/30 bg-rose-500/5 p-3 text-xs text-rose-400">
+                      {draftErrors.map((error) => (
+                        <li key={error}>• {error}</li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
 
-                <div>
-                  <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Grid halaman</p>
-                  <div className="grid grid-cols-3 gap-1.5 mb-2">
-                    {[1, 2, 3].map((cols) => (
-                      <button
-                        key={cols}
-                        type="button"
-                        onClick={() =>
-                          setDraft({ ...draft, layout: { ...draft.layout, columns: cols as 1 | 2 | 3 } })
-                        }
-                        className={`py-1.5 rounded font-mono text-xs border ${
-                          draft.layout.columns === cols
-                            ? 'border-cyan-500 bg-cyan-500/10 text-cyan-300'
-                            : 'border-slate-700 text-slate-400 hover:border-slate-500'
-                        }`}
-                      >
-                        {cols} kolom
-                      </button>
-                    ))}
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <label className="block">
-                      <span className="block text-[10px] text-slate-500 mb-0.5">Margin (mm)</span>
-                      <input
-                        type="number"
-                        min={5}
-                        max={24}
-                        step={0.5}
-                        value={draft.layout.marginMm}
-                        onChange={(e) =>
-                          setDraft({ ...draft, layout: { ...draft.layout, marginMm: Number(e.target.value) } })
-                        }
-                        className="w-full px-2 py-1 rounded bg-slate-800 border border-slate-700 font-mono text-xs text-slate-200"
-                      />
-                    </label>
-                    <label className="block">
-                      <span className="block text-[10px] text-slate-500 mb-0.5">Jarak (mm)</span>
-                      <input
-                        type="number"
-                        min={2}
-                        max={15}
-                        step={0.5}
-                        value={draft.layout.gapMm}
-                        onChange={(e) =>
-                          setDraft({ ...draft, layout: { ...draft.layout, gapMm: Number(e.target.value) } })
-                        }
-                        className="w-full px-2 py-1 rounded bg-slate-800 border border-slate-700 font-mono text-xs text-slate-200"
-                      />
-                    </label>
-                  </div>
-                </div>
+                {/* Panel Pratinjau + Variabel */}
+                <aside
+                  className={`${pane === 'kode' ? 'hidden' : 'block'} min-w-0 space-y-4 xl:block`}
+                >
+                  <div className={pane === 'variabel' ? 'hidden xl:block' : ''}>
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">Pratinjau</p>
+                      <div className="flex gap-1">
+                        {(['voucher', 'member'] as const).map((kind) => (
+                          <button
+                            key={kind}
+                            type="button"
+                            onClick={() => setPreviewKind(kind)}
+                            className={`rounded border px-2 py-1 text-[11px] ${
+                              previewKind === kind
+                                ? 'border-cyan-500 bg-cyan-500/10 text-cyan-300'
+                                : 'border-slate-700 text-slate-300'
+                            }`}
+                          >
+                            {kind === 'voucher' ? 'Voucher' : 'Member'}
+                          </button>
+                        ))}
+                        <select
+                          value={previewCount}
+                          onChange={(e) => setPreviewCount(Number(e.target.value) as 1 | 4 | 8)}
+                          className="rounded border border-slate-700 bg-slate-900 px-1.5 py-1 text-[11px] text-slate-200"
+                          aria-label="Jumlah contoh kartu"
+                        >
+                          <option value={1}>1 kartu</option>
+                          <option value={4}>4 kartu</option>
+                          <option value={8}>8 kartu</option>
+                        </select>
+                      </div>
+                    </div>
+                    <iframe
+                      title="Pratinjau template voucher"
+                      sandbox=""
+                      srcDoc={preview}
+                      className="w-full rounded border border-slate-700 bg-white"
+                      style={{ height: 300 }}
+                    />
+                    <p className="mt-1 text-[11px] text-slate-400">
+                      Renderer yang sama dengan cetak. Data contoh, tidak menyimpan apa pun.
+                    </p>
 
-                <div>
-                  <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">
-                    Variabel ({variables.length}) — klik untuk sisip di kursor
-                  </p>
-                  <div className="max-h-[240px] overflow-y-auto space-y-0.5 pr-1">
-                    {variables.map((item) => (
-                      <button
-                        key={item.token}
-                        type="button"
-                        onClick={() => insertVariable(item.token)}
-                        className="w-full text-left px-2 py-1 rounded hover:bg-slate-800"
-                        title={item.label}
-                      >
-                        <code className="font-mono text-[11px] text-cyan-300">{item.token}</code>
-                        <span className="block text-[10px] text-slate-500 truncate">{item.label}</span>
-                      </button>
-                    ))}
+                    <p className="mb-1 mt-3 text-[11px] font-medium uppercase tracking-wider text-slate-400">
+                      Grid halaman
+                    </p>
+                    <div className="mb-2 grid grid-cols-3 gap-1.5">
+                      {[1, 2, 3].map((cols) => (
+                        <button
+                          key={cols}
+                          type="button"
+                          onClick={() =>
+                            setDraft({ ...draft, layout: { ...draft.layout, columns: cols as 1 | 2 | 3 } })
+                          }
+                          className={`rounded border py-1.5 font-mono text-xs ${
+                            draft.layout.columns === cols
+                              ? 'border-cyan-500 bg-cyan-500/10 text-cyan-300'
+                              : 'border-slate-700 text-slate-300 hover:border-slate-500'
+                          }`}
+                        >
+                          {cols} kolom
+                        </button>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="block">
+                        <span className="mb-0.5 block text-[11px] text-slate-400">Margin (mm)</span>
+                        <input
+                          type="number"
+                          min={5}
+                          max={24}
+                          step={0.5}
+                          value={draft.layout.marginMm}
+                          onChange={(e) =>
+                            setDraft({ ...draft, layout: { ...draft.layout, marginMm: Number(e.target.value) } })
+                          }
+                          className="w-full rounded bg-slate-900 px-2 py-1.5 font-mono text-xs text-slate-100 ring-1 ring-slate-700"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-0.5 block text-[11px] text-slate-400">Jarak (mm)</span>
+                        <input
+                          type="number"
+                          min={2}
+                          max={15}
+                          step={0.5}
+                          value={draft.layout.gapMm}
+                          onChange={(e) =>
+                            setDraft({ ...draft, layout: { ...draft.layout, gapMm: Number(e.target.value) } })
+                          }
+                          className="w-full rounded bg-slate-900 px-2 py-1.5 font-mono text-xs text-slate-100 ring-1 ring-slate-700"
+                        />
+                      </label>
+                    </div>
                   </div>
-                </div>
 
-                <div className="rounded border border-slate-800 bg-slate-800/40 p-2 text-[10px] leading-relaxed text-slate-400">
-                  <p className="text-slate-300 mb-1">Batas renderer (bukan bug)</p>
-                  HTML biasa, CSS, dan tag <code>&lt;style&gt;</code> didukung. Script tidak dieksekusi, dan tag
-                  aktif (script/iframe/form/svg/img), URL luar, <code>url()</code> CSS, serta atribut{' '}
-                  <code>on*</code> ditolak server agar aman.
-                </div>
-              </aside>
+                  <div className={pane === 'pratinjau' ? 'hidden xl:block' : ''}>
+                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-slate-400">
+                      Variabel ({variables.length}) — klik untuk sisip di kursor
+                    </p>
+                    <div className="max-h-[280px] space-y-0.5 overflow-y-auto pr-1">
+                      {variables.map((item) => (
+                        <button
+                          key={item.token}
+                          type="button"
+                          onClick={() => {
+                            insertVariable(item.token);
+                            setPane('kode');
+                          }}
+                          className="w-full rounded px-2 py-1.5 text-left hover:bg-slate-700/50"
+                          title={item.label}
+                        >
+                          <code className="font-mono text-[11px] text-cyan-300">{item.token}</code>
+                          <span className="block text-[11px] text-slate-400">{item.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="rounded border border-slate-700 bg-slate-900/40 p-2 text-[11px] leading-relaxed text-slate-400">
+                    <p className="mb-1 text-slate-300">Batas renderer (bukan bug)</p>
+                    HTML dan CSS didukung. Script tidak dieksekusi; tag aktif (script/iframe/form/svg/img), URL
+                    luar, <code>url()</code> CSS, dan atribut <code>on*</code> ditolak server.
+                  </div>
+                </aside>
+              </div>
+            </div>
+
+            {/* Kaki: aksi selalu terjangkau */}
+            <div className="flex shrink-0 items-center justify-between gap-2 border-t border-slate-700 bg-slate-800 px-3 py-2 sm:px-4">
+              <label className="flex min-w-0 items-center gap-2 text-xs text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={draft.enabled}
+                  onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })}
+                  className="h-4 w-4 shrink-0 rounded border-slate-600 bg-slate-900"
+                />
+                <span className="truncate">Aktif saat mencetak</span>
+              </label>
+              <div className="flex shrink-0 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDraft(null)}
+                  className="rounded-lg bg-slate-700 px-3 py-2 text-sm text-slate-100 hover:bg-slate-600"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={saveDraft}
+                  disabled={busy || draftErrors.length > 0}
+                  className="rounded-lg bg-cyan-600 px-3 py-2 text-sm font-medium text-white hover:bg-cyan-500 disabled:opacity-50"
+                >
+                  {busy ? 'Menyimpan…' : 'Simpan'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
