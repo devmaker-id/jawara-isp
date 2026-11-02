@@ -844,7 +844,10 @@ export class ProfilesService {
       validity_value: Number(dto.validity_value ?? 0),
       validity_unit: dto.validity_unit ?? 'day',
       shared_users: shared,
-      priority: Number(dto.priority ?? 1),
+      // Prioritas queue MikroTik: 1 = paling tinggi, 8 = paling rendah.
+      // Pelanggan biasa berbagi di prioritas terendah; operator bisa
+      // menaikkannya sendiri lewat form.
+      priority: Number(dto.priority ?? 8),
       login_days: dto.login_days && dto.login_days.length > 0 ? dto.login_days.join(',') : null,
       login_start: dto.login_start ?? null,
       login_end: dto.login_end ?? null,

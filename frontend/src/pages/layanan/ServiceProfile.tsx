@@ -168,7 +168,7 @@ const EMPTY: FormState = {
   validity_value: '0',
   validity_unit: 'day',
   shared_users: '1',
-  priority: '1',
+  priority: '8',
   login_days: [],
   login_start: '',
   login_end: '',
@@ -298,7 +298,9 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
       validity_value: Number(form.validity_value || 0),
       validity_unit: form.validity_unit,
       shared_users: Number(form.shared_users || 1),
-      priority: Number(form.priority || 1),
+      // 8 = prioritas terendah (pelanggan biasa). 1 hanya untuk layanan
+      // yang memang harus didahulukan.
+      priority: Number(form.priority || 8),
       login_days: form.login_days.length > 0 ? form.login_days : null,
       login_start: form.login_start || null,
       login_end: form.login_end || null,
