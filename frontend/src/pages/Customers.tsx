@@ -3,6 +3,7 @@ import api from '../services/api';
 import { useBackgroundRefresh } from '../hooks/useBackgroundRefresh';
 import { useAuth } from '../contexts/AuthContext';
 import { TablePager } from '../components/TablePager';
+import { OnuHistoryModal } from '../components/onu/OnuPanels';
 
 // Halaman pelanggan = pintu masuk layanan. Satu pelanggan langsung memiliki
 // akun RADIUS (username, profil hotspot/ppp, limit waktu & kuota), karena
@@ -198,6 +199,7 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Customer | null>(null);
   const [onuBusy, setOnuBusy] = useState(false);
+  const [historyOnu, setHistoryOnu] = useState<Customer['onu'] | null>(null);
   const [form, setForm] = useState<CustomerForm>(EMPTY_FORM);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -927,15 +929,26 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
                         </p>
                       )}
                     </div>
-                    {editing?.onu && canManageOnu && (
-                      <button
-                        type="button"
-                        onClick={() => void releaseOnu()}
-                        disabled={onuBusy}
-                        className="shrink-0 text-xs font-medium text-red-400 transition hover:text-red-300 disabled:opacity-60"
-                      >
-                        {onuBusy ? 'Melepas…' : 'Lepas ONU'}
-                      </button>
+                    {editing?.onu && (
+                      <div className="flex shrink-0 flex-col items-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setHistoryOnu(editing.onu ?? null)}
+                          className="text-xs font-medium text-cyan-300 transition hover:text-cyan-200"
+                        >
+                          Riwayat
+                        </button>
+                        {canManageOnu && (
+                          <button
+                            type="button"
+                            onClick={() => void releaseOnu()}
+                            disabled={onuBusy}
+                            className="text-xs font-medium text-red-400 transition hover:text-red-300 disabled:opacity-60"
+                          >
+                            {onuBusy ? 'Melepas…' : 'Lepas ONU'}
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
@@ -1217,6 +1230,15 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
             </form>
           </div>
         </div>
+      )}
+
+      {historyOnu && (
+        <OnuHistoryModal
+          onuId={historyOnu.id}
+          title={historyOnu.serial_number || historyOnu.mac || `#${historyOnu.id}`}
+          subtitle={`${historyOnu.olt} ${historyOnu.port}/${historyOnu.onu_id}`}
+          onClose={() => setHistoryOnu(null)}
+        />
       )}
 
       {ownerTarget && (

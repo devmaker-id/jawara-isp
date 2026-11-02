@@ -13,32 +13,9 @@ import {
 } from '../../components/net/NetUI';
 import { TablePager } from '../../components/TablePager';
 import api from '../../services/api';
+import { OnuDetailDrawer, type OnuRow } from '../../components/onu/OnuPanels';
 
-interface OltOnu {
-  id: number;
-  olt_id: number;
-  olt_name: string;
-  /** Pelanggan pemilik ONU; null = masih inventaris. */
-  customer_id: number | null;
-  customer_name?: string | null;
-  internet_no?: string | null;
-  port_id: string;
-  onu_id: string;
-  serial_number: string | null;
-  onu_mac: string | null;
-  description: string | null;
-  admin_state: string | null;
-  omcc_state: string | null;
-  phase_state: string | null;
-  online: boolean;
-  rx_power_onu: number | null;
-  rx_power_olt: number | null;
-  tx_power: number | null;
-  temperature: number | null;
-  voltage: number | null;
-  tx_bias: number | null;
-  last_seen_at: string;
-}
+type OltOnu = OnuRow;
 
 interface OnuPayload {
   page: number;
@@ -73,11 +50,13 @@ const OnuInventory: React.FC = () => {
   const [search, setSearch] = useState('');
   const [maxRx, setMaxRx] = useState('');
   const [assigned, setAssigned] = useState('');
+  const [missing, setMissing] = useState('');
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(25);
 
   // Pemasangan ONU: dialog kecil, bukan halaman baru.
   const [target, setTarget] = useState<OltOnu | null>(null);
+  const [detail, setDetail] = useState<OltOnu | null>(null);
   const [internetNo, setInternetNo] = useState('');
   const [allowMove, setAllowMove] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -87,7 +66,7 @@ const OnuInventory: React.FC = () => {
   // operator bisa mendarat di halaman yang sudah tidak ada isinya.
   useEffect(() => {
     setPage(1);
-  }, [oltId, online, search, maxRx, assigned, size]);
+  }, [oltId, online, search, maxRx, assigned, missing, size]);
 
   const query = useMemo(() => {
     const params = new URLSearchParams();
@@ -96,10 +75,11 @@ const OnuInventory: React.FC = () => {
     if (search.trim()) params.set('search', search.trim());
     if (maxRx.trim()) params.set('max_rx', maxRx.trim());
     if (assigned) params.set('assigned', assigned);
+    if (missing) params.set('missing', missing);
     params.set('page', String(page));
     params.set('size', String(size));
     return `/api/olt/onus?${params.toString()}`;
-  }, [oltId, online, search, maxRx, assigned, page, size]);
+  }, [oltId, online, search, maxRx, assigned, missing, page, size]);
 
   // Satu permintaan per halaman: browser tidak pernah menerima seluruh
   // inventori sekaligus, berapa pun jumlah ONU di perangkat.
@@ -228,6 +208,16 @@ const OnuInventory: React.FC = () => {
           <option value="false">Masih inventaris</option>
         </select>
 
+        <select
+          value={missing}
+          onChange={(event) => setMissing(event.target.value)}
+          className="rounded-lg border border-slate-600 bg-slate-900/60 px-3 py-2 text-sm text-slate-100"
+        >
+          <option value="">Ada di perangkat</option>
+          <option value="only">Ditandai hilang</option>
+          <option value="all">Semua (termasuk hilang)</option>
+        </select>
+
         <input
           value={search}
           onChange={(event) => setSearch(event.target.value)}
@@ -268,7 +258,11 @@ const OnuInventory: React.FC = () => {
             ]}
           >
             {rows.map((row) => (
-              <tr key={row.id} className="hover:bg-slate-800/40">
+              <tr
+                key={row.id}
+                className="cursor-pointer hover:bg-slate-800/40"
+                onClick={() => setDetail(row)}
+              >
                 <td className="px-3 py-2 text-xs text-slate-300">{row.olt_name}</td>
                 <td className="px-3 py-2 font-mono text-xs text-slate-200">
                   {row.port_id} / {row.onu_id}
@@ -280,6 +274,11 @@ const OnuInventory: React.FC = () => {
                 </td>
                 <td className="px-3 py-2 text-xs text-slate-300">{row.description || '—'}</td>
                 <td className="px-3 py-2 text-xs">
+                  {row.missing_at && (
+                    <div className="mb-1">
+                      <Badge tone="bad">tidak terlihat</Badge>
+                    </div>
+                  )}
                   {row.customer_id ? (
                     <div className="leading-tight">
                       <div className="text-slate-200">{row.customer_name}</div>
@@ -312,7 +311,10 @@ const OnuInventory: React.FC = () => {
                   {row.customer_id ? (
                     <button
                       type="button"
-                      onClick={() => release(row)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void release(row);
+                      }}
                       className="text-xs font-medium text-red-400 hover:text-red-300"
                     >
                       Lepas
@@ -320,7 +322,10 @@ const OnuInventory: React.FC = () => {
                   ) : (
                     <button
                       type="button"
-                      onClick={() => openAssign(row)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openAssign(row);
+                      }}
                       className="text-xs font-medium text-cyan-400 hover:text-cyan-300"
                     >
                       Pasang
@@ -342,6 +347,8 @@ const OnuInventory: React.FC = () => {
           />
         </div>
       )}
+
+      {detail && <OnuDetailDrawer onu={detail} onClose={() => setDetail(null)} />}
 
       {target && (
         <div
