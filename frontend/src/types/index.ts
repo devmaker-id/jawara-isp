@@ -14,6 +14,8 @@ export interface User {
 export interface Customer {
   id: number;
   name: string;
+  /** Nomor Internet: identitas permanen pelanggan. */
+  internet_no?: string | null;
   email: string;
   phone: string;
   address: string;

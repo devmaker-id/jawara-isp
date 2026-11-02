@@ -27,6 +27,8 @@ interface CustomerAccount {
 interface Customer {
   id: number;
   name: string;
+  /** Nomor Internet: identitas permanen, dibuat backend saat pelanggan dibuat. */
+  internet_no?: string | null;
   email: string;
   phone: string;
   address: string;
@@ -541,7 +543,7 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
           type="search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Cari nama, email, atau telepon..."
+          placeholder="Cari nama, email, telepon, atau nomor internet..."
           className={inputClass}
           aria-label="Cari pelanggan"
         />
@@ -607,6 +609,7 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
                 <thead>
                   <tr className="text-left text-slate-400 border-b border-slate-700/50 bg-slate-700/30">
                     <th className="px-4 py-3 font-medium">Nama</th>
+                    <th className="px-4 py-3 font-medium">No. Internet</th>
                     <th className="px-4 py-3 font-medium">Kontak</th>
                     <th className="px-4 py-3 font-medium">Akun RADIUS</th>
                     <th className="px-4 py-3 font-medium">Status</th>
@@ -629,6 +632,13 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
                           <div className="text-[11px] text-slate-600">
                             sejak {formatDate(customer.created_at)}
                           </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          {customer.internet_no ? (
+                            <span className="font-mono text-xs text-cyan-300">{customer.internet_no}</span>
+                          ) : (
+                            <span className="text-xs text-slate-500">—</span>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-slate-300">
                           <div className="text-xs">{customer.email}</div>
@@ -718,6 +728,9 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="font-medium text-white truncate">{customer.name}</p>
+                        <p className="text-xs text-cyan-300 font-mono">
+                          {customer.internet_no ?? 'belum ada nomor'}
+                        </p>
                         <p className="text-xs text-slate-400 truncate">{customer.email}</p>
                         <p className="text-xs text-slate-400">{customer.phone}</p>
                       </div>
@@ -808,6 +821,25 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
+                <div className="sm:col-span-2">
+                  <label className="block text-sm font-medium text-slate-300 mb-1" htmlFor="c-internet-no">
+                    Nomor Internet
+                  </label>
+                  <input
+                    id="c-internet-no"
+                    type="text"
+                    readOnly
+                    value={editing?.internet_no ?? ''}
+                    placeholder="Dibuat otomatis saat pelanggan disimpan"
+                    className={`${inputClass} font-mono cursor-not-allowed opacity-80`}
+                  />
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    {editing?.internet_no
+                      ? 'Nomor sudah terbit — identitas permanen, tidak dapat diubah.'
+                      : 'Nomor dibuat otomatis oleh server dan tidak bisa diubah setelah terbit.'}
+                  </p>
+                </div>
+
                 <div className="sm:col-span-2">
                   <label className="block text-sm font-medium text-slate-300 mb-1" htmlFor="c-name">
                     Nama Lengkap *
