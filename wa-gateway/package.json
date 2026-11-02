@@ -1,0 +1,19 @@
+{
+  "name": "jawara-wa-gateway",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "WhatsApp gateway milik Jawara-ISP (Baileys). Proses terpisah dari backend billing.",
+  "scripts": {
+    "start": "node worker.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "7.0.0-rc13",
+    "express": "^4.21.0",
+    "pino": "^9.0.0"
+  },
+  "overrides": {
+    "protobufjs": "^7.5.5",
+    "body-parser": "1.20.8"
+  }
+}

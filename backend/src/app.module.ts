@@ -24,6 +24,7 @@ import { ProfilesModule } from './app/modules/profiles/profiles.module';
 import { DashboardModule } from './app/modules/dashboard/dashboard.module';
 import { ToolsModule } from './app/modules/tools/tools.module';
 import { PermissionsModule } from './app/modules/permissions/permissions.module';
+import { WhatsAppGatewayModule } from './app/modules/whatsapp-gateway/wa-gateway.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { PermissionsModule } from './app/modules/permissions/permissions.module'
     DashboardModule,
     ToolsModule,
     PermissionsModule,
+    WhatsAppGatewayModule,
   ],
   controllers: [AppController],
   providers: [AppService, ConfigService],

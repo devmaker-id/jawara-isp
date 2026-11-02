@@ -46,6 +46,22 @@ export const menuItems: MenuItemConfig[] = [
     roles: ['admin', 'operator', 'resseler'],
   },
   {
+    path: '/whatsapp',
+    label: 'WhatsApp Gateway',
+    icon: 'M12 3a9 9 0 00-9 9c0 1.6.4 3.1 1.2 4.4L3 21l4.8-1.2A9 9 0 1012 3z',
+    available: true,
+    // Kredensial sesi & kebijakan akses: administrator saja.
+    roles: ['admin'],
+    children: [
+      { path: '/whatsapp/koneksi', label: 'Koneksi & Pairing' },
+      { path: '/whatsapp/keamanan', label: 'Keamanan & Akses' },
+      { path: '/whatsapp/command', label: 'Command Router' },
+      { path: '/whatsapp/ai', label: 'AI & Hermes' },
+      { path: '/whatsapp/riwayat', label: 'Riwayat Pesan' },
+      { path: '/whatsapp/monitoring', label: 'Monitoring & Log' },
+    ],
+  },
+  {
     path: '/olt',
     label: 'OLT',
     icon: 'M5 12h14M5 12a7 7 0 0114 0M5 12v6a1 1 0 001 1h12a1 1 0 001-1v-6',

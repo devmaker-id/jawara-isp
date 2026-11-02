@@ -50,3 +50,7 @@ backend/.admin-initial-password
 
 # Log pemasangan FreeRADIUS (ditulis runtime, berisi jejak langkah root)
 backend/var/
+
+# Runtime WhatsApp Gateway: sesi pairing, env token worker, log
+var/
+*.env
