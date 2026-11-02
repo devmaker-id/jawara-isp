@@ -33,6 +33,24 @@
   --slate-900: 15 23 42;
   --slate-950: 2 6 23;
   color-scheme: dark;
+
+  /* ===== Editor kode (CodeMirror) =====
+     Warna editor dibaca lewat CSS variable supaya tema siang/malam berganti
+     tanpa membuat ulang editor. */
+  --code-bg: #0b1220;
+  --code-gutter-bg: #0f172a;
+  --code-text: #e2e8f0;
+  --code-muted: #64748b;
+  --code-selection: rgba(34, 211, 238, 0.22);
+  --code-cursor: #22d3ee;
+  --code-active-line: rgba(148, 163, 184, 0.08);
+  --syn-tag: #7dd3fc;
+  --syn-attr: #fbbf24;
+  --syn-string: #86efac;
+  --syn-comment: #64748b;
+  --syn-keyword: #c4b5fd;
+  --syn-number: #fca5a5;
+  --syn-var: #67e8f9;
 }
 
 /* ===== Tema siang =====
@@ -41,6 +59,21 @@
    supaya tetap lolos kontras di latar putih. */
 html[data-theme='light'] {
   color-scheme: light;
+
+  --code-bg: #ffffff;
+  --code-gutter-bg: #f1f5f9;
+  --code-text: #0f172a;
+  --code-muted: #475569;
+  --code-selection: rgba(14, 116, 144, 0.18);
+  --code-cursor: #0e7490;
+  --code-active-line: rgba(15, 23, 42, 0.045);
+  --syn-tag: #0e7490;
+  --syn-attr: #92400e;
+  --syn-string: #166534;
+  --syn-comment: #64748b;
+  --syn-keyword: #6d28d9;
+  --syn-number: #b91c1c;
+  --syn-var: #0f766e;
   --bg: #f1f5f9;
   --card: #ffffff;
   --card-hover: #f8fafc;
@@ -319,4 +352,26 @@ html[data-theme='light'] .bg-cyan-600 {
 html[data-theme='light'] .hover\:bg-cyan-400:hover,
 html[data-theme='light'] .hover\:bg-cyan-500:hover {
   background-color: #155e75;
+}
+
+/* ===== Variabel template voucher di editor =====
+   Token {{...}} yang dikenal ditandai; yang tidak dikenal digarisbawahi merah
+   supaya salah ketik terlihat sebelum disimpan (server tetap penentu akhir). */
+.cm-voucher-var {
+  color: var(--syn-var);
+  font-weight: 600;
+}
+.cm-voucher-var-bad {
+  color: var(--danger);
+  text-decoration: underline wavy;
+  text-underline-offset: 2px;
+}
+
+/* Wadah editor: tinggi tetap + pegangan resize vertikal, scroll di dalam. */
+.voucher-editor-shell {
+  resize: vertical;
+  overflow: hidden;
+  min-height: 220px;
+  max-height: 80vh;
+  display: flex;
 }

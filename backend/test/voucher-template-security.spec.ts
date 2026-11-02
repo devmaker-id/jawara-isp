@@ -63,7 +63,17 @@ describe('validasi template voucher HTML (input dari editor admin)', () => {
   });
 
   it('membatasi panjang HTML, jumlah template, dan layout', () => {
-    expect(() => validate([row({ html: `<p>${'x'.repeat(6001)}</p>` })])).toThrow(/maksimal 6000/);
+    expect(() => validate([row({ html: `<p>${'x'.repeat(200_001)}</p>` })])).toThrow(/maksimal 200000/);
+    // Template panjang (1.000 baris) harus diterima, bukan dipotong.
+    const long = Array.from({ length: 1000 }, (_, i) => `<div class="row">Baris ${i} {{username}}</div>`).join('\n');
+    const [accepted] = validate([row({ html: long })]);
+    expect(accepted.html.split('\n')).toHaveLength(1000);
+    // Total config dibatasi kapasitas kolom TEXT (65 KB), bukan per template saja.
+    const big = `<p>${'y'.repeat(190_000)}</p>`;
+    expect(() =>
+      validate([row({ name: 'A', html: big }), row({ name: 'B', html: big }), row({ name: 'C', html: big })]),
+    ).toThrow(/Total ukuran semua template/);
+    expect(() => validate([row({ html: long })])).not.toThrow();
     expect(() => validate(Array.from({ length: MAX_TEMPLATES + 1 }, () => row()))).toThrow(/Maksimal 20/);
     expect(() => validate([row({ layout: { columns: 4 } })])).toThrow(/columns/);
     expect(() => validate([row({ layout: { marginMm: 1 } })])).toThrow(/marginMm/);

@@ -123,8 +123,12 @@ export class SettingsService {
         throw new BadRequestException(`Nilai ${key} harus berupa teks`);
       }
       const value = raw.trim();
-      if (value.length > MAX_VALUE_LENGTH) {
-        throw new BadRequestException(`Nilai ${key} maksimal ${MAX_VALUE_LENGTH} karakter`);
+      // Template voucher menyimpan banyak HTML dalam satu nilai JSON; batasnya
+      // mengikuti kolom config MEDIUMTEXT (migrasi 034), bukan batas umum
+      // 20.000 karakter yang dipakai setting lain.
+      const limit = key === 'voucher_templates' ? 500_000 : MAX_VALUE_LENGTH;
+      if (value.length > limit) {
+        throw new BadRequestException(`Nilai ${key} maksimal ${limit.toLocaleString('id-ID')} karakter`);
       }
       // Placeholder atau kosong pada field rahasia = "jangan ubah".
       if (SECRET_KEYS.has(settingKey) && (value === '' || value === SECRET_MASK)) continue;

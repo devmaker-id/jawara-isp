@@ -45,7 +45,11 @@ export interface VoucherTextTemplate {
 }
 
 export const MAX_TEMPLATES = 20;
-export const MAX_HTML = 6000;
+// Disimpan sebagai SATU nilai JSON di config. Kolomnya MEDIUMTEXT (migrasi 034),
+// jadi template beberapa ribu baris aman; batas tetap ada supaya satu config
+// tidak membengkak tanpa kendali.
+export const MAX_HTML = 200_000;
+export const MAX_TOTAL_CHARS = 500_000;
 const MAX_NAME = 40;
 
 export const DEFAULT_LAYOUT: VoucherTemplateLayout = { columns: 3, marginMm: 8.5, gapMm: 3.5 };
@@ -249,7 +253,7 @@ export function validateTemplates(raw: string | undefined | null): VoucherTempla
   }
 
   const used = new Set<string>();
-  return parsed.map((item, index) => {
+  const templates: VoucherTemplate[] = parsed.map((item, index) => {
     if (!item || typeof item !== 'object' || Array.isArray(item)) {
       throw new TemplateValidationError(`Template ke-${index + 1} bukan objek.`);
     }
@@ -276,6 +280,20 @@ export function validateTemplates(raw: string | undefined | null): VoucherTempla
       layout: cleanLayout(row.layout),
     };
   });
+
+  // Batas kolom config (TEXT): satu nilai JSON tidak boleh melebihi ~60 ribu
+  // karakter. Dihitung dari JSON final supaya kesalahan dilaporkan sebelum
+  // database menolak (atau memotong) nilai.
+  const serialized = JSON.stringify(templates);
+  const total = Buffer.byteLength(serialized, 'utf8');
+  if (total > MAX_TOTAL_CHARS) {
+    throw new TemplateValidationError(
+      `Total ukuran semua template ${total.toLocaleString('id-ID')} karakter, ` +
+        `maksimal ${MAX_TOTAL_CHARS.toLocaleString('id-ID')}. Kurangi jumlah atau panjang template.`,
+    );
+  }
+
+  return templates;
 }
 
 /**

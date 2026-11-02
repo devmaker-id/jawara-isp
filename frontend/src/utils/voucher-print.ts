@@ -160,7 +160,7 @@ export function templateProblems(
   if (template.name.length > 40) out.push('Nama template maksimal 40 karakter.');
   if (/[<>]/.test(template.name)) out.push('Nama tidak boleh memuat < atau >.');
   if (!template.html.trim()) out.push('Kode HTML wajib diisi.');
-  if (template.html.length > 6000) out.push('HTML maksimal 6000 karakter.');
+  if (template.html.length > 200_000) out.push('HTML maksimal 200.000 karakter (beberapa ribu baris).');
 
   const banned: Array<[RegExp, string]> = [
     [/<\s*\/?\s*(script|iframe|object|embed|form|input|button|link|meta|base|svg|math|img|video|audio|source)\b/i, 'tag aktif (script/iframe/form/svg/img)'],
