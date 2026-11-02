@@ -1,4 +1,8 @@
 import { ConflictException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { gunzipSync } from 'node:zlib';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 // CoA diuji ke jaringan sungguhan di e2e; di unit test ini cukup perilakunya.
@@ -33,7 +37,15 @@ const makeService = (options: { tables?: string[] } = {}) => {
     updateNas: vi.fn(async () => undefined),
     deleteNas: vi.fn(async () => 1),
     countNasUsingAddress: vi.fn(async () => 0),
-    nasReferences: vi.fn(async () => ({ accounting: 0 })),
+    nasReferences: vi.fn(async () => ({ accounting: 0, auth_log: 0 })),
+    nasDeletionSnapshot: vi.fn(
+      async (): Promise<{ nas: unknown[]; radacct: unknown[]; radpostauth: unknown[] }> => ({
+        nas: [],
+        radacct: [],
+        radpostauth: [],
+      }),
+    ),
+    purgeNas: vi.fn(async () => ({ accounting: 0, auth_log: 0, nas: 1 })),
     authLogReady: vi.fn(async () => true),
     authLog: vi.fn(async () => ({ rows: [], total: 0 })),
     authLogFacets: vi.fn(async () => ({ nas: [], interfaces: [], replies: [] })),
@@ -206,13 +218,83 @@ describe('RadiusService', () => {
     expect(repo.deleteUser).not.toHaveBeenCalled();
   });
 
-  it('menolak hapus NAS yang masih punya riwayat akuntansi', async () => {
+  it('menolak hapus NAS yang masih punya riwayat, dengan pesan yang bisa dibaca', async () => {
     const { service, repo } = makeService({ tables: [...RADIUS_TABLES] });
     repo.findNas.mockResolvedValueOnce({ id: 15, nasname: '10.200.10.242' });
-    repo.nasReferences.mockResolvedValueOnce({ accounting: 42 });
+    repo.nasReferences.mockResolvedValueOnce({ accounting: 42, auth_log: 7 });
 
-    await expect(service.deleteNas(15)).rejects.toThrow(/radacct/);
+    const error = await service.deleteNas(15).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      code: 'NAS_HAS_HISTORY',
+      confirm_word: 'setuju',
+      impact: { accounting: 42, auth_log: 7 },
+    });
+    expect((error as Error).message).toMatch(/42 baris akuntansi/);
+    expect((error as Error).message).toMatch(/7 baris log autentikasi/);
+    expect(repo.purgeNas).not.toHaveBeenCalled();
     expect(repo.deleteNas).not.toHaveBeenCalled();
+  });
+
+  it('hapus NAS berjejak dengan konfirmasi "setuju": cadangkan dulu, lalu hapus sesi+log+nas', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'nas-backup-'));
+    const previous = process.env.RADIUS_BACKUP_DIR;
+    process.env.RADIUS_BACKUP_DIR = dir;
+    try {
+      const { service, repo, mikrotik } = makeService({ tables: [...RADIUS_TABLES] });
+      repo.findNas.mockResolvedValueOnce({ id: 15, nasname: '10.200.10.242' });
+      repo.nasReferences.mockResolvedValueOnce({ accounting: 42, auth_log: 7 });
+      mikrotik.listDevices.mockResolvedValueOnce({ rows: [] });
+      repo.nasDeletionSnapshot.mockResolvedValueOnce({
+        nas: [{ id: 15, nasname: '10.200.10.242' }],
+        radacct: [{ radacctid: 1, nasipaddress: '10.200.10.242' }],
+        radpostauth: [{ id: 1, nasipaddress: '10.200.10.242' }],
+      });
+      repo.purgeNas.mockResolvedValueOnce({ accounting: 42, auth_log: 7, nas: 1 });
+
+      const result = await service.deleteNas(15, 'setuju');
+
+      // Cadangan harus sudah ada di disk sebelum purge dipanggil.
+      expect(repo.nasDeletionSnapshot).toHaveBeenCalledWith(15, '10.200.10.242');
+      expect(repo.purgeNas).toHaveBeenCalledWith(15, '10.200.10.242');
+      expect(repo.deleteNas).not.toHaveBeenCalled();
+      expect(result.removed).toMatchObject({ accounting: 42, auth_log: 7 });
+
+      const file = readFileSync(String(result.backup));
+      const isi = JSON.parse(gunzipSync(file).toString());
+      expect(isi.nasname).toBe('10.200.10.242');
+      expect(isi.jumlah).toEqual({ accounting: 42, auth_log: 7 });
+      expect(isi.radacct).toHaveLength(1);
+      expect(statSync(String(result.backup)).mode & 0o777).toBe(0o600);
+    } finally {
+      if (previous === undefined) delete process.env.RADIUS_BACKUP_DIR;
+      else process.env.RADIUS_BACKUP_DIR = previous;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('tidak menghapus apa pun bila cadangan gagal ditulis', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'nas-backup-'));
+    const previous = process.env.RADIUS_BACKUP_DIR;
+    // Berkas biasa, bukan direktori → penulisan cadangan pasti gagal.
+    const blocked = join(dir, 'bukan-direktori');
+    writeFileSync(blocked, 'x');
+    process.env.RADIUS_BACKUP_DIR = blocked;
+    try {
+      const { service, repo, mikrotik } = makeService({ tables: [...RADIUS_TABLES] });
+      repo.findNas.mockResolvedValueOnce({ id: 15, nasname: '10.200.10.242' });
+      repo.nasReferences.mockResolvedValueOnce({ accounting: 42, auth_log: 0 });
+      mikrotik.listDevices.mockResolvedValueOnce({ rows: [] });
+
+      await expect(service.deleteNas(15, 'setuju')).rejects.toThrow(/belum dihapus/);
+      expect(repo.purgeNas).not.toHaveBeenCalled();
+      expect(repo.deleteNas).not.toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env.RADIUS_BACKUP_DIR;
+      else process.env.RADIUS_BACKUP_DIR = previous;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('menghapus /radius di perangkat saat NAS dihapus', async () => {

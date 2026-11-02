@@ -22,10 +22,14 @@ import {
   UpdateRadiusUserDto,
 } from './dto/radius.dto';
 import { AssignGroupDto, SaveGroupDto } from './dto/radius-group.dto';
+import { NasBackupFile, writeNasBackup } from './nas-backup';
 import { RADIUS_TABLES, RadiusRepository } from './radius.repository';
 
 /** Toleransi selisih jam perangkat vs server sebelum NAS boleh disimpan. */
 const NAS_CLOCK_TOLERANCE_SECONDS = 120;
+
+/** Kata yang harus diketik admin untuk menghapus NAS yang punya riwayat. */
+export const NAS_DELETE_CONFIRM = 'setuju';
 
 export interface RadiusStatusView {
   database: string;
@@ -359,21 +363,64 @@ export class RadiusService {
     return { id, updated: true };
   }
 
-  async deleteNas(id: number) {
+  async deleteNas(id: number, confirm?: string) {
     await this.ensureReady();
     const existing = await this.radius.findNas(id);
     if (!existing) throw new NotFoundException('NAS tidak ditemukan');
 
-    // Riwayat akuntansi menyebut NAS lewat kolom nasipaddress (tidak ada FK ke
-    // `nas`), jadi keterkaitannya diperiksa eksplisit sebelum menghapus.
+    // Riwayat akuntansi/log autentikasi menyebut NAS lewat kolom nasipaddress
+    // (tidak ada FK ke `nas`), jadi keterkaitannya diperiksa eksplisit.
     const refs = await this.radius.nasReferences(existing.nasname);
-    if (refs.accounting > 0) {
-      throw new ConflictException(
-        `NAS ${existing.nasname} tidak bisa dihapus: masih terkait ${refs.accounting} baris ` +
-          'akuntansi di tabel radacct. Menghapusnya membuat riwayat sesi kehilangan identitas ' +
-          'perangkat. Arsipkan atau hapus data akuntansi itu lebih dulu bila memang ingin ' +
-          'menghapus NAS ini.',
-      );
+    const related = refs.accounting + refs.auth_log;
+    if (related > 0 && confirm !== NAS_DELETE_CONFIRM) {
+      const parts = [
+        `${refs.accounting.toLocaleString('id-ID')} baris akuntansi di tabel radacct`,
+        refs.auth_log > 0
+          ? `${refs.auth_log.toLocaleString('id-ID')} baris log autentikasi di radpostauth`
+          : '',
+      ].filter(Boolean);
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'NAS_HAS_HISTORY',
+        impact: refs,
+        confirm_word: NAS_DELETE_CONFIRM,
+        message:
+          `NAS ${existing.nasname} tidak bisa dihapus begitu saja: masih terkait ` +
+          `${parts.join(' dan ')}. Menghapusnya membuat riwayat sesi dan log login ` +
+          'kehilangan identitas perangkat. Bila NAS ini memang harus dihapus, ketik ' +
+          `"${NAS_DELETE_CONFIRM}" pada kolom konfirmasi — panel mencadangkan seluruh ` +
+          'baris terkait ke berkas di server lebih dulu, baru menghapus sesi, log ' +
+          'autentikasi, dan baris NAS ini.',
+      });
+    }
+
+    // Cadangan ditulis lebih dulu, sebelum ada perubahan apa pun. Bila gagal,
+    // NAS tetap utuh: lebih baik penghapusan ditolak daripada riwayat hilang
+    // tanpa salinan.
+    let backup: NasBackupFile | null = null;
+    if (related > 0) {
+      try {
+        const snapshot = await this.radius.nasDeletionSnapshot(id, existing.nasname);
+        backup = await writeNasBackup(
+          {
+            created_at: new Date().toISOString(),
+            alasan: 'hapus NAS RADIUS (konfirmasi ketik)',
+            nas_id: id,
+            nasname: existing.nasname,
+            jumlah: refs,
+            nas: snapshot.nas,
+            radacct: snapshot.radacct,
+            radpostauth: snapshot.radpostauth,
+          },
+          existing.nasname,
+        );
+      } catch (error) {
+        throw new ConflictException(
+          `NAS ${existing.nasname} belum dihapus: berkas cadangan gagal dibuat ` +
+            `(${error instanceof Error ? error.message : String(error)}). ` +
+            'Periksa ruang disk dan izin direktori cadangan, lalu ulangi.',
+        );
+      }
     }
 
     // Bersihkan perangkat: hapus entri /radius yang menunjuk server kita supaya
@@ -392,17 +439,37 @@ export class RadiusService {
         throw new ConflictException(
           `NAS ${existing.nasname} belum dihapus: entri /radius di perangkat ${device.name} ` +
             `gagal dibersihkan (${error instanceof Error ? error.message : String(error)}). ` +
-            'Perbaiki akses/izin tulis perangkat lalu ulangi.',
+            'Perbaiki akses/izin tulis perangkat lalu ulangi.' +
+            (backup ? ` Cadangan sudah tersimpan di ${backup.path}.` : ''),
         );
       }
     }
 
-    await this.radius.deleteNas(id);
+    // Penghapusan berantai: sesi (radacct) + log autentikasi (radpostauth) +
+    // baris nas, satu transaksi. Gagal di tengah = rollback.
+    let removed = { accounting: 0, auth_log: 0 };
+    if (related > 0) {
+      try {
+        removed = await this.radius.purgeNas(id, existing.nasname);
+      } catch (error) {
+        throw new ConflictException(
+          `NAS ${existing.nasname} belum dihapus: penghapusan data RADIUS gagal ` +
+            `(${error instanceof Error ? error.message : String(error)}). Transaksi di-rollback ` +
+            `sehingga tidak ada data yang hilang separuh. Cadangan: ${backup?.path ?? 'tidak ada'}.`,
+        );
+      }
+    } else {
+      await this.radius.deleteNas(id);
+    }
+
     this.logger.log(
       `NAS RADIUS dihapus: ${existing.nasname}` +
-        (deviceResult ? ` (perangkat ${deviceResult.name})` : ' (tanpa perangkat terdaftar)'),
+        (deviceResult ? ` (perangkat ${deviceResult.name})` : ' (tanpa perangkat terdaftar)') +
+        (related > 0
+          ? ` — ikut terhapus ${removed.accounting} radacct + ${removed.auth_log} radpostauth, cadangan ${backup?.path}`
+          : ''),
     );
-    return { id, deleted: true, device: deviceResult };
+    return { id, deleted: true, device: deviceResult, backup: backup?.path ?? null, removed };
   }
 
   // Log autentikasi dari radpostauth. Kolom identitas perangkat diisi query

@@ -98,6 +98,23 @@ const emptyForm: NasForm = {
   ros_version: '6',
 };
 
+/** Kata yang wajib diketik sebelum NAS berjejak dihapus (sama dengan backend). */
+const CONFIRM_WORD = 'setuju';
+
+/** Jawaban 409 backend saat NAS masih punya riwayat sesi/log. */
+interface DeleteConflict {
+  code?: string;
+  message?: string;
+  impact?: { accounting: number; auth_log: number };
+}
+
+/** Hasil penghapusan: berapa baris yang ikut terhapus dan di mana cadangannya. */
+interface DeleteResult {
+  removed: { accounting: number; auth_log: number };
+  backup: string | null;
+  device: { name: string; removed: boolean } | null;
+}
+
 const Nas: React.FC = () => {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
@@ -107,6 +124,11 @@ const Nas: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [result, setResult] = useState<SaveResult | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  // NAS yang masih punya riwayat: penghapusan menunggu admin mengetik "setuju".
+  const [pending, setPending] = useState<{ row: NasRow; conflict: DeleteConflict } | null>(null);
+  const [confirmText, setConfirmText] = useState('');
+  const [deleting, setDeleting] = useState(false);
 
   const rows = nas.data?.rows ?? [];
   const available = (candidates.data?.rows ?? []).filter((row) => !row.registered);
@@ -152,20 +174,38 @@ const Nas: React.FC = () => {
     }
   };
 
-  const remove = async (row: NasRow) => {
-    if (
-      !window.confirm(
-        `Hapus NAS ${row.nasname}? Panel juga menghapus entri /radius di perangkat. ` +
-          'Bila NAS ini masih punya riwayat akuntansi, penghapusan akan ditolak.',
-      )
-    )
-      return;
+  const remove = async (row: NasRow, confirm?: string) => {
     setActionError(null);
+    setNotice(null);
+    setDeleting(true);
     try {
-      await api.delete(`/api/freeradius/nas/${row.id}`);
+      const response = await api.delete<DeleteResult>(`/api/freeradius/nas/${row.id}`, {
+        params: confirm ? { confirm } : undefined,
+      });
+      const data = response.data;
+      const parts = [
+        data?.removed?.accounting ? `${formatNumber(data.removed.accounting)} baris radacct` : '',
+        data?.removed?.auth_log ? `${formatNumber(data.removed.auth_log)} baris radpostauth` : '',
+      ].filter(Boolean);
+      setNotice(
+        `NAS ${row.nasname} dihapus.` +
+          (parts.length > 0 ? ` Ikut terhapus: ${parts.join(' dan ')}.` : '') +
+          (data?.backup ? ` Cadangan data: ${data.backup}` : ''),
+      );
+      setPending(null);
+      setConfirmText('');
       nas.reload();
     } catch (error) {
-      setActionError(errorMessage(error));
+      const conflict = (error as { response?: { data?: DeleteConflict } }).response?.data;
+      // 409 berkode NAS_HAS_HISTORY = masih ada riwayat; minta ketik konfirmasi.
+      if (conflict?.code === 'NAS_HAS_HISTORY') {
+        setPending({ row, conflict });
+        setConfirmText('');
+      } else {
+        setActionError(errorMessage(error));
+      }
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -182,6 +222,14 @@ const Nas: React.FC = () => {
       />
 
       {actionError && <div className="mb-3"><ErrorNote message={actionError} /></div>}
+
+      {notice && (
+        <div className="mb-3">
+          <InfoNote>
+            <span className="text-emerald-300">{notice}</span>
+          </InfoNote>
+        </div>
+      )}
 
       {result && (
         <div className="mb-3">
@@ -293,7 +341,12 @@ const Nas: React.FC = () => {
                     >
                       Ubah
                     </button>
-                    <button type="button" className="text-xs text-rose-400 hover:underline" onClick={() => remove(row)}>
+                    <button
+                      type="button"
+                      className="text-xs text-rose-400 hover:underline disabled:opacity-50"
+                      disabled={deleting}
+                      onClick={() => remove(row)}
+                    >
                       Hapus
                     </button>
                   </td>
@@ -486,6 +539,66 @@ const Nas: React.FC = () => {
               </div>
             )}
           </form>
+        </div>
+      )}
+
+      {pending && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/70 p-4">
+          <div className="mt-10 w-full max-w-lg rounded-xl border border-slate-700 bg-slate-800 p-5">
+            <h2 className="mb-3 text-lg font-semibold text-white">Hapus NAS {pending.row.nasname}</h2>
+
+            <InfoNote tone="warn">{pending.conflict.message}</InfoNote>
+
+            <ul className="mt-3 space-y-1 text-xs text-slate-300">
+              <li>
+                Ikut terhapus permanen: {formatNumber(pending.conflict.impact?.accounting ?? 0)} baris akuntansi
+                (<span className="font-mono">radacct</span>) dan{' '}
+                {formatNumber(pending.conflict.impact?.auth_log ?? 0)} baris log autentikasi (
+                <span className="font-mono">radpostauth</span>) yang menyebut NAS ini.
+              </li>
+              <li>Baris <span className="font-mono">nas</span> dan entri <span className="font-mono">/radius</span> di perangkat juga dihapus.</li>
+              <li>
+                Sebelum itu panel menulis cadangan seluruh baris di atas ke berkas{' '}
+                <span className="font-mono">.json.gz</span> di server (izin 0600). Bila pencadangan gagal, tidak ada
+                yang dihapus.
+              </li>
+            </ul>
+
+            <label className="mt-4 block text-sm">
+              <span className="text-slate-300">
+                Ketik <span className="font-mono text-amber-300">{CONFIRM_WORD}</span> untuk melanjutkan
+              </span>
+              <input
+                autoFocus
+                value={confirmText}
+                onChange={(event) => setConfirmText(event.target.value)}
+                placeholder={CONFIRM_WORD}
+                className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-900/60 px-3 py-2 font-mono text-slate-100"
+              />
+            </label>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <Button
+                type="button"
+                disabled={deleting}
+                onClick={() => {
+                  setPending(null);
+                  setConfirmText('');
+                }}
+              >
+                Batal
+              </Button>
+              <Button
+                type="button"
+                variant="danger"
+                className="!bg-rose-600 !text-white hover:!bg-rose-500"
+                disabled={deleting || confirmText.trim().toLowerCase() !== CONFIRM_WORD}
+                onClick={() => remove(pending.row, CONFIRM_WORD)}
+              >
+                {deleting ? 'Mencadangkan & menghapus…' : 'Cadangkan lalu hapus'}
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </div>

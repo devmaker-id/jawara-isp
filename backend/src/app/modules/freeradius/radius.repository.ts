@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { ResultSetHeader } from 'mysql2/promise';
 import { DatabaseService } from '../../database/database.service';
 import {
   NAS_PUBLIC_SELECT,
@@ -153,12 +154,73 @@ export class RadiusRepository {
 
   // Baris akuntansi yang menyebut NAS ini. Tidak ada FK ke `nas`, jadi
   // keterkaitan diperiksa lewat kolom nasipaddress.
-  async nasReferences(nasname: string): Promise<{ accounting: number }> {
+  async nasReferences(nasname: string): Promise<{ accounting: number; auth_log: number }> {
     const rows = await this.db.query<{ total: number }>(
       'SELECT COUNT(*) AS total FROM radacct WHERE nasipaddress = ?',
       [nasname],
     );
-    return { accounting: Number(rows[0]?.total ?? 0) };
+    const accounting = Number(rows[0]?.total ?? 0);
+    // radpostauth baru punya kolom identitas perangkat setelah migrasi 011.
+    if (!(await this.authLogReady())) return { accounting, auth_log: 0 };
+    const logs = await this.db.query<{ total: number }>(
+      'SELECT COUNT(*) AS total FROM radpostauth WHERE nasipaddress = ?',
+      [nasname],
+    );
+    return { accounting, auth_log: Number(logs[0]?.total ?? 0) };
+  }
+
+  /**
+   * Salinan semua baris yang akan ikut terhapus bersama NAS. Dipakai untuk
+   * berkas cadangan; `radacct` bisa besar, jadi hanya dipanggil saat benar-benar
+   * menghapus NAS yang punya riwayat.
+   */
+  async nasDeletionSnapshot(id: number, nasname: string): Promise<{
+    nas: unknown[];
+    radacct: unknown[];
+    radpostauth: unknown[];
+  }> {
+    const [nas, radacct, radpostauth] = await Promise.all([
+      this.db.query('SELECT * FROM nas WHERE id = ?', [id]),
+      this.db.query('SELECT * FROM radacct WHERE nasipaddress = ?', [nasname]),
+      this.authLogReady().then((ready) =>
+        ready ? this.db.query('SELECT * FROM radpostauth WHERE nasipaddress = ?', [nasname]) : [],
+      ),
+    ]);
+    return { nas, radacct, radpostauth };
+  }
+
+  /**
+   * Hapus NAS beserta warisannya dalam satu transaksi: sesi akuntansi (radacct),
+   * log autentikasi (radpostauth), lalu baris `nas`. radacct dipotong per 5000
+   * baris supaya tabel besar tidak mengunci lama. Gagal di tengah = rollback,
+   * tidak ada yang hilang separuh.
+   */
+  async purgeNas(
+    id: number,
+    nasname: string,
+  ): Promise<{ accounting: number; auth_log: number; nas: number }> {
+    return this.db.withTransaction(async (conn) => {
+      let accounting = 0;
+      for (;;) {
+        const [chunk] = await conn.query<ResultSetHeader>(
+          'DELETE FROM radacct WHERE nasipaddress = ? LIMIT 5000',
+          [nasname],
+        );
+        const affected = chunk.affectedRows ?? 0;
+        accounting += affected;
+        if (affected < 5000) break;
+      }
+      const [logs] = await conn.query<ResultSetHeader>(
+        'DELETE FROM radpostauth WHERE nasipaddress = ?',
+        [nasname],
+      );
+      const [nasRow] = await conn.query<ResultSetHeader>('DELETE FROM nas WHERE id = ?', [id]);
+      return {
+        accounting,
+        auth_log: logs.affectedRows ?? 0,
+        nas: nasRow.affectedRows ?? 0,
+      };
+    });
   }
 
   async countNasUsingAddress(nasname: string): Promise<number> {

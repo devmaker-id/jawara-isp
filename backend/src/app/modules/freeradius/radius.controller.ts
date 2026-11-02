@@ -238,8 +238,8 @@ export class RadiusController {
 
   @Delete('nas/:id')
   @Roles('admin')
-  deleteNas(@Param('id', ParseIntPipe) id: number) {
-    return this.radius.deleteNas(id);
+  deleteNas(@Param('id', ParseIntPipe) id: number, @Query('confirm') confirm?: string) {
+    return this.radius.deleteNas(id, confirm);
   }
 
   // Akun RADIUS tidak lagi dikelola di sini. Satu-satunya penulis radcheck/

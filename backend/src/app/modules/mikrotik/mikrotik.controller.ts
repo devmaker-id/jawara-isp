@@ -76,7 +76,7 @@ export class MikrotikController {
   }
 
   @Post('devices')
-  @Roles('admin')
+  @Roles('admin', 'operator')
   @RequirePermission('device.create')
   @HttpCode(HttpStatus.CREATED)
   createDevice(@Body() dto: CreateDeviceDto, @Req() request: Request) {
@@ -84,7 +84,7 @@ export class MikrotikController {
   }
 
   @Patch('devices/:id')
-  @Roles('admin')
+  @Roles('admin', 'operator')
   @RequirePermission('device.update')
   updateDevice(@Param('id') id: string, @Body() dto: UpdateDeviceDto, @Req() request: Request) {
     return this.mikrotik.updateDevice(this.deviceId(id) as number, dto, actorOf(request));
