@@ -96,6 +96,18 @@ export class CustomersController {
     return this.customersService.accounts(id, scope);
   }
 
+  // Cari pelanggan menurut Nomor Internet. Diletakkan sebelum ':id' agar
+  // "by-internet" tidak tertangkap ParseIntPipe.
+  @Get('by-internet/:internetNo')
+  @Roles('admin', 'operator', 'resseler')
+  @RequirePermission('customer.view')
+  findByInternetNo(
+    @Param('internetNo') internetNo: string,
+    @Scope() scope: RequestScope,
+  ) {
+    return this.customersService.findByInternetNo(internetNo, scope);
+  }
+
   @Get(':id')
   @Roles('admin', 'operator', 'resseler')
   @RequirePermission('customer.view')

@@ -13,6 +13,12 @@ import {
 export interface Customer {
   id: number;
   name: string;
+  /**
+   * Nomor Internet: identitas permanen pelanggan, dipakai untuk pencarian
+   * (/inet 1312013). null = belum diterbitkan (data lama / penomoran belum
+   * diaktifkan operator).
+   */
+  internet_no: string | null;
   email: string;
   phone: string;
   address: string;
@@ -55,6 +61,7 @@ interface CustomerRow extends RowDataPacket {
   created_by: number | null;
   created_by_name: string | null;
   name: string;
+  internet_no: string | null;
   email: string;
   phone: string;
   address: string;
@@ -67,6 +74,7 @@ function toCustomer(row: CustomerRow): Customer {
   return {
     id: row.id,
     name: row.name,
+    internet_no: (row.internet_no as string | null) ?? null,
     email: row.email,
     phone: row.phone,
     address: row.address,
@@ -84,7 +92,7 @@ function toCustomer(row: CustomerRow): Customer {
 // Nama pemilik & pembuat lewat subquery, bukan JOIN: klausa WHERE/COUNT yang
 // sudah ada tidak perlu diubah dan tidak ada risiko baris berlipat.
 const COLUMNS =
-  'id, name, email, phone, address, is_active, status, created_at, owner_id, created_by, ' +
+  'id, name, internet_no, email, phone, address, is_active, status, created_at, owner_id, created_by, ' +
   '(SELECT u.name FROM users u WHERE u.id = customers.owner_id) AS owner_name, ' +
   '(SELECT u.name FROM users u WHERE u.id = customers.created_by) AS created_by_name';
 
@@ -194,8 +202,10 @@ export class CustomersRepository {
     }
 
     if (search) {
-      where.push('(name LIKE ? OR email LIKE ? OR phone LIKE ?)');
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      // Nomor Internet ikut dicari: operator sering menempel nomor dari
+      // WhatsApp, bukan nama pelanggan.
+      where.push('(name LIKE ? OR email LIKE ? OR phone LIKE ? OR internet_no LIKE ?)');
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
     if (query.status) {
       where.push('is_active = ?');
@@ -363,6 +373,26 @@ export class CustomersRepository {
     return row ? toCustomer(row) : null;
   }
 
+  /**
+   * Pelanggan menurut Nomor Internet — kunci pencarian utama panel dan
+   * `/inet` di WhatsApp.
+   *
+   * Scope tetap diterapkan: reseller tidak boleh menemukan pelanggan milik
+   * reseller lain hanya karena tahu nomornya.
+   */
+  async findByInternetNo(
+    internetNo: string,
+    scope: RequestScope = SYSTEM_SCOPE,
+  ): Promise<Customer | null> {
+    const owner = ownerFilter(scope, 'customers');
+    const clause = owner.sql ? ` AND ${owner.sql}` : '';
+    const row = await this.db.queryOne<CustomerRow>(
+      `SELECT ${COLUMNS} FROM customers WHERE internet_no = ?${clause} LIMIT 1`,
+      [internetNo, ...owner.params],
+    );
+    return row ? toCustomer(row) : null;
+  }
+
   // -------------------------------------------------------------------------
   // Akun RADIUS milik pelanggan
   // -------------------------------------------------------------------------
@@ -473,6 +503,43 @@ export class CustomersRepository {
   // -------------------------------------------------------------------------
 
   /**
+   * Nomor Internet berikutnya dari penghitung database.
+   *
+   * Nilai awal dibaca dari config `internet_no_start` yang diisi operator.
+   * Selama belum diisi, kembalikan null: lebih baik pelanggan tanpa nomor
+   * daripada nomor karangan yang permanen dan tidak bisa ditarik kembali.
+   *
+   * Nomor diambil lewat AUTO_INCREMENT tabel internet_no_sequence, di dalam
+   * transaksi yang sama dengan INSERT pelanggan. Kalau transaksi batal,
+   * nomornya hangus dan tidak dipakai ulang — nomor yang sudah terbit tidak
+   * boleh berpindah pemilik.
+   */
+  private async nextInternetNo(conn: PoolConnection): Promise<string | null> {
+    const [conf] = await conn.query<RowDataPacket[]>(
+      "SELECT config_value FROM config WHERE config_key = 'internet_no_start' LIMIT 1",
+    );
+    const start = Number(String(conf[0]?.config_value ?? '').trim());
+    if (!Number.isSafeInteger(start) || start <= 0) return null;
+
+    // Nomor yang sudah dipakai manual bisa bertabrakan dengan urutan; lewati.
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const [ins] = await conn.query<ResultSetHeader>('INSERT INTO internet_no_sequence () VALUES ()');
+      const [row] = await conn.query<RowDataPacket[]>("SELECT LPAD(?, 7, '0') AS number", [
+        start + Number(ins.insertId) - 1,
+      ]);
+      const number = String(row[0].number);
+      const [taken] = await conn.query<RowDataPacket[]>(
+        'SELECT 1 FROM customers WHERE internet_no = ? LIMIT 1',
+        [number],
+      );
+      if (taken.length === 0) return number;
+    }
+    throw Object.assign(new Error('Penghitung Nomor Internet tidak menemukan nomor bebas'), {
+      code: 'INTERNET_NO_EXHAUSTED',
+    });
+  }
+
+  /**
    * Buat pelanggan + akun RADIUS dalam satu transaksi.
    *
    * Kalau penulisan RADIUS gagal, pelanggan ikut dibatalkan: lebih baik tidak
@@ -494,9 +561,15 @@ export class CustomersRepository {
     },
   ): Promise<number> {
     return this.db.withTransaction(async (conn) => {
-      const columns = ['name', 'email', 'phone', 'address', 'is_active', 'status'];
+      // Nomor Internet: dikirim operator, atau diminta ke penghitung database.
+      // Tidak ada nomor yang dikarang di kode — selama `internet_no_start`
+      // belum diisi operator, nomornya tetap NULL (sama seperti data lama).
+      const internetNo = dto.internet_no?.trim() || (await this.nextInternetNo(conn));
+
+      const columns = ['name', 'internet_no', 'email', 'phone', 'address', 'is_active', 'status'];
       const params: unknown[] = [
         dto.name,
+        internetNo,
         dto.email,
         dto.phone,
         dto.address ?? '',
@@ -577,6 +650,12 @@ export class CustomersRepository {
     if (dto.address !== undefined) {
       fields.push('address = ?');
       params.push(dto.address);
+    }
+    // Nomor Internet hanya boleh DITULIS saat masih kosong; perubahan nomor
+    // yang sudah terbit ditolak lebih dulu oleh service.
+    if (dto.internet_no !== undefined) {
+      fields.push('internet_no = ?');
+      params.push(dto.internet_no.trim());
     }
     if (dto.is_active !== undefined) {
       fields.push('is_active = ?');

@@ -25,6 +25,9 @@ export const SETTING_KEYS = [
   'telegram_chat_id',
   // WhatsApp bot
   'whatsapp_enabled',
+  // Penomoran: angka awal Nomor Internet. Kosong = nomor tidak diterbitkan
+  // otomatis (pelanggan baru tetap bisa dibuat tanpa nomor).
+  'internet_no_start',
   'whatsapp_provider',
   'whatsapp_api_url',
   'whatsapp_api_token',
@@ -66,6 +69,9 @@ export const SETTING_DEFAULTS: Record<SettingKey, string> = {
   telegram_bot_token: '',
   telegram_chat_id: '',
   whatsapp_enabled: '0',
+  // Kosong = Nomor Internet tidak diterbitkan otomatis. Isi angka awal
+  // (mis. 1312013) hanya setelah pemilik menetapkan seri penomoran.
+  internet_no_start: '',
   whatsapp_provider: '',
   whatsapp_api_url: '',
   whatsapp_api_token: '',

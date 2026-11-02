@@ -18,6 +18,11 @@ import { CUSTOMER_STATUSES, CustomerStatus } from '../customer-radius';
 // Username RADIUS: huruf/angka/titik/strip/garis bawah/@, 3-64 karakter.
 const USERNAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._@-]{2,63}$/;
 
+// Nomor Internet: digit saja, 4-20 karakter. Disimpan sebagai teks supaya
+// nomor panjang (mis. 1998250526001) dan nol di depan tidak rusak.
+const INTERNET_NO_PATTERN = /^[0-9]{4,20}$/;
+const INTERNET_NO_MESSAGE = 'Nomor Internet harus 4-20 digit angka (contoh 1312013).';
+
 
 /**
  * Data akun RADIUS yang dibuat bersama pelanggan.
@@ -80,6 +85,18 @@ export class CreateCustomerDto {
   @MaxLength(100)
   name!: string;
 
+  /**
+   * Nomor Internet: identitas permanen pelanggan.
+   *
+   * Kosong = dibuat backend dari penghitung database (hanya aktif bila
+   * operator mengisi `internet_no_start` di Pengaturan). Nomor yang sudah
+   * terbit tidak dapat diganti.
+   */
+  @IsOptional()
+  @IsString()
+  @Matches(INTERNET_NO_PATTERN, { message: INTERNET_NO_MESSAGE })
+  internet_no?: string;
+
   @IsEmail({}, { message: 'Email tidak valid.' })
   email!: string;
 
@@ -120,6 +137,16 @@ export class UpdateCustomerDto {
   @IsString()
   @MaxLength(100)
   name?: string;
+
+  /**
+   * Nomor Internet hanya boleh DIISI saat masih kosong (migrasi data lama).
+   * Mengganti nomor yang sudah terbit ditolak service dengan 409: nomor itu
+   * identitas permanen, bukan label yang bisa diedit.
+   */
+  @IsOptional()
+  @IsString()
+  @Matches(INTERNET_NO_PATTERN, { message: INTERNET_NO_MESSAGE })
+  internet_no?: string;
 
   @IsOptional()
   @IsEmail({}, { message: 'Email tidak valid.' })

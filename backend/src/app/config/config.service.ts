@@ -59,6 +59,9 @@ export class ConfigService {
   private mikrotikCache?: MikrotikConfig;
 
   private readonly env: { [key: string]: string | undefined } = {
+    // PORT dibaca agar instance uji bisa jalan di samping instance produksi
+    // (mis. PORT=7931 dengan DB_NAME salinan). Tanpa isian = 7930.
+    PORT: process.env.PORT,
     DB_HOST: process.env.DB_HOST,
     DB_PORT: process.env.DB_PORT,
     DB_USER: process.env.DB_USER,

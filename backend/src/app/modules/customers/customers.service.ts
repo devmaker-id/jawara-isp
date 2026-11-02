@@ -154,6 +154,11 @@ export class CustomersService {
       throw new ServiceUnavailableException(CustomersService.OWNER_DISABLED_MESSAGE);
     }
     const code = errorCode(error);
+    // Nomor Internet ganda dikenali dari nama index-nya, supaya pesannya
+    // menyebut nomor — bukan "email sudah terdaftar" yang menyesatkan.
+    if (code === ER_DUP_ENTRY && String((error as Error)?.message ?? '').includes('uq_customers_internet_no')) {
+      throw new ConflictException('Nomor Internet sudah dipakai pelanggan lain. Gunakan nomor lain.');
+    }
     if (code === ER_DUP_ENTRY) {
       throw new ConflictException('Email sudah terdaftar pada pelanggan lain');
     }
@@ -180,6 +185,27 @@ export class CustomersService {
     return {
       ...customer,
       accounts: await this.repository.findAccounts(id).catch((error) => this.rethrow(error)),
+    };
+  }
+
+  /**
+   * Pelanggan menurut Nomor Internet — dipakai panel dan `/inet` WhatsApp.
+   *
+   * Nomor adalah identitas, jadi pencarian ini tepat satu hasil (bukan LIKE).
+   * Reseller tetap dibatasi `scope`: tahu nomornya tidak berarti boleh melihat
+   * pelanggan reseller lain.
+   */
+  async findByInternetNo(internetNo: string, scope: RequestScope = SYSTEM_SCOPE): Promise<Customer> {
+    const number = internetNo.trim();
+    const customer = await this.repository
+      .findByInternetNo(number, scope)
+      .catch((error) => this.rethrow(error));
+    if (!customer) {
+      throw new NotFoundException(`Pelanggan dengan Nomor Internet ${number} tidak ditemukan`);
+    }
+    return {
+      ...customer,
+      accounts: await this.repository.findAccounts(customer.id).catch((error) => this.rethrow(error)),
     };
   }
 
@@ -225,6 +251,22 @@ export class CustomersService {
     const existing = await this.repository.findByEmail(dto.email).catch((error) => this.rethrow(error));
     if (existing) {
       throw new ConflictException('Email sudah terdaftar pada pelanggan lain');
+    }
+
+    // Nomor Internet yang dikirim operator harus belum dipakai. Nomor otomatis
+    // (dto.internet_no kosong) dibuat repository di dalam transaksi yang sama
+    // dengan INSERT pelanggan, jadi tidak ada dua pelanggan bisa dapat nomor
+    // yang sama.
+    const internetNo = dto.internet_no?.trim();
+    if (internetNo) {
+      const taken = await this.repository
+        .findByInternetNo(internetNo)
+        .catch((error) => this.rethrow(error));
+      if (taken) {
+        throw new ConflictException(
+          `Nomor Internet ${internetNo} sudah dipakai pelanggan "${taken.name}".`,
+        );
+      }
     }
 
     const role = String(actor?.role ?? '');
@@ -303,6 +345,28 @@ export class CustomersService {
       const existing = await this.repository.findByEmail(dto.email).catch((error) => this.rethrow(error));
       if (existing && existing.id !== id) {
         throw new ConflictException('Email sudah terdaftar pada pelanggan lain');
+      }
+    }
+
+    // Nomor Internet: boleh DIISI saat masih kosong (data lama), tetapi tidak
+    // boleh DIGANTI setelah terbit. Nomor adalah identitas permanen — kalau
+    // bisa diedit, riwayat tagihan dan laporan pelanggan akan menunjuk orang
+    // yang salah.
+    if (dto.internet_no !== undefined) {
+      const next = dto.internet_no.trim();
+      if (current.internet_no && current.internet_no !== next) {
+        throw new ConflictException(
+          `Nomor Internet ${current.internet_no} sudah terbit dan tidak dapat diubah. ` +
+            'Nomor adalah identitas permanen pelanggan.',
+        );
+      }
+      const taken = await this.repository
+        .findByInternetNo(next)
+        .catch((error) => this.rethrow(error));
+      if (taken && taken.id !== id) {
+        throw new ConflictException(
+          `Nomor Internet ${next} sudah dipakai pelanggan "${taken.name}".`,
+        );
       }
     }
 

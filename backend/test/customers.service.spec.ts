@@ -7,10 +7,16 @@ function makeCustomer(overrides: Partial<Customer> = {}): Customer {
   return {
     id: 1,
     name: 'Budi Santoso',
+    internet_no: null,
     email: 'budi@example.com',
     phone: '08123456789',
     address: 'Jl. Merdeka 1',
     is_active: true,
+    status: 'active',
+    owner_id: null,
+    owner_name: null,
+    created_by: null,
+    created_by_name: null,
     created_at: new Date('2026-01-01T00:00:00Z'),
     ...overrides,
   };
@@ -22,6 +28,7 @@ function makeRepo(): CustomersRepository {
     findPage: vi.fn(),
     findById: vi.fn(),
     findByEmail: vi.fn(),
+    findByInternetNo: vi.fn().mockResolvedValue(null),
     hasOwnerColumn: vi.fn().mockResolvedValue(false),
     countRelations: vi.fn().mockResolvedValue({ invoices: 0, services: 0 }),
     // Akun RADIUS milik pelanggan; kosong bila pelanggan belum punya akun.
