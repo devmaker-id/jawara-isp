@@ -78,6 +78,10 @@ const EMPTY_REVENUE: RevenueSnapshot = {
 export interface OnlineCounts {
   hotspot: number | null;
   ppp: number | null;
+  /** Sesi hotspot yang memakai akun voucher (cetak). */
+  hotspot_voucher: number | null;
+  /** Sesi hotspot yang memakai akun member (pelanggan berlangganan). */
+  hotspot_member: number | null;
   /** Sesi terbuka yang tidak bisa dipastikan hotspot atau PPP. */
   unclassified: number;
   device: string | null;
@@ -447,6 +451,8 @@ export class DashboardService {
     return {
       hotspot: null,
       ppp: null,
+      hotspot_voucher: null,
+      hotspot_member: null,
       unclassified: 0,
       device: 'RADIUS (radacct)',
       error:
@@ -473,12 +479,16 @@ export class DashboardService {
         total: number;
         hotspot: number;
         ppp: number;
+        hotspot_voucher: number;
+        hotspot_member: number;
         classified: number;
         last_seen: Date | null;
       }>(
         `SELECT COUNT(*) AS total,
                 SUM(kind = 'hotspot') AS hotspot,
                 SUM(kind = 'ppp') AS ppp,
+                SUM(kind = 'hotspot' AND utype = 'voucher') AS hotspot_voucher,
+                SUM(kind = 'hotspot' AND utype = 'member') AS hotspot_member,
                 SUM(kind IS NOT NULL) AS classified,
                 MAX(a.acctstarttime) AS last_seen
            FROM (
@@ -491,6 +501,7 @@ export class DashboardService {
                         ELSE NULL
                       END
                     ) AS kind,
+                    v.user_type AS utype,
                     a.acctstarttime
                FROM radacct a
                LEFT JOIN radius_vouchers v ON v.username = a.username
@@ -508,6 +519,8 @@ export class DashboardService {
       return {
         hotspot: Number(row.hotspot ?? 0),
         ppp: Number(row.ppp ?? 0),
+        hotspot_voucher: Number(row.hotspot_voucher ?? 0),
+        hotspot_member: Number(row.hotspot_member ?? 0),
         unclassified: Math.max(0, total - classified),
         device: 'RADIUS (radacct)',
         error: null,

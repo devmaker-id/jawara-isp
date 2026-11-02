@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import api from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { TablePager } from '../../components/TablePager';
@@ -189,12 +190,28 @@ const DetailDialog: React.FC<{
 
 const OnlineSessions: React.FC = () => {
   const { user } = useAuth();
-  const [kind, setKind] = useState<Kind>('hotspot');
+  // Pilihan awal dibaca dari URL supaya tautan dari dashboard langsung mendarat
+  // di daftar yang benar: /sesi?jenis=ppp atau /sesi?jenis=hotspot&user_type=...
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [kind, setKind] = useState<Kind>(searchParams.get('jenis') === 'ppp' ? 'ppp' : 'hotspot');
+  // Sesi hotspot dipisah: akun voucher (cetak) vs member (pelanggan). Voucher
+  // jadi pilihan awal karena itu yang paling sering dipantau operator.
+  const [userType, setUserType] = useState<'voucher' | 'member'>(
+    searchParams.get('user_type') === 'member' ? 'member' : 'voucher',
+  );
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(50);
   const [selected, setSelected] = useState<string | null>(null);
+
+  const syncUrl = (nextKind: Kind, nextUserType: 'voucher' | 'member') => {
+    const next = new URLSearchParams(searchParams);
+    next.set('jenis', nextKind);
+    if (nextKind === 'hotspot') next.set('user_type', nextUserType);
+    else next.delete('user_type');
+    setSearchParams(next, { replace: true });
+  };
 
   // Pencarian ditunda supaya tiap ketikan tidak menjadi request baru.
   useEffect(() => {
@@ -207,9 +224,11 @@ const OnlineSessions: React.FC = () => {
 
   const path = useMemo(() => {
     const params = new URLSearchParams({ jenis: kind, page: String(page), limit: String(size) });
+    // Filter jenis akun hanya bermakna untuk hotspot (voucher vs member).
+    if (kind === 'hotspot') params.set('user_type', userType);
     if (query) params.set('search', query);
     return `/api/sessions?${params.toString()}`;
-  }, [kind, page, size, query]);
+  }, [kind, userType, page, size, query]);
 
   const { data, loading, refreshing, error, reload } = useNet<SessionList>(path, true, {
     refreshMs: 30000,
@@ -237,10 +256,30 @@ const OnlineSessions: React.FC = () => {
         ]}
         active={kind}
         onChange={(key) => {
-          setKind(key as Kind);
+          const nextKind = key as Kind;
+          setKind(nextKind);
           setPage(1);
+          syncUrl(nextKind, userType);
         }}
       />
+
+      {kind === 'hotspot' && (
+        <div className="-mt-2">
+          <Tabs
+            tabs={[
+              { key: 'voucher', label: 'Voucher' },
+              { key: 'member', label: 'Member' },
+            ]}
+            active={userType}
+            onChange={(key) => {
+              const nextType = key as 'voucher' | 'member';
+              setUserType(nextType);
+              setPage(1);
+              syncUrl(kind, nextType);
+            }}
+          />
+        </div>
+      )}
 
       <Toolbar>
         <SearchInput
@@ -249,7 +288,11 @@ const OnlineSessions: React.FC = () => {
           placeholder="Cari username, IP, MAC, atau NAS…"
         />
         <span className="text-xs text-slate-500">
-          {loading ? 'Memuat…' : `${data?.total ?? 0} sesi ${KIND_LABEL[kind]}`}
+          {loading
+            ? 'Memuat…'
+            : `${data?.total ?? 0} sesi ${KIND_LABEL[kind]}${
+                kind === 'hotspot' ? ` · ${userType === 'voucher' ? 'voucher' : 'member'}` : ''
+              }`}
         </span>
       </Toolbar>
 

@@ -48,6 +48,12 @@ export interface OnlineSession {
 
 export interface SessionFilter {
   jenis?: SessionKind;
+  /**
+   * Jenis akun yang sedang online: 'voucher' (akun cetak) atau 'member'
+   * (pelanggan berlangganan). Dipakai dashboard untuk memisahkan daftar sesi
+   * hotspot — voucher dan member tidak dikelola dengan cara yang sama.
+   */
+  userType?: 'voucher' | 'member';
   search?: string;
   page?: number;
   limit?: number;
@@ -89,6 +95,12 @@ export class SessionsRepository {
     if (filter.jenis) {
       where.push(`${JENIS_SQL} = ?`);
       params.push(filter.jenis);
+    }
+    if (filter.userType) {
+      // Akun tanpa baris di radius_vouchers tidak punya user_type; bila filter
+      // diminta, sesi seperti itu memang tidak masuk kelompok mana pun.
+      where.push('v.user_type = ?');
+      params.push(filter.userType);
     }
     if (filter.search) {
       where.push(

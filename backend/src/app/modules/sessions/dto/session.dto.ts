@@ -8,6 +8,10 @@ export class SessionQueryDto {
   jenis?: SessionKind;
 
   @IsOptional()
+  @IsIn(['voucher', 'member'], { message: 'user_type harus voucher atau member' })
+  user_type?: 'voucher' | 'member';
+
+  @IsOptional()
   @IsString()
   @MaxLength(64, { message: 'pencarian maksimal 64 karakter' })
   search?: string;

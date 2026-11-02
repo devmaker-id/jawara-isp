@@ -32,7 +32,13 @@ export class SessionsController {
   @Roles('admin', 'operator', 'resseler')
   list(@Query() query: SessionQueryDto, @Scope() scope: RequestScope) {
     return this.sessions.list(
-      { jenis: query.jenis, search: query.search, page: query.page, limit: query.limit },
+      {
+        jenis: query.jenis,
+        userType: query.user_type,
+        search: query.search,
+        page: query.page,
+        limit: query.limit,
+      },
       scope,
     );
   }

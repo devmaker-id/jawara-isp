@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import api from '../services/api';
 import { useBackgroundRefresh } from '../hooks/useBackgroundRefresh';
 import { useAuth } from '../contexts/AuthContext';
@@ -188,7 +189,14 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
 
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [stateFilter, setStateFilter] = useState<'' | CustomerStatus>('');
+  // Filter status bisa datang dari tautan dashboard (?state=active), supaya
+  // klik kartu "Pelanggan aktif" langsung membuka daftar yang benar.
+  const [params, setParams] = useSearchParams();
+  const STATUS_VALUES: CustomerStatus[] = ['active', 'expired', 'suspend', 'disable'];
+  const [stateFilter, setStateFilter] = useState<'' | CustomerStatus>(() => {
+    const fromUrl = params.get('state') as CustomerStatus | null;
+    return fromUrl && STATUS_VALUES.includes(fromUrl) ? fromUrl : '';
+  });
   const [ownerAvailable, setOwnerAvailable] = useState(false);
   const [ownerTarget, setOwnerTarget] = useState<Customer | null>(null);
   const [ownerValue, setOwnerValue] = useState('');
@@ -595,8 +603,15 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
         <select
           value={stateFilter}
           onChange={(e) => {
-            setStateFilter(e.target.value as '' | CustomerStatus);
+            const next = e.target.value as '' | CustomerStatus;
+            setStateFilter(next);
             setPage(1);
+            // Simpan di URL agar tautan dari dashboard tetap konsisten saat
+            // filter diubah manual.
+            const nextParams = new URLSearchParams(params);
+            if (next) nextParams.set('state', next);
+            else nextParams.delete('state');
+            setParams(nextParams, { replace: true });
           }}
           className={`${inputClass} sm:max-w-[200px]`}
           aria-label="Filter status pelanggan"

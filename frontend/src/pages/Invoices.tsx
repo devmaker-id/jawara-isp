@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import api from '../services/api';
 import { useBackgroundRefresh } from '../hooks/useBackgroundRefresh';
 import { TablePager } from '../components/TablePager';
@@ -467,6 +468,25 @@ const Invoices: React.FC = () => {
     }
     await loadEvents(invoice.id);
   };
+
+  // Tautan langsung ke satu tagihan (?invoice=ID), mis. dari nomor invoice di
+  // dasbor. Diambil satu baris dari API agar tetap benar walau tagihan itu tidak
+  // ada di halaman/filter yang sedang tampil.
+  const [searchParams] = useSearchParams();
+  const openedFromUrl = useRef(false);
+  useEffect(() => {
+    const raw = searchParams.get('invoice');
+    if (!raw || openedFromUrl.current) return;
+    const id = Number(raw);
+    if (!Number.isInteger(id) || id <= 0) return;
+    openedFromUrl.current = true;
+    api
+      .get<InvoiceItem>(`/api/invoices/${id}`)
+      .then((response) => openDetail(response.data))
+      .catch(() => undefined);
+    // openDetail stabil untuk satu pemanggilan; dipanggil sekali per URL.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   // Kunci idempoten per dialog: klik ganda tidak boleh menjadi dua tagihan.
   const newPayKey = (): string =>
