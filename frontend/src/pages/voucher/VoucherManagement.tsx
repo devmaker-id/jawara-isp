@@ -1406,7 +1406,8 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
                 className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
               />
               <p className="mt-1 text-[11px] text-slate-500">
-                Gateway diatur di Pengaturan → WhatsApp Bot (Fonnte/Wablas).
+                Pengiriman memakai WhatsApp Gateway panel (menu WhatsApp Gateway). PDF tidak
+                dilampirkan; username dan password ada di isi pesan.
               </p>
             </div>
             <div className="flex justify-end gap-2">
