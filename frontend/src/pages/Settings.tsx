@@ -12,14 +12,16 @@ interface SettingsView {
   secrets_set: Record<string, boolean>;
 }
 
-const TABS: Array<{ key: TabKey; label: string; hint: string }> = [
-  { key: 'branding', label: 'Branding', hint: 'Nama, logo, dan warna panel' },
-  { key: 'voucher', label: 'Template Voucher', hint: 'Teks kartu voucher & variabel cetak' },
-  { key: 'pelanggan', label: 'Pelanggan', hint: 'Angka awal Nomor Internet' },
-  { key: 'payment', label: 'Pembayaran', hint: 'Manual (tunai/transfer/QRIS) atau payment gateway' },
-  { key: 'telegram', label: 'Telegram', hint: 'Bot notifikasi tagihan' },
-  { key: 'integrasi', label: 'Integrasi', hint: 'MikroTik (RouterOS API) & FreeRADIUS' },
-  { key: 'sistem', label: 'Sistem', hint: 'Informasi koneksi & keamanan' },
+// Bagian pengaturan dipilih dari submenu sidebar (bukan tab di dalam halaman).
+// Urutannya sama dengan daftar anak menu "Pengaturan" di config/menu.ts.
+const TAB_KEYS: TabKey[] = [
+  'branding',
+  'voucher',
+  'pelanggan',
+  'payment',
+  'telegram',
+  'integrasi',
+  'sistem',
 ];
 
 const GATEWAY_PROVIDERS = [
@@ -172,8 +174,12 @@ interface TemplateCatalog {
 const Settings: React.FC = () => {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
-  const [params, setParams] = useSearchParams();
-  const tab = (TABS.find((t) => t.key === params.get('tab'))?.key ?? 'branding') as TabKey;
+  const [params] = useSearchParams();
+  // Submenu sidebar yang menentukan bagian mana yang tampil (?tab=...).
+  const requestedTab = params.get('tab');
+  const tab: TabKey = TAB_KEYS.includes(requestedTab as TabKey)
+    ? (requestedTab as TabKey)
+    : 'branding';
 
   const [groups, setGroups] = useState<Record<string, string[]>>({});
   const [values, setValues] = useState<Record<string, string>>({});
@@ -931,30 +937,7 @@ const Settings: React.FC = () => {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-6">
-        <nav
-          aria-label="Submenu pengaturan"
-          className="flex gap-2 overflow-x-auto lg:flex-col lg:overflow-visible"
-        >
-          {TABS.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              onClick={() => setParams({ tab: item.key })}
-              aria-current={tab === item.key ? 'page' : undefined}
-              className={`shrink-0 text-left px-3 py-2 rounded-lg text-sm transition ${
-                tab === item.key
-                  ? 'bg-cyan-500/10 text-cyan-300 border border-cyan-500/40'
-                  : 'text-slate-400 border border-transparent hover:bg-slate-700/40 hover:text-slate-200'
-              }`}
-            >
-              <span className="block font-medium">{item.label}</span>
-              <span className="hidden lg:block text-xs text-slate-500">{item.hint}</span>
-            </button>
-          ))}
-        </nav>
-
-        <div className="min-w-0 space-y-4">
+      <div className="space-y-4">
           {loading ? (
             <div className="space-y-2">
               {[0, 1, 2].map((i) => (
@@ -992,7 +975,6 @@ const Settings: React.FC = () => {
               )}
             </>
           )}
-        </div>
       </div>
     </div>
   );

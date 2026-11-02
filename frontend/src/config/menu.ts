@@ -153,6 +153,7 @@ export const menuItems: MenuItemConfig[] = [
     children: [
       { path: '/settings?tab=branding', label: 'Branding' },
       { path: '/settings?tab=voucher', label: 'Template Voucher' },
+      { path: '/settings?tab=pelanggan', label: 'Pelanggan' },
       { path: '/settings?tab=payment', label: 'Pembayaran & Gateway' },
       { path: '/settings?tab=telegram', label: 'Telegram' },
       { path: '/settings?tab=integrasi', label: 'Integrasi' },
