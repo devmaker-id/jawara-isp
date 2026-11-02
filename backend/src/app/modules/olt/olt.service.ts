@@ -33,7 +33,10 @@ export interface SyncResult {
   onu_total: number;
   onu_online: number;
   saved: number;
-  removed: number;
+  /** ONU yang ditandai hilang pada run ini (tidak dihapus). */
+  missing: number;
+  /** Port yang tidak mengembalikan data dan dilewati (inventori dibiarkan). */
+  skipped_ports: string[];
   /** Jumlah ONU yang redamannya dibaca pada run ini (vendor per-ONU). */
   optical_scanned: number;
   duration_ms: number;
@@ -243,8 +246,9 @@ export class OltService {
     let identity: string | null = null;
     let version: string | null = null;
     let opticalScanned = 0;
-    let saved = { saved: 0, removed: 0 };
+    let saved = { saved: 0, missing: 0, skipped: [] as string[] };
     const collected: OltOnu[] = [];
+    const perPort: Array<{ port: string; onus: OltOnu[] }> = [];
 
     try {
       const adapter = createAdapter(this.connection(device));
@@ -254,12 +258,13 @@ export class OltService {
         version = opened.version;
         for (const port of ports) {
           const onus = await adapter.readOnus(port);
+          perPort.push({ port, onus });
           collected.push(...onus);
         }
 
         // Inventori disimpan lebih dulu supaya daftar kandidat redaman sudah
         // memuat ONU yang baru ditemukan pada run ini.
-        saved = await this.repository.saveInventory(id, ports, collected);
+        saved = await this.repository.saveInventory(id, perPort);
 
         if (adapter.opticalInInventory !== true && adapter.readOptical) {
           const candidates = await this.repository.opticalCandidates(id, OPTICAL_BATCH_MAX);
@@ -289,6 +294,8 @@ export class OltService {
         online,
         message:
           `${ports.join(', ')} — ${collected.length} ONU (${online} online)` +
+          (saved.missing > 0 ? `, ${saved.missing} ditandai hilang` : '') +
+          (saved.skipped.length > 0 ? `, port tanpa data: ${saved.skipped.join(',')}` : '') +
           (opticalScanned > 0 ? `, redaman ${opticalScanned} ONU` : ''),
       });
       await this.repository.touchStatus(id, {
@@ -302,7 +309,7 @@ export class OltService {
         ports,
         onu: collected.length,
         online,
-        removed: saved.removed,
+        missing: saved.missing,
       });
 
       return {
@@ -312,7 +319,8 @@ export class OltService {
         onu_total: collected.length,
         onu_online: online,
         saved: saved.saved,
-        removed: saved.removed,
+        missing: saved.missing,
+        skipped_ports: saved.skipped,
         optical_scanned: opticalScanned,
         duration_ms: Date.now() - started,
       };
@@ -459,6 +467,12 @@ export class OltService {
     const code = (error as { code?: string })?.code;
     if (code === 'ONU_NOT_FOUND') throw new NotFoundException('ONU tidak ditemukan');
     if (code === 'CUSTOMER_NOT_FOUND') throw new NotFoundException('Pelanggan tidak ditemukan');
+    if (code === 'ONU_MISSING') {
+      throw new ConflictException(
+        'ONU ini tidak terlihat di perangkat pada sinkronisasi terakhir sehingga tidak bisa dipasang. ' +
+          'Jalankan Sinkron ulang setelah perangkat benar-benar terpasang.',
+      );
+    }
     if (code === 'ONU_TAKEN') {
       throw new ConflictException(
         'ONU ini sudah terpasang di pelanggan lain. Lepas dulu dari pelanggan tersebut sebelum dipindahkan.',

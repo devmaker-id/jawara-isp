@@ -81,6 +81,8 @@ export interface OltOnuRow {
   voltage: string | number | null;
   tx_bias: string | number | null;
   last_seen_at: Date;
+  /** Terisi = ONU tidak terlihat di perangkat pada sync terakhir port itu. */
+  missing_at?: Date | null;
 }
 
 export interface OltOnuFilter {
@@ -91,9 +93,23 @@ export interface OltOnuFilter {
   maxRx?: number;
   /** 'assigned' = sudah dipasang di pelanggan; 'unassigned' = masih inventaris. */
   assigned?: 'assigned' | 'unassigned';
+  /** 'active' (default) = ada di perangkat; 'missing' = tidak terlihat saat sync; 'all'. */
+  missing?: 'active' | 'missing' | 'all';
   /** 1-based. */
   page?: number;
   size?: number;
+}
+
+/**
+ * Bolehkah port ini menandai ONU yang tidak terlihat sebagai "hilang"?
+ *
+ * Port yang membaca 0 ONU padahal inventori punya baris = perintah gagal atau
+ * sesi terputus, bukan port kosong. Port seperti itu tidak boleh menghapus
+ * apa pun dari inventori.
+ */
+export function portMarkAllowed(readCount: number, existingCount: number): boolean {
+  if (readCount > 0) return true;
+  return existingCount === 0;
 }
 
 @Injectable()
@@ -226,6 +242,10 @@ export class OltRepository {
     }
     if (filter.assigned === 'assigned') where.push('o.customer_id IS NOT NULL');
     if (filter.assigned === 'unassigned') where.push('o.customer_id IS NULL');
+    // Default: ONU yang benar-benar ada di perangkat. Yang ditandai hilang
+    // hanya muncul bila diminta — supaya daftar operasional tidak penuh data basi.
+    if (filter.missing === 'missing') where.push('o.missing_at IS NOT NULL');
+    else if (filter.missing !== 'all') where.push('o.missing_at IS NULL');
     if (filter.maxRx !== undefined) {
       where.push('o.rx_power_onu IS NOT NULL AND o.rx_power_onu <= ?');
       params.push(filter.maxRx);
@@ -288,78 +308,108 @@ export class OltRepository {
   /**
    * Simpan inventori hasil pembacaan.
    *
-   * `seenAt` dipakai untuk membuang ONU yang sudah tidak ada di perangkat pada
-   * port yang dibaca. Sengaja per port: port yang tidak dibaca pada run ini
-   * tidak boleh kehilangan datanya.
+   * ONU yang tidak terlihat TIDAK dihapus — hanya ditandai `missing_at`.
+   * Alasannya: baris ONU membawa identitas (serial/MAC) dan relasi pelanggan;
+   * menghapusnya saat sync berarti kehilangan keduanya, termasuk ketika yang
+   * terjadi hanyalah satu perintah perangkat yang gagal.
+   *
+   * Port yang tidak mengembalikan satu pun ONU padahal inventori punya data
+   * dianggap tidak terbaca (`skipped`), bukan kosong. Aturan ini mencegah satu
+   * gangguan sesi menandai seluruh port hilang sekaligus.
    */
   async saveInventory(
     oltId: number,
-    ports: string[],
-    onus: OltOnu[],
-  ): Promise<{ saved: number; removed: number }> {
+    results: Array<{ port: string; onus: OltOnu[] }>,
+  ): Promise<{ saved: number; missing: number; skipped: string[] }> {
     return this.db.withTransaction(async (connection) => {
-      for (const onu of onus) {
-        await connection.query(
-          `INSERT INTO olt_onus
-             (olt_id, port_id, onu_id, serial_number, onu_mac, onu_name, description,
-              admin_state, omcc_state, phase_state, online,
-              rx_power_onu, rx_power_olt, tx_power, temperature, voltage, tx_bias, last_seen_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-           ON DUPLICATE KEY UPDATE
-             serial_number = VALUES(serial_number),
-             onu_mac       = VALUES(onu_mac),
-             onu_name      = VALUES(onu_name),
-             description   = VALUES(description),
-             admin_state   = VALUES(admin_state),
-             omcc_state    = VALUES(omcc_state),
-             phase_state   = VALUES(phase_state),
-             online        = VALUES(online),
-             -- Vendor yang membaca redaman terpisah (HiFocus) mengirim NULL
-             -- di sini; nilai lama harus dipertahankan, bukan dihapus setiap
-             -- sync. Vendor VSOL mengirim angka, jadi tetap menimpa.
-             rx_power_onu  = COALESCE(VALUES(rx_power_onu), rx_power_onu),
-             rx_power_olt  = COALESCE(VALUES(rx_power_olt), rx_power_olt),
-             tx_power      = COALESCE(VALUES(tx_power), tx_power),
-             temperature   = COALESCE(VALUES(temperature), temperature),
-             voltage       = COALESCE(VALUES(voltage), voltage),
-             tx_bias       = COALESCE(VALUES(tx_bias), tx_bias),
-             last_seen_at  = NOW()`,
-          [
-            oltId,
-            onu.portId,
-            onu.onuId,
-            onu.serialNumber,
-            onu.onuMac ?? null,
-            onu.name,
-            onu.description,
-            onu.adminState,
-            onu.omccState,
-            onu.phaseState,
-            onu.online ? 1 : 0,
-            onu.rxPowerOnu,
-            onu.rxPowerOlt,
-            onu.txPower,
-            onu.temperature,
-            onu.voltage,
-            onu.txBias,
-          ],
-        );
+      let saved = 0;
+      for (const { onus } of results) {
+        for (const onu of onus) {
+          await connection.query(
+            `INSERT INTO olt_onus
+               (olt_id, port_id, onu_id, serial_number, onu_mac, onu_name, description,
+                admin_state, omcc_state, phase_state, online,
+                rx_power_onu, rx_power_olt, tx_power, temperature, voltage, tx_bias,
+                last_seen_at, missing_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NULL)
+             ON DUPLICATE KEY UPDATE
+               serial_number = VALUES(serial_number),
+               onu_mac       = VALUES(onu_mac),
+               onu_name      = VALUES(onu_name),
+               description   = VALUES(description),
+               admin_state   = VALUES(admin_state),
+               omcc_state    = VALUES(omcc_state),
+               phase_state   = VALUES(phase_state),
+               online        = VALUES(online),
+               -- Vendor yang membaca redaman terpisah (HiFocus) mengirim NULL
+               -- di sini; nilai lama harus dipertahankan, bukan dihapus setiap
+               -- sync. Vendor VSOL mengirim angka, jadi tetap menimpa.
+               rx_power_onu  = COALESCE(VALUES(rx_power_onu), rx_power_onu),
+               rx_power_olt  = COALESCE(VALUES(rx_power_olt), rx_power_olt),
+               tx_power      = COALESCE(VALUES(tx_power), tx_power),
+               temperature   = COALESCE(VALUES(temperature), temperature),
+               voltage       = COALESCE(VALUES(voltage), voltage),
+               tx_bias       = COALESCE(VALUES(tx_bias), tx_bias),
+               last_seen_at  = NOW(),
+               -- Vendor yang membawa redaman di perintah inventori (VSOL) juga
+               -- menstempel waktu baca optik, supaya UI tidak menampilkan
+               -- "belum pernah dibaca" padahal angkanya baru.
+               optical_read_at = CASE WHEN VALUES(rx_power_onu) IS NOT NULL
+                                      THEN NOW() ELSE optical_read_at END,
+               -- Muncul lagi di perangkat = penanda hilang dicabut.
+               missing_at    = NULL`,
+            [
+              oltId,
+              onu.portId,
+              onu.onuId,
+              onu.serialNumber,
+              onu.onuMac ?? null,
+              onu.name,
+              onu.description,
+              onu.adminState,
+              onu.omccState,
+              onu.phaseState,
+              onu.online ? 1 : 0,
+              onu.rxPowerOnu,
+              onu.rxPowerOlt,
+              onu.txPower,
+              onu.temperature,
+              onu.voltage,
+              onu.txBias,
+            ],
+          );
+          saved += 1;
+        }
       }
 
-      let removed = 0;
-      for (const port of ports) {
-        // Hapus hanya ONU di port yang benar-benar dibaca pada run ini.
-        const result = await connection.query(
-          `DELETE FROM olt_onus
-            WHERE olt_id = ? AND port_id = ?
-              AND last_seen_at < NOW() - INTERVAL 1 MINUTE`,
+      let missing = 0;
+      const skipped: string[] = [];
+      for (const { port, onus } of results) {
+        const existing = await connection.query<RowDataPacket[]>(
+          'SELECT COUNT(*) AS total FROM olt_onus WHERE olt_id = ? AND port_id = ?',
           [oltId, port],
         );
-        const header = result[0] as { affectedRows?: number };
-        removed += Number(header?.affectedRows ?? 0);
+        const existingCount = Number((existing[0] as RowDataPacket[])[0]?.total ?? 0);
+        if (!portMarkAllowed(onus.length, existingCount)) {
+          skipped.push(port);
+          continue;
+        }
+        if (onus.length === 0) continue;
+
+        const keep = onus.map((onu) => onu.onuId);
+        const result = await connection.query(
+          `UPDATE olt_onus
+              SET missing_at = NOW()
+            WHERE olt_id = ? AND port_id = ?
+              AND missing_at IS NULL
+              AND onu_id NOT IN (${keep.map(() => '?').join(',')})`,
+          [oltId, port, ...keep],
+        );
+        const header = (result as unknown as Array<{ affectedRows?: number }>)[0];
+        missing += Number(header?.affectedRows ?? 0);
       }
 
-      return { saved: onus.length, removed };
+      return { saved, missing, skipped };
     });
   }
 
@@ -522,13 +572,19 @@ export class OltRepository {
   }): Promise<{ action: 'assign' | 'move'; previousCustomerId: number | null }> {
     return this.db.withTransaction(async (conn) => {
       const [onuRows] = await conn.query<RowDataPacket[]>(
-        `SELECT o.id, o.customer_id, o.olt_id, o.port_id, o.onu_id, o.serial_number, o.onu_name, d.name AS olt_name
+        `SELECT o.id, o.customer_id, o.missing_at, o.olt_id, o.port_id, o.onu_id,
+                o.serial_number, o.onu_name, d.name AS olt_name
            FROM olt_onus o JOIN olt_devices d ON d.id = o.olt_id
           WHERE o.id = ? FOR UPDATE`,
         [input.onuId],
       );
       const onu = onuRows[0];
       if (!onu) throw Object.assign(new Error('ONU tidak ditemukan'), { code: 'ONU_NOT_FOUND' });
+      if (onu.missing_at) {
+        // ONU yang tidak terlihat di perangkat pada sync terakhir tidak boleh
+        // dipasang: bisa jadi perangkat sudah dicabut atau terbaca gagal.
+        throw Object.assign(new Error('ONU ditandai hilang'), { code: 'ONU_MISSING' });
+      }
 
       const [customerRows] = await conn.query<RowDataPacket[]>(
         'SELECT id, name, internet_no FROM customers WHERE id = ? FOR UPDATE',
@@ -584,7 +640,8 @@ export class OltRepository {
   }): Promise<{ previousCustomerId: number | null }> {
     return this.db.withTransaction(async (conn) => {
       const [rows] = await conn.query<RowDataPacket[]>(
-        `SELECT o.id, o.customer_id, o.olt_id, o.port_id, o.onu_id, o.serial_number, o.onu_name, d.name AS olt_name
+        `SELECT o.id, o.customer_id, o.missing_at, o.olt_id, o.port_id, o.onu_id,
+                o.serial_number, o.onu_name, d.name AS olt_name
            FROM olt_onus o JOIN olt_devices d ON d.id = o.olt_id
           WHERE o.id = ? FOR UPDATE`,
         [input.onuId],
@@ -619,6 +676,7 @@ export class OltRepository {
       `SELECT h.id, h.onu_id, h.onu_label, h.action, h.from_customer_id, h.to_customer_id,
               h.actor_id, h.note, h.created_at,
               cf.name AS from_customer_name, ct.name AS to_customer_name,
+              cf.internet_no AS from_internet_no, ct.internet_no AS to_internet_no,
               u.name AS actor_name
          FROM onu_assignment_history h
          LEFT JOIN customers cf ON cf.id = h.from_customer_id

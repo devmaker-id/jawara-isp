@@ -113,6 +113,7 @@ export class OltController {
     @Query('search') search?: string,
     @Query('max_rx') maxRx?: string,
     @Query('assigned') assigned?: string,
+    @Query('missing') missing?: string,
     @Query('page') page?: string,
     @Query('size') size?: string,
   ) {
@@ -124,6 +125,11 @@ export class OltController {
       assigned: assigned === 'true' || assigned === '1' ? 'assigned'
         : assigned === 'false' || assigned === '0' ? 'unassigned'
         : undefined,
+      // Default backend: hanya ONU yang ada di perangkat. `missing=only` untuk
+      // meninjau ONU yang tidak terlihat saat sync; `missing=all` untuk audit.
+      missing: missing === 'only' || missing === 'true' ? 'missing'
+        : missing === 'all' ? 'all'
+        : 'active',
       page: page ? Number(page) : undefined,
       size: size ? Number(size) : undefined,
     });
