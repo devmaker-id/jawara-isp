@@ -4,8 +4,14 @@ import { RequestScope, SYSTEM_SCOPE } from '../auth/request-scope';
 import { SalesService } from '../sales/sales.service';
 import { readServerMetrics, ServerMetrics } from './system-metrics';
 
-// Ringkasan dashboard: metrik host, hitungan sesi online dari perangkat, dan
-// angka tagihan. Semua query di sini baca-saja.
+// Ringkasan dashboard: uang, pelanggan, tagihan yang perlu ditindak, aktivitas
+// terakhir, dan kondisi jaringan. Semua query baca-saja dan tidak memanggil API
+// perangkat — dashboard dibuka sepanjang hari.
+//
+// Yang sengaja TIDAK ada di sini: log autentikasi RADIUS 24 jam, daftar akun
+// hampir habis masa aktif, dan stok voucher per profil. Ketiganya data teknis
+// operasional, bukan pertanyaan pertama admin saat membuka panel — dan dashboard
+// yang memuat semuanya jadi tidak terbaca.
 
 export interface DashboardSummary {
   total_customers: number;
@@ -16,16 +22,18 @@ export interface DashboardSummary {
   /** Pendapatan hari ini = pembayaran tagihan + penjualan voucher. */
   today_revenue: number;
   today_payments: number;
-  server: ServerMetrics;
   /** Rincian pendapatan harian & bulanan sesuai cakupan akun. */
   revenue: RevenueSnapshot;
+  /** Sebaran pelanggan menurut status layanan. */
+  customers: CustomerBreakdown;
+  /** Piutang yang perlu ditagih, dengan daftar terlama. */
+  receivable: ReceivableSnapshot;
+  recent_payments: RecentPayment[];
+  recent_invoices: RecentInvoice[];
+  /** Kondisi inventori ONU dari sync OLT terakhir. */
+  onu: OnuHealth;
+  server: ServerMetrics;
   online: OnlineCounts;
-  /** Log autentikasi RADIUS 24 jam terakhir. */
-  auth: AuthHealth;
-  /** Akun yang masa aktifnya habis / hampir habis. */
-  expiring: ExpiringSoon;
-  /** Sebaran voucher per profil layanan. */
-  vouchers: VoucherProfileRow[];
 }
 
 /**
@@ -78,61 +86,61 @@ export interface OnlineCounts {
   source: 'radius' | 'device' | null;
 }
 
-/** Ringkasan autentikasi RADIUS 24 jam terakhir, dari radpostauth. */
-export interface AuthHealth {
-  accept: number;
-  reject: number;
+/** Sebaran pelanggan menurut status (customers.status). */
+export interface CustomerBreakdown {
   total: number;
-  /** Persentase ditolak; 0 bila belum ada percobaan. */
-  reject_percent: number;
-  /**
-   * Penolakan atas percobaan berbentuk MAC address — biasanya halaman login
-   * hotspot yang mencoba autentikasi perangkat, bukan pelanggan yang salah
-   * sandi. Dipisahkan supaya angka penolakan tidak selalu terlihat merah.
-   */
-  reject_mac: number;
-  /** Penolakan dengan username akun sungguhan. */
-  reject_account: number;
-  /** Username akun yang paling sering ditolak (MAC sudah dibuang). */
-  top_rejected: Array<{ username: string; count: number }>;
-  error: string | null;
-}
-
-/** Akun yang masa aktifnya habis atau hampir habis. */
-export interface ExpiringAccount {
-  username: string;
-  profile_name: string;
-  profile_type: 'hotspot' | 'ppp';
-  expires_at: string;
-  /** Negatif = sudah lewat. */
-  days_left: number;
-}
-
-export interface ExpiringSoon {
-  /** Sudah melewati expires_at tetapi belum sempat ditandai penegak. */
-  overdue: number;
-  /** Habis dalam 1x24 jam. */
-  in_24h: number;
-  /** Habis dalam 2-3 hari. */
-  in_3d: number;
-  /** Akun aktif tanpa masa aktif sama sekali (profil validity 0). */
-  without_expiry: number;
-  rows: ExpiringAccount[];
-  error: string | null;
-}
-
-/** Sebaran voucher per profil layanan. */
-export interface VoucherProfileRow {
-  profile_name: string;
-  profile_type: 'hotspot' | 'ppp';
-  /** Baru dibuat, belum diserahkan. */
-  created: number;
-  /** Sudah siap dipakai pelanggan. */
-  ready: number;
-  /** Sudah terpakai (punya sesi/masa aktif berjalan). */
-  used: number;
+  active: number;
   expired: number;
+  suspend: number;
+  disable: number;
+}
+
+/** Tagihan yang belum lunas dan sudah lewat jatuh tempo. */
+export interface OverdueInvoice {
+  id: number;
+  invoice_number: string;
+  customer_name: string;
+  /** Sisa tagihan setelah pembayaran sah. */
+  amount: number;
+  due_date: string;
+  days_late: number;
+}
+
+export interface ReceivableSnapshot {
+  overdue_count: number;
+  overdue_total: number;
+  /** Jatuh tempo dalam 7 hari ke depan (belum lewat). */
+  due_soon_count: number;
+  due_soon_total: number;
+  /** Tagihan terlambat paling lama, maksimal 5 baris. */
+  oldest: OverdueInvoice[];
+}
+
+export interface RecentPayment {
+  id: number;
+  invoice_number: string;
+  customer_name: string;
+  amount: number;
+  method: string;
+  paid_at: string;
+  recorded_by_name: string | null;
+}
+
+export interface RecentInvoice {
+  id: number;
+  invoice_number: string;
+  customer_name: string;
+  amount: number;
+  /** unpaid | overdue | partial | paid */
+  status: string;
+  due_date: string;
+}
+
+export interface OnuHealth {
   total: number;
+  /** ONU yang tidak terlihat saat sync terakhir (kandidat LOS/putus). */
+  missing: number;
+  error: string | null;
 }
 
 interface BillingRow {
@@ -157,10 +165,33 @@ const EMPTY_BILLING: BillingRow = {
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+// Status 'overdue' diturunkan dari due_date, sama seperti daftar tagihan; tidak
+// ada job pemelihara yang mengubah status.
+const STATUS_EXPR = `CASE WHEN i.status = 'unpaid' AND i.due_date < CURDATE() THEN 'overdue' ELSE i.status END`;
+
+// Sisa tagihan per invoice: nominal dikurangi pembayaran yang tidak dibatalkan.
+const BALANCE_JOIN = `LEFT JOIN (
+  SELECT invoice_id, SUM(amount) AS paid FROM payments WHERE voided_at IS NULL GROUP BY invoice_id
+) p ON p.invoice_id = i.id`;
+
+const toDateOnly = (value: Date | string | null): string | null => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') return value.slice(0, 10);
+  const y = value.getFullYear();
+  const m = String(value.getMonth() + 1).padStart(2, '0');
+  const d = String(value.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+const toIso = (value: Date | string | null): string => {
+  if (value === null || value === undefined) return '';
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
+};
+
 @Injectable()
 export class DashboardService {
   private readonly logger = new Logger(DashboardService.name);
-
 
   constructor(
     private readonly db: DatabaseService,
@@ -168,20 +199,18 @@ export class DashboardService {
   ) {}
 
   async summary(scope: RequestScope = SYSTEM_SCOPE): Promise<DashboardSummary> {
-    // Dashboard = wajah layanan RADIUS. Tidak ada satu pun panggilan API
-    // perangkat dari sini: monitoring MikroTik hanya di menu MikroTik, supaya
-    // koneksi API ke router tidak terus-menerus dibuat oleh halaman yang
-    // dibuka sepanjang hari.
-
-    const [billing, server, online, auth, expiring, vouchers, revenue] = await Promise.all([
-      this.billing(),
-      readServerMetrics(),
-      this.online(),
-      this.authHealth(),
-      this.expiringSoon(),
-      this.vouchersByProfile(),
-      this.sales.revenueSnapshot(scope).catch(() => EMPTY_REVENUE),
-    ]);
+    const [billing, server, online, revenue, customers, receivable, payments, invoices, onu] =
+      await Promise.all([
+        this.billing(),
+        readServerMetrics(),
+        this.online(),
+        this.sales.revenueSnapshot(scope).catch(() => EMPTY_REVENUE),
+        this.customerBreakdown(),
+        this.receivable(),
+        this.recentPayments(),
+        this.recentInvoices(),
+        this.onuHealth(),
+      ]);
 
     // Angka kartu "pendapatan hari ini" mengikuti cakupan akun, sama seperti
     // angka di menu Laporan — bukan angka global yang hanya bisa dilihat admin.
@@ -189,198 +218,193 @@ export class DashboardService {
       ...billing,
       today_revenue: revenue.today_revenue,
       today_payments: revenue.today_payments + revenue.today_vouchers,
+      revenue,
+      customers,
+      receivable,
+      recent_payments: payments,
+      recent_invoices: invoices,
+      onu,
       server,
       online,
-      auth,
-      expiring,
-      vouchers,
-      revenue,
     };
   }
 
-  /**
-   * Autentikasi RADIUS 24 jam terakhir dari `radpostauth`.
-   *
-   * Ini indikator paling cepat saat ada masalah: lonjakan Access-Reject berarti
-   * akun kedaluwarsa dipakai lagi, sandi salah, atau NAS memakai secret keliru.
-   * Tidak butuh tabel baru — FreeRADIUS sudah menulisnya.
-   */
-  private async authHealth(): Promise<AuthHealth> {
-    const empty: AuthHealth = {
-      accept: 0,
-      reject: 0,
-      total: 0,
-      reject_percent: 0,
-      reject_mac: 0,
-      reject_account: 0,
-      top_rejected: [],
-      error: null,
-    };
+  /** Pelanggan menurut status: dasar menjawab "berapa yang aktif". */
+  private async customerBreakdown(): Promise<CustomerBreakdown> {
+    const empty: CustomerBreakdown = { total: 0, active: 0, expired: 0, suspend: 0, disable: 0 };
     try {
-      // MAC dikenali dari polanya (aa:bb:cc:dd:ee:ff atau aa-bb-...), bukan dari
-      // daftar perangkat: halaman login hotspot memang mencoba username MAC.
-      const MAC = "username REGEXP '^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$'";
-      const row = await this.db.queryOne<{
-        accept: number;
-        reject: number;
-        total: number;
-        reject_mac: number;
-      }>(
-        `SELECT SUM(reply = 'Access-Accept') AS accept,
-                SUM(reply = 'Access-Reject') AS reject,
-                COUNT(*) AS total,
-                SUM(reply = 'Access-Reject' AND ${MAC}) AS reject_mac
-           FROM radpostauth
-          WHERE authdate >= NOW() - INTERVAL 1 DAY`,
-      );
-      const accept = Number(row?.accept ?? 0);
-      const reject = Number(row?.reject ?? 0);
-      const total = Number(row?.total ?? 0);
-      const rejectMac = Number(row?.reject_mac ?? 0);
-
-      // Alasan penolakan teratas: satu nama yang muncul puluhan kali biasanya
-      // akun yang masih dipakai padahal masa aktifnya habis. Percobaan MAC
-      // dibuang dari daftar ini karena bukan akun.
-      const top = await this.db.query<{ username: string; total: number }>(
-        `SELECT username, COUNT(*) AS total
-           FROM radpostauth
-          WHERE authdate >= NOW() - INTERVAL 1 DAY
-            AND reply = 'Access-Reject'
-            AND NOT ${MAC}
-          GROUP BY username
-          ORDER BY total DESC
-          LIMIT 3`,
-      );
-
-      return {
-        accept,
-        reject,
-        total,
-        reject_percent: total > 0 ? Math.round((reject / total) * 100) : 0,
-        reject_mac: rejectMac,
-        reject_account: Math.max(0, reject - rejectMac),
-        top_rejected: top.map((item) => ({ username: String(item.username), count: Number(item.total) })),
-        error: null,
-      };
-    } catch (error) {
-      this.logger.warn(`radpostauth tidak terbaca: ${message(error)}`);
-      return { ...empty, error: message(error) };
-    }
-  }
-
-  /**
-   * Akun yang masa aktifnya habis atau habis dalam 3 hari.
-   *
-   * Sumbernya `radius_vouchers.expires_at` — nilai yang juga dipakai penegak,
-   * jadi angka di dashboard dan tindakan sistem tidak bisa berbeda. Akun dengan
-   * `expires_at` NULL (profil tanpa masa aktif) dihitung terpisah: bukan "aman",
-   * hanya memang tidak punya batas.
-   */
-  private async expiringSoon(): Promise<ExpiringSoon> {
-    const empty: ExpiringSoon = {
-      overdue: 0,
-      in_24h: 0,
-      in_3d: 0,
-      without_expiry: 0,
-      rows: [],
-      error: null,
-    };
-    try {
-      const rows = await this.db.query<{
-        username: string;
-        profile_name: string;
-        profile_type: 'hotspot' | 'ppp';
-        expires_at: Date | string;
-        hours_left: number;
-      }>(
-        `SELECT username, profile_name, profile_type, expires_at,
-                TIMESTAMPDIFF(HOUR, NOW(), expires_at) AS hours_left
-           FROM radius_vouchers
-          WHERE expires_at IS NOT NULL
-            AND status IN ('active', 'ready-to-use')
-            AND expires_at <= NOW() + INTERVAL 3 DAY
-          ORDER BY expires_at ASC
-          LIMIT 50`,
-      );
-
-      const counts = await this.db.queryOne<{ without_expiry: number }>(
-        `SELECT COUNT(*) AS without_expiry
-           FROM radius_vouchers
-          WHERE expires_at IS NULL AND status IN ('active', 'ready-to-use')`,
-      );
-
-      let overdue = 0;
-      let in24 = 0;
-      let in3d = 0;
-      for (const row of rows) {
-        const hours = Number(row.hours_left);
-        if (hours < 0) overdue += 1;
-        else if (hours <= 24) in24 += 1;
-        else in3d += 1;
-      }
-
-      return {
-        overdue,
-        in_24h: in24,
-        in_3d: in3d,
-        without_expiry: Number(counts?.without_expiry ?? 0),
-        rows: rows.slice(0, 8).map((row) => ({
-          username: String(row.username),
-          profile_name: String(row.profile_name),
-          profile_type: row.profile_type,
-          expires_at: new Date(row.expires_at).toISOString(),
-          days_left: Math.round(Number(row.hours_left) / 24),
-        })),
-        error: null,
-      };
-    } catch (error) {
-      this.logger.warn(`radius_vouchers (expires_at) tidak terbaca: ${message(error)}`);
-      return { ...empty, error: message(error) };
-    }
-  }
-
-  /**
-   * Sebaran voucher per profil layanan.
-   *
-   * Hanya `user_type = 'voucher'` — akun member punya pelanggan dan ditagih,
-   * bukan dicetak. Yang dihitung per status supaya operator tahu stok mana yang
-   * perlu dicetak ulang dan mana yang menumpuk tak terpakai.
-   */
-  private async vouchersByProfile(): Promise<VoucherProfileRow[]> {
-    try {
-      const rows = await this.db.query<{
-        profile_name: string;
-        profile_type: 'hotspot' | 'ppp';
-        created: number;
-        ready: number;
-        used: number;
-        expired: number;
-        total: number;
-      }>(
-        `SELECT profile_name, profile_type,
-                SUM(status = 'new-created') AS created,
-                SUM(status = 'ready-to-use') AS ready,
-                SUM(status = 'active') AS used,
+      const row = await this.db.queryOne<Record<string, number | string>>(
+        `SELECT COUNT(*) AS total,
+                SUM(status = 'active') AS active,
                 SUM(status = 'expired') AS expired,
-                COUNT(*) AS total
-           FROM radius_vouchers
-          WHERE user_type = 'voucher'
-          GROUP BY profile_name, profile_type
-          ORDER BY total DESC
-          LIMIT 8`,
+                SUM(status = 'suspend') AS suspend,
+                SUM(status = 'disable') AS disable
+           FROM customers`,
+      );
+      if (!row) return empty;
+      return {
+        total: Number(row.total ?? 0),
+        active: Number(row.active ?? 0),
+        expired: Number(row.expired ?? 0),
+        suspend: Number(row.suspend ?? 0),
+        disable: Number(row.disable ?? 0),
+      };
+    } catch (error) {
+      this.logger.warn(`Sebaran pelanggan tidak terbaca: ${message(error)}`);
+      return empty;
+    }
+  }
+
+  /**
+   * Piutang: berapa yang sudah lewat jatuh tempo dan berapa yang akan jatuh
+   * tempo. Sisa tagihan (bukan nominal penuh) yang dijumlahkan, supaya tagihan
+   * yang sudah dibayar sebagian tidak terlihat menunggak penuh.
+   */
+  private async receivable(): Promise<ReceivableSnapshot> {
+    const empty: ReceivableSnapshot = {
+      overdue_count: 0,
+      overdue_total: 0,
+      due_soon_count: 0,
+      due_soon_total: 0,
+      oldest: [],
+    };
+    try {
+      const row = await this.db.queryOne<Record<string, number | string>>(
+        `SELECT
+           SUM(late > 0) AS overdue_count,
+           COALESCE(SUM(IF(late > 0, balance, 0)), 0) AS overdue_total,
+           -- late negatif = jatuh tempo masih di depan; 0 = jatuh tempo hari ini.
+           SUM(late BETWEEN -7 AND 0) AS due_soon_count,
+           COALESCE(SUM(IF(late BETWEEN -7 AND 0, balance, 0)), 0) AS due_soon_total
+         FROM (
+           SELECT i.due_date, i.amount - COALESCE(p.paid, 0) AS balance,
+                  DATEDIFF(CURDATE(), i.due_date) AS late
+             FROM invoices i ${BALANCE_JOIN}
+            WHERE i.status NOT IN ('paid', 'void')
+         ) t`,
+      );
+
+      const oldest = await this.db.query<{
+        id: number;
+        invoice_number: string;
+        customer_name: string;
+        balance: number | string;
+        due_date: Date | string;
+        days_late: number | string;
+      }>(
+        `SELECT i.id, i.invoice_number, i.customer_name,
+                i.amount - COALESCE(p.paid, 0) AS balance, i.due_date,
+                DATEDIFF(CURDATE(), i.due_date) AS days_late
+           FROM invoices i ${BALANCE_JOIN}
+          WHERE i.status NOT IN ('paid', 'void') AND i.due_date < CURDATE()
+          ORDER BY i.due_date ASC
+          LIMIT 5`,
+      );
+
+      return {
+        overdue_count: Number(row?.overdue_count ?? 0),
+        overdue_total: Number(row?.overdue_total ?? 0),
+        due_soon_count: Number(row?.due_soon_count ?? 0),
+        due_soon_total: Number(row?.due_soon_total ?? 0),
+        oldest: oldest.map((item) => ({
+          id: item.id,
+          invoice_number: String(item.invoice_number),
+          customer_name: String(item.customer_name),
+          amount: Number(item.balance ?? 0),
+          due_date: toDateOnly(item.due_date) ?? '',
+          days_late: Number(item.days_late ?? 0),
+        })),
+      };
+    } catch (error) {
+      this.logger.warn(`Piutang tidak terbaca: ${message(error)}`);
+      return empty;
+    }
+  }
+
+  /** Lima pembayaran sah terakhir — bukti uang masuk terakhir. */
+  private async recentPayments(): Promise<RecentPayment[]> {
+    try {
+      const rows = await this.db.query<{
+        id: number;
+        invoice_number: string;
+        customer_name: string;
+        amount: number | string;
+        method: string;
+        paid_at: Date | string;
+        recorded_by_name: string | null;
+      }>(
+        `SELECT p.id, i.invoice_number, i.customer_name, p.amount, p.method, p.paid_at,
+                u.name AS recorded_by_name
+           FROM payments p
+           JOIN invoices i ON i.id = p.invoice_id
+           LEFT JOIN users u ON u.id = p.recorded_by
+          WHERE p.voided_at IS NULL
+          ORDER BY p.paid_at DESC, p.id DESC
+          LIMIT 5`,
       );
       return rows.map((row) => ({
-        profile_name: String(row.profile_name),
-        profile_type: row.profile_type,
-        created: Number(row.created ?? 0),
-        ready: Number(row.ready ?? 0),
-        used: Number(row.used ?? 0),
-        expired: Number(row.expired ?? 0),
-        total: Number(row.total ?? 0),
+        id: row.id,
+        invoice_number: String(row.invoice_number),
+        customer_name: String(row.customer_name),
+        amount: Number(row.amount ?? 0),
+        method: String(row.method),
+        paid_at: toIso(row.paid_at),
+        recorded_by_name: row.recorded_by_name,
       }));
     } catch (error) {
-      this.logger.warn(`Sebaran voucher tidak terbaca: ${message(error)}`);
+      this.logger.warn(`Pembayaran terbaru tidak terbaca: ${message(error)}`);
       return [];
+    }
+  }
+
+  /** Lima tagihan terakhir (tagihan void tidak ditampilkan). */
+  private async recentInvoices(): Promise<RecentInvoice[]> {
+    try {
+      const rows = await this.db.query<{
+        id: number;
+        invoice_number: string;
+        customer_name: string;
+        amount: number | string;
+        status: string;
+        due_date: Date | string;
+      }>(
+        `SELECT i.id, i.invoice_number, i.customer_name, i.amount,
+                ${STATUS_EXPR} AS status, i.due_date
+           FROM invoices i
+          WHERE i.status <> 'void'
+          ORDER BY i.id DESC
+          LIMIT 5`,
+      );
+      return rows.map((row) => ({
+        id: row.id,
+        invoice_number: String(row.invoice_number),
+        customer_name: String(row.customer_name),
+        amount: Number(row.amount ?? 0),
+        status: String(row.status),
+        due_date: toDateOnly(row.due_date) ?? '',
+      }));
+    } catch (error) {
+      this.logger.warn(`Tagihan terbaru tidak terbaca: ${message(error)}`);
+      return [];
+    }
+  }
+
+  /**
+   * Kondisi ONU dari inventori hasil sync OLT terakhir.
+   *
+   * `missing` = ONU yang tidak terlihat saat sync — petunjuk gangguan, bukan
+   * kepastian: bisa saja perangkat pelanggan sedang dimatikan. Angka ini hanya
+   * isyarat untuk membuka menu OLT.
+   */
+  private async onuHealth(): Promise<OnuHealth> {
+    try {
+      const row = await this.db.queryOne<{ total: number | string; missing: number | string }>(
+        `SELECT COUNT(*) AS total, COALESCE(SUM(missing_at IS NOT NULL), 0) AS missing FROM olt_onus`,
+      );
+      return { total: Number(row?.total ?? 0), missing: Number(row?.missing ?? 0), error: null };
+    } catch (error) {
+      // Tabel OLT belum ada (migrasi 022/031 belum jalan): bukan kegagalan dashboard.
+      return { total: 0, missing: 0, error: message(error) };
     }
   }
 
@@ -409,9 +433,6 @@ export class DashboardService {
     return rows[0] ?? EMPTY_BILLING;
   }
 
-  // Online diambil dari radacct lebih dulu: RADIUS adalah dapur sistem ini.
-  // Daftar active RouterOS hanya dipakai sebagai cadangan saat accounting belum
-  // berjalan, dan sumbernya selalu dilaporkan agar angka tidak menipu.
   /**
    * Angka online HANYA dari radacct.
    *
