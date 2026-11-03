@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import api from '../../services/api';
+import { downloadCsv } from '../../utils/csv';
 
 /**
  * Laporan Piutang (aging) — memakai endpoint yang sudah ada:
@@ -116,31 +117,106 @@ export const ReceivableReport: React.FC<{ onChangeType: (type: ReportType) => vo
   const [ownerId, setOwnerId] = useState('');
   const [owners, setOwners] = useState<Array<{ id: number; name: string }>>([]);
 
+  // Satu sumber parameter: dipakai tabel dan ekspor CSV, supaya CSV selalu
+  // mengikuti filter yang sedang aktif.
+  const filterParams = useCallback(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    const effectiveDueFrom = overdueOnly === 'due' ? undefined : dueFrom || undefined;
+    const effectiveDueTo =
+      overdueOnly === 'due' ? (dueTo || today) : overdueOnly === 'not_due' ? undefined : dueTo || undefined;
+    return {
+      from: from || undefined,
+      to: to || undefined,
+      due_from: overdueOnly === 'not_due' ? today : effectiveDueFrom,
+      due_to: effectiveDueTo,
+      search: search.trim() || undefined,
+      profile_type: profileType || undefined,
+      status: status || undefined,
+      owner_id: ownerId || undefined,
+    };
+  }, [from, to, dueFrom, dueTo, search, profileType, status, overdueOnly, ownerId]);
+
+  const [exporting, setExporting] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const exportCsv = useCallback(async () => {
+    setExporting(true);
+    setNotice(null);
+    try {
+      const collected: Row[] = [];
+      let pageNo = 1;
+      let expected = Number.POSITIVE_INFINITY;
+      // Seluruh hasil filter (bukan hanya halaman yang terlihat), dibatasi
+      // 5000 baris seperti ekspor lain agar browser tidak kehabisan memori.
+      while (collected.length < expected && collected.length < 5000) {
+        const res = await api.get('/api/reports/receivables', {
+          params: { ...filterParams(), page: pageNo, limit: 200 },
+        });
+        expected = Number(res.data?.total ?? 0);
+        const batch: Row[] = Array.isArray(res.data?.rows) ? res.data.rows : [];
+        if (batch.length === 0) break;
+        collected.push(...batch);
+        pageNo += 1;
+      }
+
+      downloadCsv(
+        `piutang-${from || 'awal'}-${to || 'akhir'}.csv`,
+        [
+          'Nomor invoice',
+          'Tanggal invoice',
+          'Tanggal jatuh tempo',
+          'Internet Number',
+          'Nama pelanggan',
+          'Username layanan',
+          'Owner/reseller',
+          'Jenis layanan',
+          'Paket/profile',
+          'Nilai invoice',
+          'Total dibayar',
+          'Sisa piutang',
+          'Umur piutang (hari)',
+          'Status invoice',
+          'Status jatuh tempo',
+        ],
+        collected.map((row) => [
+          row.invoice_number,
+          row.created_at,
+          row.due_date,
+          row.internet_no ?? '',
+          row.customer_name,
+          row.username ?? '',
+          row.owner_name ?? '',
+          row.profile_type === 'ppp' ? 'PPPoE' : row.profile_type === 'hotspot' ? 'Hotspot' : '',
+          row.profile_name ?? '',
+          row.amount,
+          row.paid,
+          row.balance,
+          row.days_late > 0 ? row.days_late : 0,
+          row.status,
+          row.days_late > 0 ? 'jatuh tempo' : 'belum jatuh tempo',
+        ]),
+      );
+      if (expected > collected.length) {
+        setNotice(`CSV dibatasi 5000 baris pertama dari ${expected}. Persempit filter.`);
+      } else {
+        setNotice(`${collected.length} baris diekspor.`);
+      }
+    } catch (e) {
+      setNotice(readError(e, 'Gagal mengekspor CSV.'));
+    } finally {
+      setExporting(false);
+    }
+  }, [filterParams, from, to]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       // Filter "sudah/belum jatuh tempo" diterjemahkan ke rentang due_date agar
       // tetap dihitung backend (bukan filter di browser).
-      const today = new Date().toISOString().slice(0, 10);
-      const effectiveDueFrom = overdueOnly === 'due' ? undefined : dueFrom || undefined;
-      const effectiveDueTo =
-        overdueOnly === 'due' ? (dueTo || today) : overdueOnly === 'not_due' ? undefined : dueTo || undefined;
-
       const [list, sum] = await Promise.all([
         api.get('/api/reports/receivables', {
-          params: {
-            from: from || undefined,
-            to: to || undefined,
-            due_from: overdueOnly === 'not_due' ? today : effectiveDueFrom,
-            due_to: effectiveDueTo,
-            search: search.trim() || undefined,
-            profile_type: profileType || undefined,
-            status: status || undefined,
-            owner_id: ownerId || undefined,
-            page,
-            limit,
-          },
+          params: { ...filterParams(), page, limit },
         }),
         api.get<Summary>('/api/reports/receivables/summary'),
       ]);
@@ -154,7 +230,7 @@ export const ReceivableReport: React.FC<{ onChangeType: (type: ReportType) => vo
     } finally {
       setLoading(false);
     }
-  }, [from, to, dueFrom, dueTo, search, profileType, status, overdueOnly, ownerId, page, limit]);
+  }, [filterParams, page, limit]);
 
   useEffect(() => {
     void load();
@@ -193,6 +269,15 @@ export const ReceivableReport: React.FC<{ onChangeType: (type: ReportType) => vo
             Saldo = sisa tagihan unpaid/partial. Aging dihitung dari tanggal jatuh tempo.
           </p>
         </div>
+        <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => void exportCsv()}
+          disabled={exporting}
+          className="rounded-lg bg-slate-700 px-3 py-2 text-sm text-slate-100 transition hover:bg-slate-600 disabled:opacity-60"
+        >
+          {exporting ? 'Menyiapkan…' : 'Ekspor CSV'}
+        </button>
         <select
           value="receivables"
           onChange={(event) => onChangeType(event.target.value as ReportType)}
@@ -204,7 +289,10 @@ export const ReceivableReport: React.FC<{ onChangeType: (type: ReportType) => vo
             </option>
           ))}
         </select>
+        </div>
       </div>
+
+      {notice && <p className="text-xs text-cyan-300">{notice}</p>}
 
       {summary && (
         <>
@@ -244,17 +332,6 @@ export const ReceivableReport: React.FC<{ onChangeType: (type: ReportType) => vo
             sampai
             <input type="date" value={to} onChange={(e) => { setTo(e.target.value); setPage(1); }} className={inputClass} />
           </label>
-          {owners.length > 0 && (
-            <label className="text-xs text-slate-400">
-              Owner / reseller
-              <select value={ownerId} onChange={(e) => { setOwnerId(e.target.value); setPage(1); }} className={inputClass}>
-                <option value="">Semua</option>
-                {owners.map((owner) => (
-                  <option key={owner.id} value={owner.id}>{owner.name}</option>
-                ))}
-              </select>
-            </label>
-          )}
           <label className="text-xs text-slate-400">
             Jatuh tempo dari
             <input type="date" value={dueFrom} onChange={(e) => { setDueFrom(e.target.value); setPage(1); }} className={inputClass} />

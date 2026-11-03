@@ -310,6 +310,13 @@ const Dashboard: React.FC = () => {
               </p>
             </Kpi>
 
+            <p className="md:col-span-2 rounded-lg border border-slate-700/50 bg-slate-800/40 px-3 py-2 text-[11px] leading-relaxed text-slate-400">
+              Tiga angka ini berbeda dan tidak saling mengurangi: <span className="text-slate-200">tagihan
+              diterbitkan</span> dihitung dari tanggal invoice, <span className="text-slate-200">kas masuk</span> dari
+              tanggal pembayaran, dan <span className="text-slate-200">saldo piutang</span> dari sisa tagihan yang belum
+              lunas (unpaid/partial).
+            </p>
+
             <Link
               to="/customers?state=active"
               className="group rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
