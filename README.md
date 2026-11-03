@@ -132,6 +132,18 @@ Frontend mem-proxy `/api` ke `http://localhost:7930`, jadi tidak ada URL backend
 kode. Pada Vite, domain panel yang dipakai lewat tunnel **wajib** masuk `server.allowedHosts`;
 kalau tidak, Vite menjawab "Blocked request: This host is not allowed".
 
+### Layanan systemd (produksi)
+
+Tiga unit menjalankan panel: `jawara-backend.service` (`:7930`), `jawara-frontend.service`
+(`:3000`, menjalankan `vite build` lalu `vite preview`), dan `jawara-wa.service` (worker Baileys,
+unit level user). Contoh unit worker ada di `deploy/jawara-wa.service`; unit backend/frontend ada
+di `/etc/systemd/system/`.
+
+`ExecStart=` **wajib memakai path absolut**: systemd tidak memakai `Environment=PATH` untuk mencari
+executable, ia memakai daftar path bawaannya. Menulis `ExecStart=node dist/main` membuat systemd
+menjalankan `/usr/bin/node` (v18 di server ini) dan backend gagal start dengan `ERR_REQUIRE_ESM`.
+Contoh benar: `ExecStart=/home/devmaker/.local/node22/bin/node dist/main`.
+
 ## Variabel lingkungan
 
 Nilai sensitif tidak pernah ada di repo. Kredensial MikroTik dan FreeRADIUS juga bisa disimpan di
