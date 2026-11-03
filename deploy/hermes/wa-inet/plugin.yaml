@@ -1,7 +1,0 @@
-name: wa-inet
-version: 1.0.0
-description: "Perintah /inet: cek pelanggan lewat Nomor Internet di jalur WhatsApp, dijawab sebelum agen (tanpa panggilan model AI)."
-author: devmaker
-license: MIT
-provides_commands:
-  - inet

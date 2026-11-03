@@ -43,6 +43,16 @@ menu **MikroTik**, yang hanya dibuka sebentar oleh operator.
 - Cetak PDF, cetak per filter (pemilik/profil/tanggal), kirim via WhatsApp
 - Aksi massal: ubah dan hapus hanya untuk baris yang dicentang
 
+**WhatsApp Gateway** (milik Jawara-ISP sendiri)
+- Worker Baileys berjalan sebagai service terpisah (`wa-gateway/worker.js`, unit `jawara-wa.service`,
+  hanya loopback `127.0.0.1:3199`); backend tidak pernah memegang sesi WhatsApp.
+- Backend mengelola kebijakan akses (allowlist nomor/grup, wajib mention di grup), riwayat pesan,
+  serta router perintah `/help`, `/status`, `/inet`, dan `/pelanggan`.
+- `/inet <nomor>` dijalankan oleh `scripts/inet.mjs` (baca-saja) dan balasannya dikirim apa adanya.
+- Pairing dan ganti nomor lewat menu **WhatsApp Gateway → Koneksi & Pairing**; sesi disimpan di
+  `var/wa-session` dan tidak pernah masuk repository.
+- Tidak ada agen AI atau layanan model eksternal: pesan yang bukan perintah tidak dibalas.
+
 **FreeRADIUS**
 - Ringkasan, NAS, Grup & Profil, Profil Isolir, Sesi & Akuntansi, Log Autentikasi, Konfigurasi
 - Penegakan berkala: akun kedaluwarsa/kuota habis dipindahkan ke profil isolir
@@ -76,12 +86,14 @@ backend/
                        settings, tools, users, whatsapp
   migrations/          migrasi SQL bernomor (001–021) — jalankan berurutan
   test/                unit + e2e (vitest)
-deploy/                helper pemasangan FreeRADIUS & sudoers
+deploy/                helper pemasangan FreeRADIUS, sudoers, dan unit `jawara-wa.service`
 docs/                  catatan pemasangan dan rencana
 frontend/
   src/pages/           halaman per menu
   src/components/      Layout, komponen UI jaringan, dialog
   src/config/menu.ts   satu-satunya sumber daftar menu sidebar
+wa-gateway/            worker WhatsApp (Baileys) — proses mandiri, port loopback 3199
+scripts/               inet.mjs (cek Nomor Internet) dan health-check.sh
 ```
 
 ## Menjalankan
@@ -135,6 +147,8 @@ tabel pengaturan panel (menu **Pengaturan → Integrasi**) sehingga tidak perlu 
 | `MIKROTIK_HOST`, `MIKROTIK_USER`, `MIKROTIK_PASSWORD`, `MIKROTIK_PORT` | tidak | Idem; perangkat juga bisa didaftarkan dari menu MikroTik |
 | `RADIUS_ENFORCE_INTERVAL_MS` | tidak | Jeda penegakan masa aktif/kuota |
 | `TOOLS_BACKUP_DIR` | tidak | Folder cadangan untuk menu Tools |
+| `WA_WORKER_URL` | tidak | Alamat worker WhatsApp, default `http://127.0.0.1:3199` |
+| `WA_WORKER_TOKEN` | tidak | Token loopback ke worker (sama dengan `WA_TOKEN` worker); kosong = gateway nonaktif |
 
 Backend menolak start bila `JWT_SECRET` atau `SECRET_KEY` kosong — lebih baik gagal saat boot
 daripada melayani token yang ditandatangani nilai default.

@@ -4,11 +4,11 @@
 # Keluaran hanya saat ADA MASALAH atau saat layanan pulih — bila semuanya sehat
 # skrip ini diam, jadi tidak mengirim notifikasi tiap 5 menit.
 #
-# Dipakai oleh cron Hermes dengan no_agent=true: stdout dikirim apa adanya ke
-# Telegram. Jangan mencetak apa pun yang bukan pesan untuk manusia.
+# Dipakai cron sistem (mis. `*/5 * * * *`): stdout dikirim apa adanya ke
+# saluran notifikasi operator. Jangan mencetak apa pun yang bukan pesan manusia.
 set -uo pipefail
 
-STATE_FILE="${HC_STATE_FILE:-/home/devmaker/.hermes/cache/health-jawara.state}"
+STATE_FILE="${HC_STATE_FILE:-/var/tmp/jawara-health.state}"
 BACKEND_URL="${HC_BACKEND_URL:-http://127.0.0.1:7930/api/invoices}"   # 401 = hidup
 FRONTEND_URL="${HC_FRONTEND_URL:-http://127.0.0.1:3000/}"             # 200 = hidup
 TUNNEL_URL="${HC_TUNNEL_URL:-https://billing-bibit.devtun.my.id/}"    # 200 = tunnel jalan
