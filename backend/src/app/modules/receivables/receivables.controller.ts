@@ -76,7 +76,7 @@ export class ReceivableReportController {
   @Get('receivables/summary')
   @Roles('admin', 'operator', 'resseler')
   @RequirePermission('invoice.view')
-  summary(@Scope() scope: RequestScope) {
-    return this.receivables.summary(scope);
+  summary(@Query('as_of') asOf: string | undefined, @Scope() scope: RequestScope) {
+    return this.receivables.summary(scope, asOf);
   }
 }

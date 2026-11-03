@@ -59,6 +59,11 @@ export class ReceivableQueryDto {
   @IsIn(['unpaid', 'partial'], { message: 'status harus unpaid atau partial' })
   status?: 'unpaid' | 'partial';
 
+  /** Posisi laporan per tanggal (YYYY-MM-DD). Kosong = hari ini. */
+  @IsOptional()
+  @Matches(DATE_ONLY, { message: 'as_of harus format YYYY-MM-DD' })
+  as_of?: string;
+
   @IsOptional()
   @Type(() => Number)
   @IsInt()

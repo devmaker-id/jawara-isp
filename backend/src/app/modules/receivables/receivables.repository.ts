@@ -11,13 +11,37 @@ import { RequestScope } from '../auth/request-scope';
  * otomatis bersaldo 0 dan tagihan `void` tidak dihitung sama sekali.
  */
 
-const BALANCE_SUBQUERY = `
+/**
+ * Fragmen as-of: status invoice/pembayaran dinilai pada satu titik waktu,
+ * bukan menurut status hari ini. Dipakai agar laporan periode historis tidak
+ * berubah ketika invoice/pembayaran di-void pada periode berikutnya.
+ *
+ * `asOf` = 'YYYY-MM-DD' (inklusif sampai akhir hari) atau undefined = sekarang.
+ */
+function asOfTs(asOf?: string): string {
+  // Dikutip: nilai ini masuk ke SQL sebagai literal, bukan parameter.
+  return asOf ? `'${asOf} 23:59:59'` : 'NOW()';
+}
+
+/** Syarat invoice masih berlaku pada titik waktu tertentu. */
+function invoiceAsOf(asOf?: string): string {
+  const ts = asOfTs(asOf);
+  return `i.created_at <= ${ts} AND (i.voided_at IS NULL OR i.voided_at > ${ts})`;
+}
+
+/** Subquery pembayaran sah pada titik waktu tertentu. */
+function balanceSubquery(asOf?: string): string {
+  const ts = asOfTs(asOf);
+  return `
   LEFT JOIN (
     SELECT invoice_id, SUM(amount) AS paid
       FROM payments
-     WHERE voided_at IS NULL
+     WHERE paid_at <= ${ts} AND (voided_at IS NULL OR voided_at > ${ts})
      GROUP BY invoice_id
   ) p ON p.invoice_id = i.id`;
+}
+
+const BALANCE_SUBQUERY = balanceSubquery();
 
 export interface ReceivableInvoice {
   id: number;
@@ -66,6 +90,8 @@ export interface ReceivableReportQuery {
   owner_id?: number;
   profile_type?: 'hotspot' | 'ppp';
   status?: 'unpaid' | 'partial';
+  /** Posisi laporan per tanggal (YYYY-MM-DD). Kosong = hari ini. */
+  as_of?: string;
   page?: number;
   limit?: number;
 }
@@ -98,13 +124,15 @@ export class ReceivablesRepository {
   async balance(
     customerId: number,
     conn?: PoolConnection,
+    asOf?: string,
   ): Promise<{ outstanding: number; limit: number; invoices: ReceivableInvoice[] }> {
     const sql = `SELECT i.id, i.invoice_number, i.amount, COALESCE(p.paid, 0) AS paid,
               GREATEST(i.amount - COALESCE(p.paid, 0), 0) AS balance,
               i.status, i.due_date, i.period_start, i.period_end,
               DATEDIFF(CURDATE(), i.due_date) AS days_late
-         FROM invoices i ${BALANCE_SUBQUERY}
-        WHERE i.customer_id = ? AND i.status NOT IN ('paid', 'void')
+         FROM invoices i ${balanceSubquery(asOf)}
+        WHERE i.customer_id = ? AND ${invoiceAsOf(asOf)}
+          AND (i.amount - COALESCE(p.paid, 0)) > 0
         ORDER BY i.due_date ASC, i.id ASC`;
 
     // PoolConnection dan DatabaseService punya signature query berbeda; pilih
@@ -123,7 +151,9 @@ export class ReceivablesRepository {
       amount: Number(row.amount),
       paid: Number(row.paid),
       balance: Number(row.balance),
-      status: String(row.status),
+      // Status pada titik waktu yang diminta, bukan status hari ini.
+      status:
+        Number(row.paid) > 0 ? 'partial' : 'unpaid',
       due_date: toDateOnly(row.due_date),
       period_start: row.period_start ? toDateOnly(row.period_start) : null,
       period_end: row.period_end ? toDateOnly(row.period_end) : null,
@@ -150,7 +180,8 @@ export class ReceivablesRepository {
     query: ReceivableReportQuery,
     scope: RequestScope,
   ): Promise<{ rows: ReceivableRow[]; total: number; page: number; limit: number }> {
-    const where: string[] = ["i.status NOT IN ('paid', 'void')"];
+    const asOf = query.as_of;
+    const where: string[] = [invoiceAsOf(asOf), '(i.amount - COALESCE(p.paid, 0)) > 0'];
     const params: unknown[] = [];
 
     // Cakupan reseller: hanya pelanggan miliknya. Fail-closed.
@@ -205,8 +236,8 @@ export class ReceivablesRepository {
 
     const countRow = await this.db.queryOne<RowDataPacket & { total: number | string }>(
       `SELECT COUNT(*) AS total
-         FROM invoices i ${BALANCE_SUBQUERY} ${joins}
-        WHERE ${whereSql} AND (i.amount - COALESCE(p.paid, 0)) > 0`,
+         FROM invoices i ${balanceSubquery(asOf)} ${joins}
+        WHERE ${whereSql}`,
       params,
     );
 
@@ -218,8 +249,8 @@ export class ReceivablesRepository {
               c.id AS customer_id, c.name AS customer_name, c.internet_no,
               c.owner_id, o.name AS owner_name, v.profile_type, v.profile_name,
               i.username, i.created_at
-         FROM invoices i ${BALANCE_SUBQUERY} ${joins}
-        WHERE ${whereSql} AND (i.amount - COALESCE(p.paid, 0)) > 0
+         FROM invoices i ${balanceSubquery(asOf)} ${joins}
+        WHERE ${whereSql}
         ORDER BY i.due_date ASC, i.id ASC
         LIMIT ? OFFSET ?`,
       [...params, limit, (page - 1) * limit],
@@ -234,7 +265,7 @@ export class ReceivablesRepository {
           amount: Number(row.amount),
           paid: Number(row.paid),
           balance: Number(row.balance),
-          status: String(row.status),
+          status: Number(row.paid) > 0 ? 'partial' : 'unpaid',
           due_date: toDateOnly(row.due_date),
           period_start: row.period_start ? toDateOnly(row.period_start) : null,
           period_end: row.period_end ? toDateOnly(row.period_end) : null,
@@ -258,7 +289,7 @@ export class ReceivablesRepository {
   }
 
   /** Ringkasan piutang untuk dashboard: total, jatuh tempo, belum jatuh tempo. */
-  async summary(scope: RequestScope): Promise<{
+  async summary(scope: RequestScope, asOf?: string): Promise<{
     outstanding: number;
     overdue: number;
     not_due: number;
@@ -310,9 +341,9 @@ export class ReceivablesRepository {
          FROM (
            SELECT i.customer_id, GREATEST(i.amount - COALESCE(p.paid, 0), 0) AS balance,
                   DATEDIFF(CURDATE(), i.due_date) AS days_late
-             FROM invoices i ${BALANCE_SUBQUERY}
+             FROM invoices i ${balanceSubquery(asOf)}
              JOIN customers c ON c.id = i.customer_id
-            WHERE i.status NOT IN ('paid', 'void')${scopeSql}
+            WHERE ${invoiceAsOf(asOf)}${scopeSql}
          ) t
         WHERE t.balance > 0`,
       params,

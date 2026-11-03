@@ -39,8 +39,15 @@ describe('aturan piutang di kode', () => {
   });
 
   it('saldo piutang dihitung dari sisa tagihan, bukan tabel baru', () => {
-    expect(repo).toContain("i.status NOT IN ('paid', 'void')");
     expect(repo).toContain('GREATEST(i.amount - COALESCE(p.paid, 0), 0)');
+    expect(repo).toContain('invoiceAsOf');
+  });
+
+  it('status invoice/pembayaran dinilai pada titik waktu (as-of), bukan status hari ini', () => {
+    expect(repo).toContain('i.created_at <=');
+    expect(repo).toContain('i.voided_at IS NULL OR i.voided_at >');
+    expect(repo).toContain('paid_at <=');
+    expect(repo).toContain('voided_at > ${ts}');
   });
 
   it('limit diperiksa di dalam transaksi dengan baris pelanggan dikunci', () => {

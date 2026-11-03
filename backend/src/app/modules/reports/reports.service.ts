@@ -19,7 +19,7 @@ export interface ReportResult {
    * dihitung dari tanggal transaksi. Berbeda dari `summary.income` (kas masuk
    * berdasarkan tanggal pembayaran).
    */
-  issued: { total: number; count: number };
+  issued: { total: number; count: number; voided: number; voided_count: number };
   /**
    * Pendapatan periode dari dua sumber: tagihan (payments) dan penjualan
    * voucher. `summary.income` tetap khusus pembayaran tagihan agar angka lama

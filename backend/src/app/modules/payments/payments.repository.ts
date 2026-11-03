@@ -234,7 +234,17 @@ function filterClause(
     parts.push('p.method = ?');
     params.push(filters.method);
   }
-  if (filters.status === 'valid') parts.push('p.voided_at IS NULL');
+  if (filters.status === 'valid') {
+    // As-of: pembayaran yang di-void SETELAH akhir periode tetap dihitung
+    // sebagai kas pada periode aslinya. Tanpa ini, laporan periode lama
+    // berubah hanya karena ada void di bulan berikutnya.
+    if (filters.to) {
+      parts.push('(p.voided_at IS NULL OR p.voided_at > DATE_ADD(?, INTERVAL 1 DAY))');
+      params.push(filters.to);
+    } else {
+      parts.push('p.voided_at IS NULL');
+    }
+  }
   else if (filters.status === 'void') parts.push('p.voided_at IS NOT NULL');
 
   if (filters.search) {

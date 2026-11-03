@@ -97,13 +97,14 @@ export class ReceivablesService {
       owner_id: query.owner_id,
       profile_type: query.profile_type,
       status: query.status,
+      as_of: query.as_of,
       page: query.page,
       limit: query.limit,
     };
     return this.repository.report(normalized, scope);
   }
 
-  summary(scope: RequestScope) {
-    return this.repository.summary(scope);
+  summary(scope: RequestScope, asOf?: string) {
+    return this.repository.summary(scope, asOf);
   }
 }

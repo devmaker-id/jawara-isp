@@ -115,6 +115,9 @@ export const ReceivableReport: React.FC<{ onChangeType: (type: ReportType) => vo
   const [status, setStatus] = useState<'' | 'unpaid' | 'partial'>('');
   const [overdueOnly, setOverdueOnly] = useState<'' | 'due' | 'not_due'>('');
   const [ownerId, setOwnerId] = useState('');
+  // Posisi historis: kosong = hari ini. Laporan periode lama tidak berubah
+  // walau ada invoice/pembayaran yang di-void setelah tanggal tersebut.
+  const [asOf, setAsOf] = useState('');
   const [owners, setOwners] = useState<Array<{ id: number; name: string }>>([]);
 
   // Satu sumber parameter: dipakai tabel dan ekspor CSV, supaya CSV selalu
@@ -133,8 +136,9 @@ export const ReceivableReport: React.FC<{ onChangeType: (type: ReportType) => vo
       profile_type: profileType || undefined,
       status: status || undefined,
       owner_id: ownerId || undefined,
+      as_of: asOf || undefined,
     };
-  }, [from, to, dueFrom, dueTo, search, profileType, status, overdueOnly, ownerId]);
+  }, [from, to, dueFrom, dueTo, search, profileType, status, overdueOnly, ownerId, asOf]);
 
   const [exporting, setExporting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -218,7 +222,9 @@ export const ReceivableReport: React.FC<{ onChangeType: (type: ReportType) => vo
         api.get('/api/reports/receivables', {
           params: { ...filterParams(), page, limit },
         }),
-        api.get<Summary>('/api/reports/receivables/summary'),
+        api.get<Summary>('/api/reports/receivables/summary', {
+          params: { as_of: asOf || undefined },
+        }),
       ]);
       setRows(list.data?.rows ?? []);
       setTotal(list.data?.total ?? 0);
@@ -266,7 +272,8 @@ export const ReceivableReport: React.FC<{ onChangeType: (type: ReportType) => vo
         <div>
           <h2 className="text-lg font-semibold text-white">Laporan Piutang</h2>
           <p className="text-xs text-slate-400">
-            Saldo = sisa tagihan unpaid/partial. Aging dihitung dari tanggal jatuh tempo.
+            Saldo = sisa tagihan unpaid/partial pada tanggal posisi (as-of). Aging dihitung
+            dari tanggal jatuh tempo.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -384,6 +391,16 @@ export const ReceivableReport: React.FC<{ onChangeType: (type: ReportType) => vo
               <option value="due">Sudah jatuh tempo</option>
               <option value="not_due">Belum jatuh tempo</option>
             </select>
+          </label>
+          <label className="text-xs text-slate-400">
+            Posisi per tanggal
+            <input
+              type="date"
+              value={asOf}
+              onChange={(e) => { setAsOf(e.target.value); setPage(1); }}
+              className={inputClass}
+              title="Kosong = posisi hari ini"
+            />
           </label>
           <label className="text-xs text-slate-400">
             Baris

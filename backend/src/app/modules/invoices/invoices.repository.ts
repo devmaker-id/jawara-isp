@@ -246,28 +246,58 @@ export class InvoicesRepository {
     from?: string,
     to?: string,
     scope: RequestScope = SYSTEM_SCOPE,
-  ): Promise<{ total: number; count: number }> {
+  ): Promise<{ total: number; count: number; voided: number; voided_count: number }> {
     const owner = ownerFilter(scope, 'invoices');
-    const where: string[] = ["status <> 'void'"];
-    const params: unknown[] = [];
-    if (owner.sql) {
-      where.push(owner.sql);
-      params.push(...owner.params);
-    }
+    const scopeSql = owner.sql ? ` AND ${owner.sql}` : '';
+    const params: unknown[] = [...owner.params];
+
+    // Tagihan DITERBITKAN: semua invoice yang dibuat pada rentang, termasuk
+    // yang kemudian di-void pada periode berikutnya. Tanpa ini, laporan
+    // periode lama berubah hanya karena ada pembatalan di bulan berikutnya.
+    const created: string[] = [];
     if (from) {
-      where.push('created_at >= ?');
+      created.push('created_at >= ?');
       params.push(`${from} 00:00:00`);
     }
     if (to) {
-      where.push('created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+      created.push('created_at < DATE_ADD(?, INTERVAL 1 DAY)');
       params.push(to);
     }
-    const row = await this.db.queryOne<RowDataPacket & { total: number | string; n: number | string }>(
+    const issuedRow = await this.db.queryOne<
+      RowDataPacket & { total: number | string; n: number | string }
+    >(
       `SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS n
-         FROM invoices WHERE ${where.join(' AND ')}`,
+         FROM invoices
+        WHERE ${created.length > 0 ? created.join(' AND ') : '1 = 1'}${scopeSql}`,
       params,
     );
-    return { total: Number(row?.total ?? 0), count: Number(row?.n ?? 0) };
+
+    // PEMBATALAN: dihitung dari tanggal void, bukan tanggal invoice.
+    const voidedParams: unknown[] = [...owner.params];
+    const voided: string[] = ['voided_at IS NOT NULL'];
+    if (from) {
+      voided.push('voided_at >= ?');
+      voidedParams.push(`${from} 00:00:00`);
+    }
+    if (to) {
+      voided.push('voided_at < DATE_ADD(?, INTERVAL 1 DAY)');
+      voidedParams.push(to);
+    }
+    const voidedRow = await this.db.queryOne<
+      RowDataPacket & { total: number | string; n: number | string }
+    >(
+      `SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS n
+         FROM invoices
+        WHERE ${voided.join(' AND ')}${scopeSql}`,
+      voidedParams,
+    );
+
+    return {
+      total: Number(issuedRow?.total ?? 0),
+      count: Number(issuedRow?.n ?? 0),
+      voided: Number(voidedRow?.total ?? 0),
+      voided_count: Number(voidedRow?.n ?? 0),
+    };
   }
 
   /**
