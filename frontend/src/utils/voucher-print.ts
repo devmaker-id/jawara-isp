@@ -33,14 +33,123 @@ export interface VoucherPrintCard {
   price_tier: string;
 }
 
+export type PaperKind = 'a4' | 'a5' | 'thermal58' | 'thermal80' | 'custom';
+
+export interface PaperSpec {
+  kind: PaperKind;
+  /** Lebar kertas dalam milimeter. */
+  widthMm: number;
+  /** Tinggi kertas; null = gulungan (thermal) tanpa batas tinggi. */
+  heightMm: number | null;
+}
+
+export const PAPER_PRESETS: Record<Exclude<PaperKind, 'custom'>, PaperSpec> = {
+  a4: { kind: 'a4', widthMm: 210, heightMm: 297 },
+  a5: { kind: 'a5', widthMm: 148, heightMm: 210 },
+  thermal58: { kind: 'thermal58', widthMm: 58, heightMm: null },
+  thermal80: { kind: 'thermal80', widthMm: 80, heightMm: null },
+};
+
 export interface VoucherPrintLayout {
   columns: number;
   marginMm: number;
   gapMm: number;
   /** Orientasi kertas; kosong = potret. */
   orientation?: 'portrait' | 'landscape';
-  /** Baris per halaman; 0/kosong = kartu mengalir tanpa pemenggalan. */
+  /** Baris per halaman; 0/kosong = hitung dari tinggi kertas atau mengalir. */
   rows?: number;
+  /** Ukuran kertas; kosong = A4. */
+  paper?: PaperSpec;
+  /** Jarak antar kartu terpisah (mm); kosong = pakai gapMm. */
+  gapXMm?: number;
+  gapYMm?: number;
+  /** Ukuran kartu tetap (mm); kosong = bagi rata lebar/tinggi halaman. */
+  cardWidthMm?: number;
+  cardHeightMm?: number;
+  /** Tampilkan garis potong pada setiap kartu. */
+  cutLines?: boolean;
+}
+
+export interface PrintMetrics {
+  paper: PaperSpec;
+  orientation: 'portrait' | 'landscape';
+  columns: number;
+  /** Baris per halaman; 0 = mengalir (satu halaman gulungan). */
+  rows: number;
+  perPage: number;
+  totalPages: number;
+  usableWidthMm: number;
+  usableHeightMm: number;
+  cardWidthMm: number;
+  gapXMm: number;
+  gapYMm: number;
+}
+
+export const mmToPx = (mm: number): number => Math.round(mm * 3.7795275591);
+
+const clampInt = (value: number, min: number, max: number, fallback: number): number => {
+  const rounded = Math.round(Number(value));
+  return Number.isFinite(rounded) ? Math.min(max, Math.max(min, rounded)) : fallback;
+};
+
+/** Ukuran kertas efektif setelah orientasi diterapkan. */
+export function resolvePaper(layout: VoucherPrintLayout): PaperSpec {
+  const base = layout.paper ?? PAPER_PRESETS.a4;
+  const landscape = layout.orientation === 'landscape' && base.heightMm !== null;
+  return landscape ? { ...base, widthMm: base.heightMm as number, heightMm: base.widthMm } : base;
+}
+
+/**
+ * Hitung grid & jumlah halaman dari konfigurasi sebenarnya (bukan angka tetap).
+ * Baris dihitung dari tinggi kertas bila admin tidak mengisinya.
+ */
+export function printMetrics(cardCount: number, layout: VoucherPrintLayout): PrintMetrics {
+  const paper = resolvePaper(layout);
+  const margin = Math.min(Math.max(Number(layout.marginMm) || 8, 0), 40);
+  const gapX = Math.max(0, Number(layout.gapXMm ?? layout.gapMm) || 0);
+  const gapY = Math.max(0, Number(layout.gapYMm ?? layout.gapMm) || 0);
+  const columns = clampInt(layout.columns || 3, 1, 12, 3);
+  const usableWidthMm = Math.max(10, paper.widthMm - margin * 2);
+  const usableHeightMm = paper.heightMm === null ? 0 : Math.max(10, paper.heightMm - margin * 2);
+
+  const cardWidthMm =
+    Number(layout.cardWidthMm) > 0
+      ? Number(layout.cardWidthMm)
+      : Math.max(5, (usableWidthMm - gapX * (columns - 1)) / columns);
+
+  let rows = Number(layout.rows) > 0 ? clampInt(Number(layout.rows), 1, 20, 1) : 0;
+  if (rows === 0 && usableHeightMm > 0) {
+    const cardHeight = Number(layout.cardHeightMm) > 0 ? Number(layout.cardHeightMm) : 0;
+    if (cardHeight > 0) rows = Math.max(1, Math.floor((usableHeightMm + gapY) / (cardHeight + gapY)));
+  }
+
+  const perPage = rows > 0 ? columns * rows : Math.max(1, cardCount);
+  const totalPages = rows > 0 ? Math.max(1, Math.ceil(cardCount / perPage)) : 1;
+
+  return {
+    paper,
+    orientation: paper.heightMm === null ? 'portrait' : paper.widthMm > paper.heightMm ? 'landscape' : 'portrait',
+    columns,
+    rows,
+    perPage,
+    totalPages,
+    usableWidthMm,
+    usableHeightMm,
+    cardWidthMm,
+    gapXMm: gapX,
+    gapYMm: gapY,
+  };
+}
+
+/** Potong daftar kartu menjadi halaman sesuai grid (dipakai preview & cetak). */
+export function paginateCards<T>(cards: T[], layout: VoucherPrintLayout): T[][] {
+  const metrics = printMetrics(cards.length, layout);
+  if (metrics.rows === 0) return cards.length ? [cards] : [];
+  const pages: T[][] = [];
+  for (let index = 0; index < cards.length; index += metrics.perPage) {
+    pages.push(cards.slice(index, index + metrics.perPage));
+  }
+  return pages;
 }
 
 /**
@@ -147,49 +256,56 @@ export function buildPrintDocument(
   printedAt: string,
 ): string {
   const cardHtml = sanitizeTemplateHtml(templateHtml);
-  const cols = Math.min(10, Math.max(1, Math.round(layout.columns || 3)));
-  const rows = Math.min(12, Math.max(0, Math.round(layout.rows ?? 0)));
-  const orientation = layout.orientation === 'landscape' ? 'landscape' : 'portrait';
+  const metrics = printMetrics(cards.length, layout);
+  const { columns: cols, rows, gapXMm, gapYMm, paper } = metrics;
 
   const renderCard = (card: VoucherPrintCard) =>
     `<div class="v-card" data-price="${card.price_value}" data-tier="${card.price_tier}" ` +
     `style="--tier-color:${tierColor(card.price_value)}">${fillCard(cardHtml, card, brand, printedAt)}</div>`;
 
-  let sheets: string;
+  // Kartu dipenggal per halaman supaya jumlah per lembar pasti; tanpa baris
+  // (gulungan thermal) semua kartu berada di satu halaman mengalir.
+  const pages: VoucherPrintCard[][] = [];
   if (rows > 0 && cards.length > 0) {
-    const perPage = cols * rows;
-    const pages: VoucherPrintCard[][] = [];
-    for (let index = 0; index < cards.length; index += perPage) {
-      pages.push(cards.slice(index, index + perPage));
+    for (let index = 0; index < cards.length; index += metrics.perPage) {
+      pages.push(cards.slice(index, index + metrics.perPage));
     }
-    sheets = pages
-      .map(
-        (page, index) =>
-          `<div class="sheet${index === pages.length - 1 ? ' last' : ''}">${page.map(renderCard).join('\n')}</div>`,
-      )
-      .join('\n');
   } else {
-    sheets = `<div class="sheet last">${cards.map(renderCard).join('\n')}</div>`;
+    pages.push(cards);
   }
+  const sheets = pages
+    .map(
+      (page, index) =>
+        `<div class="sheet${index === pages.length - 1 ? ' last' : ''}">${page.map(renderCard).join('\n')}</div>`,
+    )
+    .join('\n');
 
   // Tinggi baris dihitung dari tinggi kertas agar kolom × baris benar-benar
   // muat satu halaman, bukan bergantung pada isi kartu.
-  const paperHeight = orientation === 'landscape' ? 210 : 297;
-  const usable = paperHeight - layout.marginMm * 2;
   const rowRule =
     rows > 0
-      ? `grid-auto-rows:${((usable - (rows - 1) * layout.gapMm) / rows).toFixed(2)}mm;`
-      : '';
+      ? `grid-auto-rows:${((metrics.usableHeightMm - (rows - 1) * gapYMm) / rows).toFixed(2)}mm;`
+      : Number(layout.cardHeightMm) > 0
+        ? `grid-auto-rows:${Number(layout.cardHeightMm)}mm;`
+        : '';
+  const colRule = `grid-template-columns:repeat(${cols},${
+    Number(layout.cardWidthMm) > 0 ? `${Number(layout.cardWidthMm)}mm` : 'minmax(0,1fr)'
+  });`;
+  const pageSize = paper.heightMm === null ? `${paper.widthMm}mm auto` : `${paper.widthMm}mm ${paper.heightMm}mm`;
+  const cutRule = layout.cutLines
+    ? '.v-card{outline:1px dashed #94a3b8;outline-offset:-1px}'
+    : '';
 
   return `<!doctype html>
 <html lang="id"><head><meta charset="utf-8"><title>Voucher</title>
 <style>
-@page{size:A4 ${orientation};margin:${layout.marginMm}mm}
-*{box-sizing:border-box}
+@page{size:${pageSize};margin:${layout.marginMm}mm}
+*{-webkit-print-color-adjust:exact;print-color-adjust:exact;box-sizing:border-box}
 body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#fff;color:#0f172a}
-.sheet{display:grid;grid-template-columns:repeat(${cols},minmax(0,1fr));${rowRule}gap:${layout.gapMm}mm}
+.sheet{display:grid;${colRule}${rowRule}gap:${gapYMm}mm ${gapXMm}mm}
 .sheet:not(.last){break-after:page;page-break-after:always}
 .v-card{break-inside:avoid;page-break-inside:avoid;min-width:0;${rows > 0 ? 'overflow:hidden;' : ''}}
+${cutRule}
 @media screen{body{padding:8px;background:#e2e8f0}.sheet{background:#fff;padding:${layout.marginMm}mm;margin-bottom:12px}}
 </style></head>
 <body>
@@ -197,10 +313,42 @@ ${sheets}
 </body></html>`;
 }
 
-/** Cetak dokumen lewat iframe tersembunyi (dialog print browser). */
+/**
+ * Cetak dokumen lewat jendela cetak khusus.
+ *
+ * Chrome mengabaikan `print()` dari iframe yang lintas-origin (sandbox tanpa
+ * allow-same-origin), sehingga dialog cetak tidak pernah muncul. Karena itu
+ * dokumen ditulis ke jendela baru yang same-origin — dipanggil langsung dari
+ * klik pengguna agar tidak kena popup blocker. Bila jendela diblokir, dipakai
+ * iframe same-origin (script tetap mati karena sandbox tanpa allow-scripts).
+ */
 export function printHtmlDocument(html: string): void {
   const existing = document.getElementById('voucher-print-frame');
   existing?.remove();
+
+  const win = window.open('', '_blank', 'width=1024,height=768');
+  if (win) {
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+
+    let printed = false;
+    const runPrint = () => {
+      if (printed) return;
+      printed = true;
+      win.focus();
+      win.print();
+    };
+    if (win.document.readyState === 'complete') {
+      window.setTimeout(runPrint, 150);
+    } else {
+      win.addEventListener('load', () => window.setTimeout(runPrint, 150), { once: true });
+      // Jaring pengaman bila event load tidak pernah datang.
+      window.setTimeout(runPrint, 1000);
+    }
+    return;
+  }
+
   const frame = document.createElement('iframe');
   frame.id = 'voucher-print-frame';
   frame.style.position = 'fixed';
@@ -209,8 +357,9 @@ export function printHtmlDocument(html: string): void {
   frame.style.width = '0';
   frame.style.height = '0';
   frame.style.border = '0';
-  // Tanpa allow-scripts: dokumen cetak tidak boleh menjalankan script apa pun.
-  frame.setAttribute('sandbox', 'allow-modals');
+  // allow-same-origin: syarat Chrome mau menjalankan print() dari iframe.
+  // Tanpa allow-scripts: dokumen cetak tetap tidak bisa menjalankan script.
+  frame.setAttribute('sandbox', 'allow-modals allow-same-origin');
   frame.srcdoc = html;
   frame.onload = () => {
     frame.contentWindow?.focus();

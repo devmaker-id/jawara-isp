@@ -38,7 +38,7 @@ import LayananPpp from './pages/layanan/ServiceProfile';
 import VoucherManagement from './pages/voucher/VoucherManagement';
 import ToolsImport from './pages/tools/Import';
 import ToolsExport from './pages/tools/Export';
-import { WaAi, WaCommands, WaConnection, WaMessages, WaMonitor, WaSecurity } from './pages/whatsapp/WaGateway';
+import { WaCommands, WaConnection, WaMessages, WaMonitor, WaSecurity } from './pages/whatsapp/WaGateway';
 
 /**
  * Halaman yang hanya boleh dibuka role tertentu.
@@ -318,7 +318,6 @@ const AppContent: React.FC = () => {
           <Route path="/whatsapp/koneksi" element={<PrivateRoute><WaConnection /></PrivateRoute>} />
           <Route path="/whatsapp/keamanan" element={<PrivateRoute><WaSecurity /></PrivateRoute>} />
           <Route path="/whatsapp/command" element={<PrivateRoute><WaCommands /></PrivateRoute>} />
-          <Route path="/whatsapp/ai" element={<PrivateRoute><WaAi /></PrivateRoute>} />
           <Route path="/whatsapp/riwayat" element={<PrivateRoute><WaMessages /></PrivateRoute>} />
           <Route path="/whatsapp/monitoring" element={<PrivateRoute><WaMonitor /></PrivateRoute>} />
           <Route path="/tools/import" element={<PrivateRoute><ToolsImport /></PrivateRoute>} />

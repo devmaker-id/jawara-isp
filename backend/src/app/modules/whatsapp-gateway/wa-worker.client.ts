@@ -89,6 +89,11 @@ export class WaWorkerClient {
     return this.call('/connect', { method: 'POST', body: '{}' });
   }
 
+  /** Pairing ulang: hapus sesi lama lalu mulai koneksi baru (ganti nomor). */
+  repair(): Promise<{ ok: boolean; status: string }> {
+    return this.call('/repair', { method: 'POST', body: '{}' });
+  }
+
   logout(): Promise<{ ok: boolean }> {
     return this.call('/logout', { method: 'POST', body: '{}' });
   }

@@ -8,9 +8,9 @@ const run = promisify(execFile);
 /**
  * Command router deterministik.
  *
- * Dipanggil SEBELUM adapter AI. Handler tidak pernah menyentuh model; setiap
- * perintah punya fungsi sendiri, dan perintah baru cukup didaftarkan di
- * `COMMANDS` tanpa mengubah ingest maupun controller.
+ * Setiap perintah punya fungsi sendiri; perintah baru cukup didaftarkan di
+ * `COMMANDS` tanpa mengubah ingest maupun controller. Tidak ada pemanggilan
+ * model bahasa di jalur ini.
  */
 export interface CommandContext {
   chatId: string;

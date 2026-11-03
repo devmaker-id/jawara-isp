@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
-import { WaAiService } from './wa-ai.service';
 import { WaGatewayController } from './wa-gateway.controller';
 import { WaGatewayService } from './wa-gateway.service';
 import { WaIngestService } from './wa-ingest.service';
@@ -12,7 +11,7 @@ import { WaWorkerClient } from './wa-worker.client';
  * WhatsApp Gateway milik Jawara-ISP.
  *
  * Worker WhatsApp (Baileys) berjalan sebagai proses sendiri; modul ini hanya
- * mengatur kebijakan, router perintah, riwayat, dan pemanggilan AI opsional.
+ * mengatur kebijakan, router perintah, dan riwayat pesan.
  */
 @Module({
   imports: [AuthModule],
@@ -21,7 +20,6 @@ import { WaWorkerClient } from './wa-worker.client';
     WaWorkerClient,
     WaSecurityService,
     WaRouterService,
-    WaAiService,
     WaIngestService,
     WaGatewayService,
   ],

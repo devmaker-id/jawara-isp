@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../../database/database.service';
 
 /**
- * Kebijakan akses WhatsApp — ditegakkan di server, bukan di prompt AI.
+ * Kebijakan akses WhatsApp — ditegakkan di server.
  *
  * Sumbernya tabel `wa_settings` + `wa_allowlist`, jadi aturan yang sekarang
  * berlaku bisa dipindahkan apa adanya tanpa mengubah kode.
@@ -12,7 +12,6 @@ export interface WaPolicy {
   groupPolicy: 'allowlist' | 'open';
   requireMention: boolean;
   gatewayEnabled: boolean;
-  aiEnabled: boolean;
 }
 
 export interface InboundCheck {
@@ -36,7 +35,6 @@ export class WaSecurityService {
       groupPolicy: (map.get('group_policy') ?? 'allowlist') === 'open' ? 'open' : 'allowlist',
       requireMention: flag('require_mention', '1'),
       gatewayEnabled: flag('gateway_enabled', '1'),
-      aiEnabled: flag('ai_enabled', '0'),
     };
   }
 

@@ -87,15 +87,37 @@ export const WaConnection: React.FC = () => {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (!data?.qr_available) {
+    let alive = true;
+    const loadQr = () =>
+      api
+        .get('/api/whatsapp-gateway/qr')
+        .then((res) => {
+          if (alive) setQr({ image: res.data.image, at: res.data.at });
+        })
+        .catch(() => {
+          if (alive) setQr(null);
+        });
+
+    if (data?.connection === 'connected') {
       setQr(null);
-      return;
+      return () => {
+        alive = false;
+      };
     }
-    void api
-      .get('/api/whatsapp-gateway/qr')
-      .then((res) => setQr({ image: res.data.image, at: res.data.at }))
-      .catch(() => setQr(null));
-  }, [data?.qr_available]);
+
+    void loadQr();
+    // Saat pairing (termasuk setelah ganti nomor) status & QR berubah beberapa
+    // detik sekali; tanpa polling QR baru tidak pernah tampil sampai halaman
+    // dimuat ulang manual.
+    const timer = window.setInterval(() => {
+      void reload();
+      void loadQr();
+    }, 4000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [data?.connection, reload]);
 
   const act = async (path: string, label: string) => {
     setBusy(true);
@@ -127,6 +149,19 @@ export const WaConnection: React.FC = () => {
             </button>
             <button className={btn} onClick={() => act('/api/whatsapp-gateway/connect', 'Perintah sambung dikirim.')} disabled={busy}>
               Sambungkan
+            </button>
+            <button
+              className={btnGhost}
+              onClick={() =>
+                act(
+                  '/api/whatsapp-gateway/repair',
+                  'Sesi lama dihapus. Pindai QR baru untuk nomor yang dipakai sekarang.',
+                )
+              }
+              disabled={busy}
+              title="Ganti nomor / pairing ulang: sesi lama dihapus lalu QR baru dibuat"
+            >
+              Pairing ulang
             </button>
             <button
               className={btnGhost}
@@ -380,77 +415,6 @@ export const WaCommands: React.FC = () => {
   );
 };
 
-// ---------------------------------------------------------------- AI
-export const WaAi: React.FC = () => {
-  const settings = useEndpoint<PolicyPayload>('/api/whatsapp-gateway/settings');
-  const monitor = useEndpoint<{ ai_usage: Array<{ day: string; calls: number; ok: number; avg_ms: number }> }>(
-    '/api/whatsapp-gateway/monitor',
-  );
-  const [note, setNote] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
-  const enabled = (settings.data?.values.ai_enabled ?? '0') === '1';
-
-  const toggle = async () => {
-    try {
-      await api.put('/api/whatsapp-gateway/settings', { values: { ai_enabled: enabled ? '0' : '1' } });
-      await settings.reload();
-      setNote({ tone: 'ok', text: enabled ? 'AI dimatikan.' : 'AI diaktifkan untuk pesan non-perintah.' });
-    } catch (e) {
-      setNote({ tone: 'bad', text: readError(e, 'Gagal mengubah setelan AI.') });
-    }
-  };
-
-  return (
-    <div className="page-container space-y-4">
-      <Toast text={note} />
-      <div className={card}>
-        <h2 className="text-lg font-semibold text-white">AI &amp; Hermes</h2>
-        <p className="mt-1 text-xs text-slate-400">
-          Hanya pesan biasa (bukan perintah) yang diteruskan ke Hermes. Perintah /inet, /pelanggan, /status, /help
-          selalu dijawab router tanpa model.
-        </p>
-        <label className="mt-4 flex items-center gap-2 text-sm text-slate-200">
-          <input type="checkbox" checked={enabled} onChange={() => void toggle()} />
-          Aktifkan AI untuk pesan biasa
-        </label>
-        <p className="mt-2 text-xs text-slate-500">
-          Bila Hermes mati, gateway tetap membalas perintah operasional dan mengirim pesan gangguan untuk permintaan AI.
-        </p>
-      </div>
-
-      <div className={card}>
-        <h3 className="text-sm font-semibold text-white">Pemakaian AI</h3>
-        <table className="tbl-compact mt-3">
-          <thead>
-            <tr>
-              <th className="py-2">Tanggal</th>
-              <th className="py-2">Panggilan</th>
-              <th className="py-2">Berhasil</th>
-              <th className="py-2">Rata-rata</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(monitor.data?.ai_usage ?? []).map((row) => (
-              <tr key={row.day}>
-                <td className="py-2 text-slate-300">{row.day}</td>
-                <td className="py-2">{row.calls}</td>
-                <td className="py-2">{row.ok}</td>
-                <td className="py-2 text-slate-400">{row.avg_ms ?? '—'} ms</td>
-              </tr>
-            ))}
-            {(monitor.data?.ai_usage ?? []).length === 0 && (
-              <tr>
-                <td colSpan={4} className="py-3 text-center text-slate-500">
-                  Belum ada pemakaian AI.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-};
-
 // ---------------------------------------------------------------- Riwayat
 interface MessageRow {
   id: number;
@@ -468,8 +432,27 @@ interface MessageRow {
 
 export const WaMessages: React.FC = () => {
   const { data, reload } = useEndpoint<MessageRow[]>('/api/whatsapp-gateway/messages?limit=100');
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
+  const [confirmId, setConfirmId] = useState<number | null>(null);
+
+  const remove = async (row: MessageRow) => {
+    setBusy(true);
+    try {
+      await api.delete(`/api/whatsapp-gateway/messages/${row.id}`);
+      setConfirmId(null);
+      setNote({ tone: 'ok', text: 'Baris riwayat dihapus.' });
+      await reload();
+    } catch (e) {
+      setNote({ tone: 'bad', text: readError(e, 'Gagal menghapus riwayat.') });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="page-container space-y-4">
+      <Toast text={note} />
       <div className={card}>
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-white">Riwayat Pesan</h2>
@@ -477,7 +460,9 @@ export const WaMessages: React.FC = () => {
             Muat ulang
           </button>
         </div>
-        <p className="text-xs text-slate-400">Isi pesan disimpan terpotong 200 karakter untuk audit.</p>
+        <p className="text-xs text-slate-400">
+          Isi pesan disimpan terpotong 200 karakter untuk audit. Gunakan menu ⋮ untuk menghapus satu baris.
+        </p>
         <div className="mt-3 overflow-x-auto">
           <table className="tbl-compact">
             <thead>
@@ -488,6 +473,7 @@ export const WaMessages: React.FC = () => {
                 <th className="py-2">Pengirim</th>
                 <th className="py-2">Proses</th>
                 <th className="py-2">Isi</th>
+                <th className="py-2 text-right">Aksi</th>
               </tr>
             </thead>
             <tbody>
@@ -504,12 +490,48 @@ export const WaMessages: React.FC = () => {
                     {row.command && <span className="ml-1 text-cyan-300">/{row.command}</span>}
                     {row.reply_status === 'failed' && <span className="ml-1 text-red-400">gagal</span>}
                   </td>
-                  <td className="py-2 max-w-[380px] truncate text-slate-300">{row.body_preview ?? '—'}</td>
+                  <td className="py-2 max-w-[380px] truncate text-slate-300" title={row.body_preview ?? ''}>
+                    {row.body_preview ?? '—'}
+                  </td>
+                  <td className="py-2 text-right">
+                    {confirmId === row.id ? (
+                      <span className="flex items-center justify-end gap-2">
+                        <span className="text-xs text-slate-400">Hapus?</span>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void remove(row)}
+                          className="rounded bg-rose-600 px-2 py-1 text-xs text-white hover:bg-rose-500 disabled:opacity-50"
+                        >
+                          Ya
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmId(null)}
+                          className="rounded bg-slate-700 px-2 py-1 text-xs text-slate-200"
+                        >
+                          Batal
+                        </button>
+                      </span>
+                    ) : (
+                      <RowActions
+                        label={`Aksi untuk pesan ${row.id}`}
+                        actions={[
+                          {
+                            key: 'delete',
+                            label: 'Hapus baris riwayat',
+                            tone: 'danger',
+                            onSelect: () => setConfirmId(row.id),
+                          },
+                        ]}
+                      />
+                    )}
+                  </td>
                 </tr>
               ))}
               {(data ?? []).length === 0 && (
                 <tr>
-                  <td colSpan={6} className="py-3 text-center text-slate-500">
+                  <td colSpan={7} className="py-3 text-center text-slate-500">
                     Belum ada pesan.
                   </td>
                 </tr>
@@ -529,6 +551,23 @@ export const WaMonitor: React.FC = () => {
     events: Array<{ id: number; kind: string; message: string; created_at: string }>;
     daily: Array<{ day: string; inbound: number; outbound: number; direct: number; denied: number; errors: number }>;
   }>('/api/whatsapp-gateway/monitor');
+  const [note, setNote] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [confirmEvent, setConfirmEvent] = useState<number | null>(null);
+
+  const removeEvent = async (id: number) => {
+    setBusy(true);
+    try {
+      await api.delete(`/api/whatsapp-gateway/events/${id}`);
+      setConfirmEvent(null);
+      setNote({ tone: 'ok', text: 'Catatan log dihapus.' });
+      await monitor.reload();
+    } catch (e) {
+      setNote({ tone: 'bad', text: readError(e, 'Gagal menghapus catatan log.') });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const counters = status.data?.counters;
   const cards = useMemo(
@@ -556,11 +595,48 @@ export const WaMonitor: React.FC = () => {
 
       <div className={card}>
         <h2 className="text-lg font-semibold text-white">Kejadian &amp; reconnect</h2>
+        <Toast text={note} />
         <ul className="mt-3 space-y-2 text-sm">
           {(monitor.data?.events ?? []).map((event) => (
-            <li key={event.id} className="flex justify-between gap-3 border-b border-slate-700/30 pb-1">
-              <span className="text-slate-300">{event.message}</span>
+            <li
+              key={event.id}
+              className="flex items-center justify-between gap-3 border-b border-slate-700/30 pb-1"
+            >
+              <span className="min-w-0 flex-1 truncate text-slate-300" title={event.message}>
+                {event.message}
+              </span>
               <span className="shrink-0 text-xs text-slate-500">{fmt(event.created_at)}</span>
+              {confirmEvent === event.id ? (
+                <span className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void removeEvent(event.id)}
+                    className="rounded bg-rose-600 px-2 py-1 text-xs text-white hover:bg-rose-500 disabled:opacity-50"
+                  >
+                    Ya
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmEvent(null)}
+                    className="rounded bg-slate-700 px-2 py-1 text-xs text-slate-200"
+                  >
+                    Batal
+                  </button>
+                </span>
+              ) : (
+                <RowActions
+                  label={`Aksi untuk log ${event.id}`}
+                  actions={[
+                    {
+                      key: 'delete',
+                      label: 'Hapus catatan log',
+                      tone: 'danger',
+                      onSelect: () => setConfirmEvent(event.id),
+                    },
+                  ]}
+                />
+              )}
             </li>
           ))}
           {(monitor.data?.events ?? []).length === 0 && <li className="text-slate-500">Belum ada kejadian.</li>}

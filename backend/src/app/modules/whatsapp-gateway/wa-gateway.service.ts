@@ -26,12 +26,11 @@ export class WaGatewayService {
     } catch (e) {
       error = (e as Error).message;
     }
-    const counts = await this.db.queryOne<{ total: number; inbound: number; outbound: number; commands: number; ai: number; failed: number }>(
+    const counts = await this.db.queryOne<{ total: number; inbound: number; outbound: number; commands: number; failed: number }>(
       `SELECT COUNT(*) AS total,
               SUM(direction = 'in') AS inbound,
               SUM(direction = 'out') AS outbound,
               SUM(processing = 'direct') AS commands,
-              SUM(processing = 'ai') AS ai,
               SUM(reply_status = 'failed') AS failed
          FROM wa_messages`,
     );
@@ -49,7 +48,6 @@ export class WaGatewayService {
         inbound: Number(counts?.inbound ?? 0),
         outbound: Number(counts?.outbound ?? 0),
         commands: Number(counts?.commands ?? 0),
-        ai: Number(counts?.ai ?? 0),
         failed: Number(counts?.failed ?? 0),
       },
     };
@@ -70,6 +68,25 @@ export class WaGatewayService {
     return this.worker.logout();
   }
 
+  /** Ganti nomor / pairing ulang: sesi lama dihapus, QR baru dibuat. */
+  repair() {
+    return this.worker.repair();
+  }
+
+  /** Hapus satu baris riwayat pesan. */
+  async deleteMessage(id: number) {
+    const result = await this.db.execute('DELETE FROM wa_messages WHERE id = ?', [id]);
+    if (result.affectedRows === 0) throw new NotFoundException('Pesan tidak ditemukan');
+    return { ok: true, id };
+  }
+
+  /** Hapus satu baris log kejadian (reconnect, error, dsb). */
+  async deleteEvent(id: number) {
+    const result = await this.db.execute('DELETE FROM wa_events WHERE id = ?', [id]);
+    if (result.affectedRows === 0) throw new NotFoundException('Catatan log tidak ditemukan');
+    return { ok: true, id };
+  }
+
   async settings() {
     const [policy, rows] = await Promise.all([
       this.security.policy(),
@@ -85,7 +102,6 @@ export class WaGatewayService {
       'dm_policy',
       'group_policy',
       'require_mention',
-      'ai_enabled',
       'gateway_enabled',
     ]);
     const entries = Object.entries(values ?? {}).filter(([key]) => allowed.has(key));
@@ -135,13 +151,8 @@ export class WaGatewayService {
   }
 
   async monitor() {
-    const [events, aiUsage, daily] = await Promise.all([
+    const [events, daily] = await Promise.all([
       this.db.query('SELECT id, kind, message, created_at FROM wa_events ORDER BY id DESC LIMIT 20'),
-      this.db.query(
-        `SELECT DATE(created_at) AS day, COUNT(*) AS calls,
-                SUM(ok = 1) AS ok, ROUND(AVG(duration_ms)) AS avg_ms
-           FROM wa_ai_usage GROUP BY DATE(created_at) ORDER BY day DESC LIMIT 14`,
-      ),
       this.db.query(
         `SELECT DATE(created_at) AS day,
                 SUM(direction = 'in') AS inbound,
@@ -152,7 +163,7 @@ export class WaGatewayService {
            FROM wa_messages GROUP BY DATE(created_at) ORDER BY day DESC LIMIT 14`,
       ),
     ]);
-    return { events, ai_usage: aiUsage, daily };
+    return { events, daily };
   }
 
   commands() {

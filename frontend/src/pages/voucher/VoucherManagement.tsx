@@ -13,11 +13,13 @@ import {
 } from '../../components/net/NetUI';
 import { TablePager, useTablePager } from '../../components/TablePager';
 import { RowActions } from '../../components/table/RowActions';
+import { VoucherPrintPreview } from '../../components/voucher/VoucherPrintPreview';
 import {
-  buildPrintDocument,
   cardFromRow,
-  printHtmlDocument,
+  PAPER_PRESETS,
+  type PaperKind,
   type VoucherPrintBrand,
+  type VoucherPrintCard,
   type VoucherPrintLayout,
 } from '../../utils/voucher-print';
 
@@ -227,6 +229,27 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
   const [printOwner, setPrintOwner] = useState('');
   const [printFrom, setPrintFrom] = useState('');
   const [printTo, setPrintTo] = useState('');
+  // Konfigurasi kertas & grid. Semua nilai di sini dipakai langsung oleh
+  // buildPrintDocument, jadi preview dan hasil cetak selalu sama.
+  const [printPaper, setPrintPaper] = useState<PaperKind>('a4');
+  const [printPaperWidth, setPrintPaperWidth] = useState(100);
+  const [printPaperHeight, setPrintPaperHeight] = useState(150);
+  const [printOrientation, setPrintOrientation] = useState<'portrait' | 'landscape'>('portrait');
+  const [printColumns, setPrintColumns] = useState(3);
+  const [printRows, setPrintRows] = useState(5);
+  const [printMargin, setPrintMargin] = useState(8);
+  const [printGapX, setPrintGapX] = useState(3);
+  const [printGapY, setPrintGapY] = useState(3);
+  const [printCardWidth, setPrintCardWidth] = useState('');
+  const [printCardHeight, setPrintCardHeight] = useState('');
+  const [printCutLines, setPrintCutLines] = useState(false);
+  // Hasil "siap cetak" yang sedang dipratinjau (null = preview tertutup).
+  const [preview, setPreview] = useState<{
+    cards: VoucherPrintCard[];
+    layout: VoucherPrintLayout;
+    templateName: string;
+    templateHtml: string;
+  } | null>(null);
 
   const load = useCallback(async () => {
     if (!loadedOnce.current) setLoading(true);
@@ -454,25 +477,81 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
       return `${targetIds.length} voucher diekspor ke CSV.`;
     });
 
+  /** Layout cetak aktif — dibangun dari kontrol dialog, dipakai preview & cetak. */
+  const printLayout = (): VoucherPrintLayout => ({
+    columns: printColumns,
+    rows: printRows,
+    marginMm: printMargin,
+    gapMm: printGapY,
+    gapXMm: printGapX,
+    gapYMm: printGapY,
+    cardWidthMm: Number(printCardWidth) > 0 ? Number(printCardWidth) : undefined,
+    cardHeightMm: Number(printCardHeight) > 0 ? Number(printCardHeight) : undefined,
+    cutLines: printCutLines,
+    orientation: printOrientation,
+    paper:
+      printPaper === 'custom'
+        ? { kind: 'custom', widthMm: printPaperWidth, heightMm: printPaperHeight }
+        : PAPER_PRESETS[printPaper],
+  });
+
+  /** Samakan kontrol dialog dengan layout template yang dipilih. */
+  const applyTemplateLayout = (template?: PrintTemplate) => {
+    const layout = template?.layout;
+    setPrintColumns(layout?.columns ?? 3);
+    setPrintRows(layout?.rows ?? 5);
+    setPrintMargin(layout?.marginMm ?? 8);
+    setPrintGapX(layout?.gapMm ?? 3);
+    setPrintGapY(layout?.gapMm ?? 3);
+    setPrintPaper(layout?.paper?.kind ?? 'a4');
+    setPrintOrientation(layout?.orientation ?? 'portrait');
+    setPrintCardWidth('');
+    setPrintCardHeight('');
+    setPrintCutLines(false);
+    setPrintPreset('template');
+  };
+
   /** Buka dialog cetak; sasaran default = voucher yang ditandai. */
   const openPrint = () => {
     if (!hasSelection) return;
+    const first = templates.find((row) => row.enabled !== false) ?? templates[0];
     setPrintUseSelection(true);
-    setPrintTemplate(templates.find((row) => row.enabled !== false)?.id ?? '');
+    setPrintTemplate(first?.id ?? '');
     setPrintStatus('new-created');
     setPrintProfile(profileFilter);
     setPrintOwner(ownerFilter);
     setPrintFrom('');
     setPrintTo('');
+    applyTemplateLayout(first);
     setPrintOpen(true);
   };
 
+  /** Preset cepat: susunan halaman yang biasa dipakai. */
+  const applyPreset = (preset: 'template' | 'p30' | 'l60') => {
+    setPrintPreset(preset);
+    if (preset === 'p30') {
+      setPrintPaper('a4');
+      setPrintOrientation('portrait');
+      setPrintColumns(6);
+      setPrintRows(5);
+    } else if (preset === 'l60') {
+      setPrintPaper('a4');
+      setPrintOrientation('landscape');
+      setPrintColumns(10);
+      setPrintRows(6);
+    } else {
+      applyTemplateLayout(templates.find((row) => row.id === printTemplate));
+    }
+  };
+
   /**
-   * Cetak sesuai kriteria. Daftar yang cocok diambil dulu supaya jumlah yang
-   * dilaporkan nyata dan yang dicetak persis baris itu — bukan tebakan dari
-   * baris yang kebetulan tampil di layar.
+   * Siapkan data cetak lalu buka PRINT PREVIEW.
+   *
+   * Daftar yang cocok diambil dulu supaya jumlah yang dipratinjau/dicetak nyata
+   * dan persis baris itu. `window.print()` tidak dipanggil di sini — baru dari
+   * tombol Cetak / Simpan PDF di halaman preview.
    */
-  const printVoucher = async () => {
+  const preparePrint = async () => {
     const useSelection = printUseSelection && selected.size > 0;
 
     setBusy(true);
@@ -511,27 +590,13 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
         return;
       }
 
-      // Cetak di browser dengan template HTML/CSS milik admin. Dokumen dibuat
-      // dari iframe sandbox; tidak ada HTML yang dirender di server.
-      const printedAt = new Date().toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' });
-      printHtmlDocument(
-        buildPrintDocument(
-          template.html,
-          chosen.map((row) => cardFromRow(row)),
-          printPreset === 'p30'
-            ? { ...(template.layout ?? { columns: 6, marginMm: 8, gapMm: 2 }), columns: 6, rows: 5, orientation: 'portrait' as const }
-            : printPreset === 'l60'
-              ? { ...(template.layout ?? { columns: 10, marginMm: 8, gapMm: 2 }), columns: 10, rows: 6, orientation: 'landscape' as const }
-              : template.layout ?? { columns: 3, marginMm: 8.5, gapMm: 3.5 },
-          printBrand,
-          printedAt,
-        ),
-      );
+      setPreview({
+        cards: chosen.map((row) => cardFromRow(row)),
+        layout: printLayout(),
+        templateName: template.name,
+        templateHtml: template.html,
+      });
       setPrintOpen(false);
-      setToast(
-        `${chosen.length} voucher dikirim ke dialog cetak browser — pilih "Save as PDF" bila ingin berkas` +
-          (chosen.length >= 500 ? ' (batas 500 per cetak).' : '.'),
-      );
     } catch (err) {
       setError(readError(err));
     } finally {
@@ -997,7 +1062,10 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
               <select
                 id="print-template"
                 value={printTemplate}
-                onChange={(event) => setPrintTemplate(event.target.value)}
+                onChange={(event) => {
+                  setPrintTemplate(event.target.value);
+                  applyTemplateLayout(templates.find((row) => row.id === event.target.value));
+                }}
                 className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
               >
                 {templates.length === 0 && <option value="">Template bawaan</option>}
@@ -1013,7 +1081,7 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
                 Susunan halaman
                 <select
                   value={printPreset}
-                  onChange={(event) => setPrintPreset(event.target.value as 'template' | 'p30' | 'l60')}
+                  onChange={(event) => applyPreset(event.target.value as 'template' | 'p30' | 'l60')}
                   className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
                 >
                   <option value="template">Ikuti template</option>
@@ -1021,9 +1089,163 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
                   <option value="l60">A4 lanskap 10×6 — 60 kartu/halaman</option>
                 </select>
               </label>
+
+              <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                <label className="text-xs text-slate-400">
+                  Kertas
+                  <select
+                    value={printPaper}
+                    onChange={(event) => {
+                      const kind = event.target.value as PaperKind;
+                      setPrintPaper(kind);
+                      if (kind === 'thermal58' || kind === 'thermal80') {
+                        // Gulungan: tanpa pemenggalan halaman.
+                        setPrintOrientation('portrait');
+                        setPrintRows(0);
+                        setPrintColumns(1);
+                      } else if (printRows === 0) {
+                        setPrintRows(5);
+                      }
+                    }}
+                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+                  >
+                    <option value="a4">A4</option>
+                    <option value="a5">A5</option>
+                    <option value="thermal58">Thermal 58 mm</option>
+                    <option value="thermal80">Thermal 80 mm</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </label>
+                <label className="text-xs text-slate-400">
+                  Orientasi
+                  <select
+                    value={printOrientation}
+                    onChange={(event) => setPrintOrientation(event.target.value as 'portrait' | 'landscape')}
+                    disabled={printPaper === 'thermal58' || printPaper === 'thermal80'}
+                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 disabled:opacity-50"
+                  >
+                    <option value="portrait">Portrait</option>
+                    <option value="landscape">Landscape</option>
+                  </select>
+                </label>
+                <label className="text-xs text-slate-400">
+                  Kolom
+                  <input
+                    type="number"
+                    min={1}
+                    max={12}
+                    value={printColumns}
+                    onChange={(event) => setPrintColumns(Math.max(1, Math.min(12, Number(event.target.value) || 1)))}
+                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+                  />
+                </label>
+                <label className="text-xs text-slate-400">
+                  Baris (0 = otomatis)
+                  <input
+                    type="number"
+                    min={0}
+                    max={20}
+                    value={printRows}
+                    onChange={(event) => setPrintRows(Math.max(0, Math.min(20, Number(event.target.value) || 0)))}
+                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+                  />
+                </label>
+                <label className="text-xs text-slate-400">
+                  Margin (mm)
+                  <input
+                    type="number"
+                    min={0}
+                    max={40}
+                    value={printMargin}
+                    onChange={(event) => setPrintMargin(Math.max(0, Math.min(40, Number(event.target.value) || 0)))}
+                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+                  />
+                </label>
+                <label className="text-xs text-slate-400">
+                  Jarak X (mm)
+                  <input
+                    type="number"
+                    min={0}
+                    max={20}
+                    value={printGapX}
+                    onChange={(event) => setPrintGapX(Math.max(0, Math.min(20, Number(event.target.value) || 0)))}
+                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+                  />
+                </label>
+                <label className="text-xs text-slate-400">
+                  Jarak Y (mm)
+                  <input
+                    type="number"
+                    min={0}
+                    max={20}
+                    value={printGapY}
+                    onChange={(event) => setPrintGapY(Math.max(0, Math.min(20, Number(event.target.value) || 0)))}
+                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+                  />
+                </label>
+                <label className="text-xs text-slate-400">
+                  Lebar kartu (mm)
+                  <input
+                    type="number"
+                    min={0}
+                    placeholder="otomatis"
+                    value={printCardWidth}
+                    onChange={(event) => setPrintCardWidth(event.target.value)}
+                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+                  />
+                </label>
+                <label className="text-xs text-slate-400">
+                  Tinggi kartu (mm)
+                  <input
+                    type="number"
+                    min={0}
+                    placeholder="otomatis"
+                    value={printCardHeight}
+                    onChange={(event) => setPrintCardHeight(event.target.value)}
+                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+                  />
+                </label>
+              </div>
+
+              {printPaper === 'custom' && (
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <label className="text-xs text-slate-400">
+                    Lebar kertas (mm)
+                    <input
+                      type="number"
+                      min={20}
+                      max={1000}
+                      value={printPaperWidth}
+                      onChange={(event) => setPrintPaperWidth(Math.max(20, Number(event.target.value) || 20))}
+                      className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+                    />
+                  </label>
+                  <label className="text-xs text-slate-400">
+                    Tinggi kertas (mm)
+                    <input
+                      type="number"
+                      min={20}
+                      max={1000}
+                      value={printPaperHeight}
+                      onChange={(event) => setPrintPaperHeight(Math.max(20, Number(event.target.value) || 20))}
+                      className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+                    />
+                  </label>
+                </div>
+              )}
+
+              <label className="mt-2 flex items-center gap-2 text-xs text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={printCutLines}
+                  onChange={(event) => setPrintCutLines(event.target.checked)}
+                  className="h-4 w-4 rounded border-slate-500 bg-slate-700 text-cyan-500"
+                />
+                Tampilkan garis potong
+              </label>
               <p className="mt-1 text-[11px] text-slate-500">
-                Template diatur di Pengaturan → Template Voucher (HTML/CSS). Cetak memakai dialog browser —
-                pilih &quot;Save as PDF&quot; bila ingin menyimpan berkas.
+                Template diatur di Pengaturan → Template Voucher (HTML/CSS). Setelah menekan Cetak, Anda masuk
+                ke Print Preview dulu — dialog cetak browser baru terbuka dari sana.
               </p>
             </div>
 
@@ -1126,12 +1348,29 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
               <Button onClick={() => setPrintOpen(false)} disabled={busy}>
                 Batal
               </Button>
-              <Button variant="primary" onClick={() => void printVoucher()} disabled={busy}>
-                {busy ? 'Menyiapkan…' : 'Cetak'}
+              <Button variant="primary" onClick={() => void preparePrint()} disabled={busy}>
+                {busy ? 'Menyiapkan…' : 'Lanjut ke Print Preview'}
               </Button>
             </div>
           </div>
         </div>
+      )}
+
+      {/* Print Preview: langkah wajib sebelum dialog cetak browser dibuka */}
+      {preview && (
+        <VoucherPrintPreview
+          templateName={preview.templateName}
+          templateHtml={preview.templateHtml}
+          cards={preview.cards}
+          layout={preview.layout}
+          brand={printBrand}
+          printedAt={new Date().toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' })}
+          onBack={() => {
+            setPreview(null);
+            setPrintOpen(true);
+          }}
+          onClose={() => setPreview(null)}
+        />
       )}
 
       {/* Dialog buat voucher */}

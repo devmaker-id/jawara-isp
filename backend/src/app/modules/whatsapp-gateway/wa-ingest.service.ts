@@ -1,7 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { DatabaseService } from '../../database/database.service';
-import { WaAiService } from './wa-ai.service';
 import { WaRouterService } from './wa-router.service';
 import { WaSecurityService } from './wa-security.service';
 import { WaWorkerClient, WorkerMessage } from './wa-worker.client';
@@ -11,9 +10,10 @@ import { WaWorkerClient, WorkerMessage } from './wa-worker.client';
  *
  * Satu-satunya jalur pemrosesan pesan:
  *   worker → dedup (wa_messages.wa_id UNIQUE) → kebijakan akses → command
- *   router → (opsional) AI → kirim balasan → catat riwayat.
+ *   router → kirim balasan → catat riwayat.
  *
- * Tidak ada pemanggilan model di jalur command.
+ * Pesan biasa (bukan perintah) tidak dibalas; gateway ini hanya menjalankan
+ * perintah operasional Jawara-ISP.
  */
 @Injectable()
 export class WaIngestService implements OnModuleInit, OnModuleDestroy {
@@ -27,7 +27,6 @@ export class WaIngestService implements OnModuleInit, OnModuleDestroy {
     private readonly worker: WaWorkerClient,
     private readonly security: WaSecurityService,
     private readonly router: WaRouterService,
-    private readonly ai: WaAiService,
     private readonly db: DatabaseService,
   ) {}
 
@@ -106,25 +105,9 @@ export class WaIngestService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    // Pesan biasa: hanya diteruskan ke AI bila diaktifkan.
-    const policy = await this.security.policy();
-    if (!policy.aiEnabled) {
-      await this.finish(message.id, { processing: 'ignored' });
-      return;
-    }
-
-    const answer = await this.ai.ask(message.chat_id, message.text);
-    if (!answer) {
-      await this.reply(
-        message,
-        'Layanan AI sedang tidak tersedia. Perintah seperti /inet dan /status tetap bisa dipakai.',
-        'ai',
-      );
-      await this.finish(message.id, { processing: 'error', note: 'ai_unavailable' });
-      return;
-    }
-    await this.reply(message, answer, 'ai');
-    await this.finish(message.id, { processing: 'ai' });
+    // Pesan biasa (bukan perintah): tidak dibalas. Gateway ini hanya menjalankan
+    // perintah operasional; tidak ada pemanggilan model bahasa.
+    await this.finish(message.id, { processing: 'ignored' });
   }
 
   private async reply(message: WorkerMessage, text: string, kind: string): Promise<void> {

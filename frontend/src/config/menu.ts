@@ -56,7 +56,6 @@ export const menuItems: MenuItemConfig[] = [
       { path: '/whatsapp/koneksi', label: 'Koneksi & Pairing' },
       { path: '/whatsapp/keamanan', label: 'Keamanan & Akses' },
       { path: '/whatsapp/command', label: 'Command Router' },
-      { path: '/whatsapp/ai', label: 'AI & Hermes' },
       { path: '/whatsapp/riwayat', label: 'Riwayat Pesan' },
       { path: '/whatsapp/monitoring', label: 'Monitoring & Log' },
     ],

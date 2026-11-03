@@ -64,6 +64,55 @@ let sock = null;
 let starting = false;
 let stopped = false;
 let restartTimer = null;
+/**
+ * Penanda generasi socket. Setiap start() menaikkan angka ini; event dari
+ * socket lama diabaikan sehingga pairing ulang tidak "berebut" state.
+ */
+let generation = 0;
+
+/** Tutup socket aktif tanpa melempar error. */
+function closeSocket() {
+  const current = sock;
+  sock = null;
+  if (!current) return;
+  try {
+    current.ev?.removeAllListeners?.();
+  } catch {
+    /* listener sudah lepas */
+  }
+  try {
+    current.end?.(new Error('gateway reset'));
+  } catch {
+    /* socket sudah mati */
+  }
+}
+
+/** Bersihkan sesi tersimpan supaya pairing benar-benar mulai dari nol. */
+function wipeSession() {
+  try {
+    rmSync(SESSION_DIR, { recursive: true, force: true });
+    mkdirSync(SESSION_DIR, { recursive: true, mode: 0o700 });
+  } catch (error) {
+    note(`Gagal membersihkan sesi: ${error?.message ?? error}`);
+  }
+}
+
+/** Reset penuh: hentikan socket, batalkan timer, hapus sesi, kosongkan state. */
+function resetSession(reason) {
+  generation += 1;
+  stopped = true;
+  clearTimeout(restartTimer);
+  restartTimer = null;
+  closeSocket();
+  wipeSession();
+  state.status = 'disconnected';
+  state.qr = null;
+  state.qr_at = null;
+  state.number = null;
+  state.connected_at = null;
+  state.reconnect_count = 0;
+  if (reason) note(reason);
+}
 
 function safeEqual(a, b) {
   const x = Buffer.from(String(a));
@@ -84,14 +133,19 @@ function jidNumber(jid) {
 async function start() {
   if (starting) return;
   starting = true;
+  const gen = ++generation;
+  // Socket lama ditutup dulu: dua socket yang berbagi folder auth membuat QR
+  // pairing berikutnya tidak pernah muncul.
+  closeSocket();
   state.status = 'connecting';
   state.qr = null;
+  state.reconnect_count = 0;
 
   try {
     const { state: authState, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
     const { version } = await fetchLatestBaileysVersion();
 
-    sock = makeWASocket({
+    const current = makeWASocket({
       version,
       auth: authState,
       logger: pino({ level: 'warn' }),
@@ -100,9 +154,22 @@ async function start() {
       syncFullHistory: false,
     });
 
-    sock.ev.on('creds.update', saveCreds);
+    if (gen !== generation) {
+      try {
+        current.end?.(new Error('digantikan socket baru'));
+      } catch {
+        /* diabaikan */
+      }
+      return;
+    }
+    sock = current;
 
-    sock.ev.on('connection.update', (update) => {
+    current.ev.on('creds.update', (...args) => {
+      if (gen === generation) saveCreds(...args);
+    });
+
+    current.ev.on('connection.update', (update) => {
+      if (gen !== generation) return;
       const { connection, lastDisconnect, qr } = update;
       if (qr) {
         state.qr = qr;
@@ -114,7 +181,7 @@ async function start() {
         state.status = 'connected';
         state.qr = null;
         state.connected_at = new Date().toISOString();
-        state.number = jidNumber(sock?.user?.id);
+        state.number = jidNumber(current.user?.id);
         state.last_error = null;
         logger.info({ number: state.number }, 'WhatsApp tersambung');
       }
@@ -122,8 +189,13 @@ async function start() {
         state.status = 'disconnected';
         const code = lastDisconnect?.error?.output?.statusCode;
         if (code === DisconnectReason.loggedOut) {
+          stopped = true;
           state.status = 'logged_out';
           state.number = null;
+          state.qr = null;
+          // Sesi yang tidak berlaku lagi dibuang supaya pairing berikutnya
+          // benar-benar meminta QR baru (bukan memakai kredensial rusak).
+          wipeSession();
           note('Sesi dilogout dari perangkat. Pairing ulang diperlukan.');
           return;
         }
@@ -132,12 +204,13 @@ async function start() {
         note(`Koneksi terputus (${code ?? 'unknown'}), mencoba lagi dalam ${Math.round(delay / 1000)}s`);
         clearTimeout(restartTimer);
         restartTimer = setTimeout(() => {
-          if (!stopped) void start();
+          if (!stopped && gen === generation) void start();
         }, delay);
       }
     });
 
-    sock.ev.on('messages.upsert', ({ messages, type }) => {
+    current.ev.on('messages.upsert', ({ messages, type }) => {
+      if (gen !== generation) return;
       if (type !== 'notify') return;
       for (const msg of messages) {
         const key = msg.key || {};
@@ -149,7 +222,7 @@ async function start() {
           '';
         // Mention/quote terhadap bot: dipakai kebijakan grup (wajib mention).
         const ctx = msg.message?.extendedTextMessage?.contextInfo || msg.message?.imageMessage?.contextInfo;
-        const botId = sock?.user?.id || '';
+        const botId = current.user?.id || '';
         const mentioned = Boolean(
           ctx?.mentionedJid?.some((jid) => botId.startsWith(String(jid).split(':')[0])) ||
             (ctx?.participant && botId.startsWith(String(ctx.participant).split(':')[0])),
@@ -175,9 +248,11 @@ async function start() {
   } catch (error) {
     note(`Gagal memulai koneksi: ${error?.message ?? error}`);
     clearTimeout(restartTimer);
-    restartTimer = setTimeout(() => {
-      if (!stopped) void start();
-    }, 5000);
+    if (gen === generation) {
+      restartTimer = setTimeout(() => {
+        if (!stopped && gen === generation) void start();
+      }, 5000);
+    }
   } finally {
     starting = false;
   }
@@ -212,28 +287,33 @@ app.get('/qr', (_req, res) => {
 
 app.post('/connect', async (_req, res) => {
   if (state.status === 'connected') return res.json({ ok: true, status: state.status });
+  if (state.status === 'connecting' && starting) return res.json({ ok: true, status: state.status });
   stopped = false;
+  await start();
+  res.json({ ok: true, status: state.status });
+});
+
+/**
+ * Pairing ulang — dipakai saat admin mengganti nomor WhatsApp.
+ * Sesi lama dihapus, socket ditutup, lalu koneksi baru dimulai sehingga QR
+ * yang tampil benar-benar untuk nomor yang baru dipindai.
+ */
+app.post('/repair', async (_req, res) => {
+  resetSession('Pairing ulang: sesi lama dihapus.');
+  stopped = false;
+  state.status = 'connecting';
   await start();
   res.json({ ok: true, status: state.status });
 });
 
 app.post('/logout', async (_req, res) => {
   try {
-    stopped = true;
     await sock?.logout();
   } catch {
     // sesi memang sudah tidak berlaku
   }
-  try {
-    rmSync(SESSION_DIR, { recursive: true, force: true });
-    mkdirSync(SESSION_DIR, { recursive: true, mode: 0o700 });
-  } catch (error) {
-    note(`Gagal membersihkan sesi: ${error?.message ?? error}`);
-  }
-  sock = null;
+  resetSession('Sesi dilogout. Pairing ulang diperlukan.');
   state.status = 'logged_out';
-  state.number = null;
-  state.qr = null;
   res.json({ ok: true });
 });
 

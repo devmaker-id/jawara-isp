@@ -42,6 +42,22 @@ export class WaGatewayController {
     return this.gateway.logout();
   }
 
+  /** Ganti nomor / pairing ulang: sesi lama dihapus lalu QR baru diminta. */
+  @Post('repair')
+  repair() {
+    return this.gateway.repair();
+  }
+
+  @Delete('messages/:id')
+  deleteMessage(@Param('id', ParseIntPipe) id: number) {
+    return this.gateway.deleteMessage(id);
+  }
+
+  @Delete('events/:id')
+  deleteEvent(@Param('id', ParseIntPipe) id: number) {
+    return this.gateway.deleteEvent(id);
+  }
+
   @Get('settings')
   settings() {
     return this.gateway.settings();
