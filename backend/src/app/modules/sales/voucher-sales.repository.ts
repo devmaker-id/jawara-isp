@@ -295,7 +295,13 @@ export class VoucherSalesRepository {
 
   /** Voucher yang belum pernah dicatat penjualannya (untuk pilihan di form). */
   async unsoldVouchers(ownerId?: number, limit = 100): Promise<RowDataPacket[]> {
-    const where = ['v.id NOT IN (SELECT voucher_id FROM voucher_sales WHERE voucher_id IS NOT NULL AND voided_at IS NULL)'];
+    // Hanya voucher sungguhan. Akun pelanggan (user_type='member') tinggal di
+    // tabel yang sama tetapi bukan barang dagangan: menjualnya berarti menjual
+    // akun pelanggan, bukan voucher.
+    const where = [
+      "v.user_type = 'voucher'",
+      'v.id NOT IN (SELECT voucher_id FROM voucher_sales WHERE voucher_id IS NOT NULL AND voided_at IS NULL)',
+    ];
     const params: unknown[] = [];
     if (ownerId !== undefined) {
       where.push('v.owner_id = ?');

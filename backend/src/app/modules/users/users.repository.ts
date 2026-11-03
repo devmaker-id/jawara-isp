@@ -163,10 +163,19 @@ export class UsersRepository {
         sql: 'SELECT COUNT(*) AS total FROM customers WHERE created_by = ?',
         params: [id],
       },
-      { label: 'voucher', sql: 'SELECT COUNT(*) AS total FROM radius_vouchers WHERE owner_id = ?', params: [id] },
+      {
+        label: 'voucher',
+        sql: "SELECT COUNT(*) AS total FROM radius_vouchers WHERE owner_id = ? AND user_type = 'voucher'",
+        params: [id],
+      },
+      {
+        label: 'akun pelanggan',
+        sql: "SELECT COUNT(*) AS total FROM radius_vouchers WHERE owner_id = ? AND user_type = 'member'",
+        params: [id],
+      },
       {
         label: 'voucher (pencatat)',
-        sql: 'SELECT COUNT(*) AS total FROM radius_vouchers WHERE created_by = ?',
+        sql: "SELECT COUNT(*) AS total FROM radius_vouchers WHERE created_by = ? AND user_type = 'voucher'",
         params: [id],
       },
       {

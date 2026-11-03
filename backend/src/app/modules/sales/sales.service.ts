@@ -83,10 +83,16 @@ export class SalesService {
     if (dto.voucher_id) {
       const voucher = await this.db.queryOne<RowDataPacket>(
         // Kolom harga di radius_vouchers bernama `price` (harga jual voucher).
-        'SELECT id, username, profile_name, profile_type, owner_id, price FROM radius_vouchers WHERE id = ?',
+        'SELECT id, username, profile_name, profile_type, owner_id, price, user_type FROM radius_vouchers WHERE id = ?',
         [dto.voucher_id],
       );
       if (!voucher) throw new NotFoundException(`Voucher #${dto.voucher_id} tidak ditemukan.`);
+      if (String(voucher.user_type) !== 'voucher') {
+        throw new BadRequestException(
+          `Akun #${dto.voucher_id} adalah akun pelanggan (member), bukan voucher. ` +
+            'Penjualan voucher tidak boleh mencatat akun pelanggan.',
+        );
+      }
 
       const sold = await this.db.queryOne<{ total: number }>(
         'SELECT COUNT(*) AS total FROM voucher_sales WHERE voucher_id = ? AND voided_at IS NULL',

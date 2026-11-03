@@ -167,7 +167,7 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
   const [busy, setBusy] = useState(false);
 
   // Filter
-  const [userFilter, setUserFilter] = useState<'all' | 'voucher' | 'member'>('all');
+  const [userFilter, setUserFilter] = useState<'all' | 'voucher' | 'member'>('voucher');
   const [statusFilter, setStatusFilter] = useState<'' | Status>('');
   const [profileFilter, setProfileFilter] = useState('');
   const [ownerFilter, setOwnerFilter] = useState('');
@@ -767,7 +767,7 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                {key === 'all' ? 'Semua' : key === 'voucher' ? 'Voucher' : 'Member'}
+                {key === 'all' ? 'Semua' : key === 'voucher' ? 'Voucher' : 'Akun pelanggan'}
               </button>
             ))}
           </div>

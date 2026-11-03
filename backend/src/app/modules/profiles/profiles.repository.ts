@@ -526,8 +526,10 @@ export class VoucherRepository {
 
   async counts(ownerId?: number): Promise<Record<string, number>> {
     const rows = await this.db.query<{ status: string; total: number }>(
+      // Halaman voucher menghitung voucher saja; akun pelanggan (member)
+      // dihitung di halaman Pelanggan, bukan di sini.
       `SELECT status, COUNT(*) AS total FROM radius_vouchers
-        ${ownerId ? 'WHERE owner_id = ?' : ''}
+        WHERE user_type = 'voucher' ${ownerId ? 'AND owner_id = ?' : ''}
         GROUP BY status`,
       ownerId ? [ownerId] : [],
     );
