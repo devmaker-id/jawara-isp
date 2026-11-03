@@ -22,6 +22,7 @@ import {
   DeviceBar,
   useNet,
 } from '../../components/net/NetUI';
+import { RowActions } from '../../components/table/RowActions';
 
 interface ServerRow {
   id: string;
@@ -223,32 +224,33 @@ const Hotspot: React.FC = () => {
                   </td>
                   <td className="px-3 py-2 text-slate-400">{row.comment || '-'}</td>
                   {isAdmin && (
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      <button
-                        type="button"
-                        className="mr-2 text-xs text-cyan-400 hover:underline"
-                        onClick={() =>
-                          setForm({
-                            id: row.id,
-                            name: row.name,
-                            password: '',
-                            profile: row.profile,
-                            server: row.server,
-                            limit_uptime: row.limit_uptime,
-                            comment: row.comment,
-                            disabled: row.disabled,
-                          })
-                        }
-                      >
-                        Ubah
-                      </button>
-                      <button
-                        type="button"
-                        className="text-xs text-rose-400 hover:underline"
-                        onClick={() => remove(row)}
-                      >
-                        Hapus
-                      </button>
+                    <td className="actions">
+                      <RowActions
+                        label={`Aksi untuk user ${row.name}`}
+                        actions={[
+                          {
+                            key: 'edit',
+                            label: 'Ubah user',
+                            onSelect: () =>
+                              setForm({
+                                id: row.id,
+                                name: row.name,
+                                password: '',
+                                profile: row.profile,
+                                server: row.server,
+                                limit_uptime: row.limit_uptime,
+                                comment: row.comment,
+                                disabled: row.disabled,
+                              }),
+                          },
+                          {
+                            key: 'delete',
+                            label: 'Hapus user',
+                            tone: 'danger',
+                            onSelect: () => remove(row),
+                          },
+                        ]}
+                      />
                     </td>
                   )}
                 </tr>

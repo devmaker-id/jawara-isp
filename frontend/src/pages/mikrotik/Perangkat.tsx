@@ -17,6 +17,7 @@ import {
   errorMessage,
   useNet,
 } from '../../components/net/NetUI';
+import { RowActions } from '../../components/table/RowActions';
 
 interface FormState {
   id?: number;
@@ -295,32 +296,40 @@ const Perangkat: React.FC = () => {
                       )}
                       {test === 'loading' && <p className="mt-1 text-slate-400">Menghubungi router...</p>}
                     </td>
-                    <td className="px-3 py-2">
-                      <div className="flex flex-wrap gap-2">
-                        <Button onClick={() => runTest(device)} disabled={test === 'loading'}>
-                          Uji
-                        </Button>
-                        {device.gui_url && (
-                          <a
-                            className="rounded-lg border border-slate-600 px-3 py-2 text-sm text-slate-200 hover:bg-slate-700"
-                            href={device.gui_url}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            WebFig
-                          </a>
-                        )}
-                        {isAdmin && (
-                          <>
-                            <Button onClick={() => { setForm(formFrom(device)); setFormError(null); }}>
-                              Ubah
-                            </Button>
-                            <Button variant="danger" onClick={() => setConfirmDelete(device)}>
-                              Hapus
-                            </Button>
-                          </>
-                        )}
-                      </div>
+                    <td className="actions">
+                      <RowActions
+                        label={`Aksi untuk ${device.name}`}
+                        actions={[
+                          {
+                            key: 'test',
+                            label: 'Uji koneksi',
+                            disabled: test === 'loading',
+                            onSelect: () => runTest(device),
+                          },
+                          {
+                            key: 'webfig',
+                            label: 'Buka WebFig',
+                            hidden: !device.gui_url,
+                            onSelect: () => window.open(device.gui_url as string, '_blank', 'noreferrer'),
+                          },
+                          {
+                            key: 'edit',
+                            label: 'Ubah perangkat',
+                            hidden: !isAdmin,
+                            onSelect: () => {
+                              setForm(formFrom(device));
+                              setFormError(null);
+                            },
+                          },
+                          {
+                            key: 'delete',
+                            label: 'Hapus perangkat',
+                            tone: 'danger',
+                            hidden: !isAdmin,
+                            onSelect: () => setConfirmDelete(device),
+                          },
+                        ]}
+                      />
                     </td>
                   </tr>
                 );

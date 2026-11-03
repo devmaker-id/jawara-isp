@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react'
 import api from '../services/api';
 import { useBackgroundRefresh } from '../hooks/useBackgroundRefresh';
 import PermissionMatrix from './users/PermissionMatrix';
+import { RowActions } from '../components/table/RowActions';
 
 type Role = 'admin' | 'operator' | 'resseler';
 
@@ -373,33 +374,33 @@ const Users: React.FC = () => {
       ) : (
         <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="tbl min-w-[880px]">
               <thead>
-                <tr className="bg-slate-700/30">
-                  <th className="px-4 py-3 text-left font-medium text-slate-400">Nama</th>
-                  <th className="px-4 py-3 text-left font-medium text-slate-400">Email (login)</th>
-                  <th className="px-4 py-3 text-left font-medium text-slate-400">Role</th>
-                  <th className="px-4 py-3 text-left font-medium text-slate-400">Status</th>
-                  <th className="px-4 py-3 text-right font-medium text-slate-400">Aksi</th>
+                <tr>
+                  <th>Nama</th>
+                  <th>Email (login)</th>
+                  <th className="center">Role</th>
+                  <th className="center">Status</th>
+                  <th className="actions">Aksi</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-700/50">
+              <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                    <td colSpan={5} className="center text-slate-500">
                       Memuat data…
                     </td>
                   </tr>
                 ) : rows.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                    <td colSpan={5} className="center text-slate-500">
                       Tidak ada pengguna yang cocok dengan filter.
                     </td>
                   </tr>
                 ) : (
                   rows.map((user) => (
-                    <tr key={user.id} className="hover:bg-slate-700/20 transition">
-                      <td className="px-4 py-3 text-slate-200">
+                    <tr key={user.id}>
+                      <td className="text-slate-200">
                         {user.name}
                         {user.id === currentUserId && (
                           <span className="ml-2 text-[10px] uppercase tracking-wide text-cyan-400">
@@ -415,13 +416,13 @@ const Users: React.FC = () => {
                           </span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-slate-400">{user.email}</td>
-                      <td className="px-4 py-3">
+                      <td className="text-slate-400">{user.email}</td>
+                      <td className="center">
                         <span className="px-2 py-1 rounded-full text-xs bg-slate-700/60 text-slate-200">
                           {ROLE_LABEL[user.role]}
                         </span>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="center">
                         <span
                           className={`px-2 py-1 rounded-full text-xs font-medium ${
                             user.is_active
@@ -432,59 +433,34 @@ const Users: React.FC = () => {
                           {user.is_active ? 'Aktif' : 'Nonaktif'}
                         </span>
                       </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-end gap-2">
-                          <button
-                            type="button"
-                            onClick={() => openEdit(user)}
-                            className="px-2.5 py-1.5 rounded-lg text-xs text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/20 transition"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setPermTarget(user)}
-                            className="px-2.5 py-1.5 rounded-lg text-xs text-white bg-indigo-500/20 hover:bg-indigo-500/30 transition"
-                          >
-                            Hak akses
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setPasswordTarget(user);
-                              setNewPassword('');
-                            }}
-                            className="px-2.5 py-1.5 rounded-lg text-xs text-slate-200 bg-slate-700/50 hover:bg-slate-700 transition"
-                          >
-                            Reset sandi
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setConfirmTarget({ user, nextState: !user.is_active })}
-                            className={`px-2.5 py-1.5 rounded-lg text-xs transition ${
-                              user.is_active
-                                ? 'text-amber-300 bg-amber-500/10 hover:bg-amber-500/20'
-                                : 'text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20'
-                            }`}
-                          >
-                            {user.is_active ? 'Nonaktifkan' : 'Aktifkan'}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDeleteTarget(user)}
-                            disabled={user.is_primary || user.id === currentUserId}
-                            title={
-                              user.is_primary
-                                ? 'Administrator utama tidak dapat dihapus'
-                                : user.id === currentUserId
-                                  ? 'Tidak dapat menghapus akun sendiri'
-                                  : 'Hapus permanen (hanya bila tidak terikat data)'
-                            }
-                            className="px-2.5 py-1.5 rounded-lg text-xs text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 transition disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-rose-500/10"
-                          >
-                            Hapus
-                          </button>
-                        </div>
+                      <td className="actions">
+                        <RowActions
+                          label={`Aksi untuk ${user.name}`}
+                          actions={[
+                            { key: 'edit', label: 'Ubah pengguna', onSelect: () => openEdit(user) },
+                            { key: 'perm', label: 'Hak akses', onSelect: () => setPermTarget(user) },
+                            {
+                              key: 'password',
+                              label: 'Reset sandi',
+                              onSelect: () => {
+                                setPasswordTarget(user);
+                                setNewPassword('');
+                              },
+                            },
+                            {
+                              key: 'toggle',
+                              label: user.is_active ? 'Nonaktifkan akun' : 'Aktifkan akun',
+                              onSelect: () => setConfirmTarget({ user, nextState: !user.is_active }),
+                            },
+                            {
+                              key: 'delete',
+                              label: 'Hapus pengguna',
+                              tone: 'danger',
+                              disabled: user.is_primary || user.id === currentUserId,
+                              onSelect: () => setDeleteTarget(user),
+                            },
+                          ]}
+                        />
                       </td>
                     </tr>
                   ))

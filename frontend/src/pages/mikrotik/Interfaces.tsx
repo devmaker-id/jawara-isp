@@ -3,7 +3,6 @@ import api from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 import {
   Badge,
-  Button,
   ErrorNote,
   InfoNote,
   Loading,
@@ -18,6 +17,7 @@ import {
   DeviceBar,
   useNet,
 } from '../../components/net/NetUI';
+import { RowActions } from '../../components/table/RowActions';
 import TrafficPanel from './TrafficPanel';
 
 interface InterfaceRow {
@@ -215,14 +215,19 @@ const Interfaces: React.FC = () => {
               </td>
               <td className="px-3 py-2 text-slate-400">{row.comment || '-'}</td>
               {isAdmin && (
-                <td className="px-3 py-2">
-                  <Button
-                    variant={row.disabled ? 'primary' : 'danger'}
-                    disabled={busyName === row.name}
-                    onClick={() => toggle(row)}
-                  >
-                    {busyName === row.name ? '…' : row.disabled ? 'Aktifkan' : 'Nonaktifkan'}
-                  </Button>
+                <td className="actions">
+                  <RowActions
+                    label={`Aksi untuk interface ${row.name}`}
+                    actions={[
+                      {
+                        key: 'toggle',
+                        label: busyName === row.name ? 'Memproses…' : row.disabled ? 'Aktifkan interface' : 'Nonaktifkan interface',
+                        tone: row.disabled ? 'default' : 'danger',
+                        disabled: busyName === row.name,
+                        onSelect: () => toggle(row),
+                      },
+                    ]}
+                  />
                 </td>
               )}
             </tr>

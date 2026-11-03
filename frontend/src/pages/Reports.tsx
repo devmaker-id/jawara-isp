@@ -411,15 +411,15 @@ const Reports: React.FC = () => {
     if (type === 'by-method') {
       return (
         <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
-          <table className="w-full text-sm">
+          <table className="tbl">
             <thead>
-              <tr className="bg-slate-700/30">
+              <tr>
                 <th className="px-4 py-3 text-left font-medium text-slate-400">Metode</th>
                 <th className="px-4 py-3 text-right font-medium text-slate-400">Transaksi valid</th>
                 <th className="px-4 py-3 text-right font-medium text-slate-400">Total pemasukan</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-700/50">
+            <tbody>
               {result.by_method.length === 0 ? (
                 <tr>
                   <td colSpan={3} className="px-4 py-6 text-center text-slate-500">
@@ -446,9 +446,9 @@ const Reports: React.FC = () => {
       return (
         <div className="overflow-hidden rounded-xl border border-slate-700/50 bg-slate-800/50">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="tbl">
               <thead>
-                <tr className="bg-slate-700/30">
+                <tr>
                   <th className="px-4 py-3 text-left font-medium text-slate-400">Tanggal</th>
                   <th className="px-4 py-3 text-left font-medium text-slate-400">Profil</th>
                   <th className="px-4 py-3 text-left font-medium text-slate-400">Voucher / pembeli</th>
@@ -459,7 +459,7 @@ const Reports: React.FC = () => {
                   <th className="px-4 py-3 text-left font-medium text-slate-400">Dicatat</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-700/50">
+              <tbody>
                 {voucherRows.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="px-4 py-6 text-center text-slate-500">
@@ -528,9 +528,9 @@ const Reports: React.FC = () => {
             </p>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="tbl">
               <thead>
-                <tr className="bg-slate-700/30">
+                <tr>
                   <th className="px-4 py-3 text-left font-medium text-slate-400">Tanggal pakai pertama</th>
                   <th className="px-4 py-3 text-left font-medium text-slate-400">Agen (pemilik stok)</th>
                   <th className="px-4 py-3 text-left font-medium text-slate-400">Profil</th>
@@ -545,7 +545,7 @@ const Reports: React.FC = () => {
                   <th className="px-4 py-3 text-right font-medium text-slate-400">Total estimasi modal</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-700/50">
+              <tbody>
                 {usageRows.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="px-4 py-6 text-center text-slate-500">
@@ -608,15 +608,15 @@ const Reports: React.FC = () => {
                 Total per agen (pemilik stok tercatat)
               </p>
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table className="tbl">
                   <thead>
-                    <tr className="bg-slate-700/30">
+                    <tr>
                       <th className="px-4 py-2 text-left font-medium text-slate-400">Agen</th>
                       <th className="px-4 py-2 text-right font-medium text-slate-400">Voucher unik</th>
                       <th className="px-4 py-2 text-right font-medium text-slate-400">Estimasi modal</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-700/50">
+                  <tbody>
                     {usage.by_owner.map((row) => (
                       <tr key={`${row.owner_id ?? 'none'}-${row.agen}`}>
                         <td className="px-4 py-2 text-slate-300">{row.agen}</td>
@@ -641,9 +641,9 @@ const Reports: React.FC = () => {
       return (
         <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="tbl">
               <thead>
-                <tr className="bg-slate-700/30">
+                <tr>
                   <th className="px-4 py-3 text-left font-medium text-slate-400">Invoice</th>
                   <th className="px-4 py-3 text-left font-medium text-slate-400">Pelanggan</th>
                   <th className="px-4 py-3 text-right font-medium text-slate-400">Nominal</th>
@@ -652,7 +652,7 @@ const Reports: React.FC = () => {
                   <th className="px-4 py-3 text-left font-medium text-slate-400">Jatuh tempo</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-700/50">
+              <tbody>
                 {rows.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="px-4 py-6 text-center text-slate-500">
@@ -692,9 +692,9 @@ const Reports: React.FC = () => {
     return (
       <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="tbl">
             <thead>
-              <tr className="bg-slate-700/30">
+              <tr>
                 <th className="px-4 py-3 text-left font-medium text-slate-400">Tanggal</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-400">Invoice</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-400">Pelanggan</th>
@@ -703,7 +703,7 @@ const Reports: React.FC = () => {
                 <th className="px-4 py-3 text-left font-medium text-slate-400">Status</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-700/50">
+            <tbody>
               {rows.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-4 py-6 text-center text-slate-500">
@@ -946,9 +946,9 @@ const Reports: React.FC = () => {
               </p>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="tbl">
                 <thead>
-                  <tr className="bg-slate-700/30">
+                  <tr>
                     <th className="px-4 py-2 text-left font-medium text-slate-400">Pengguna</th>
                     <th className="px-4 py-2 text-left font-medium text-slate-400">Role</th>
                     <th className="px-4 py-2 text-right font-medium text-slate-400">Pelanggan</th>
@@ -959,7 +959,7 @@ const Reports: React.FC = () => {
                     <th className="px-4 py-2 text-right font-medium text-slate-400">Total</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-700/50">
+                <tbody>
                   {contribLoading ? (
                     <tr>
                       <td colSpan={8} className="px-4 py-6 text-center text-slate-500">

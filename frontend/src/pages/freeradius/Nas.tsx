@@ -15,6 +15,7 @@ import {
   formatNumber,
   useNet,
 } from '../../components/net/NetUI';
+import { RowActions } from '../../components/table/RowActions';
 
 interface NasRow {
   id: number;
@@ -322,33 +323,34 @@ const Nas: React.FC = () => {
                 <td className="px-3 py-2 text-slate-400">{row.ports ?? '-'}</td>
                 <td className="px-3 py-2 text-slate-400">{row.description || '-'}</td>
                 {isAdmin && (
-                  <td className="px-3 py-2 whitespace-nowrap">
-                    <button
-                      type="button"
-                      className="mr-2 text-xs text-cyan-400 hover:underline"
-                      onClick={() =>
-                        setForm({
-                          id: row.id,
-                          nasname: row.nasname,
-                          shortname: row.shortname ?? '',
-                          secret: '',
-                          type: row.type ?? 'other',
-                          description: row.description ?? '',
-                          ports: row.ports ?? 1812,
-                          ros_version: row.ros_version ?? '6',
-                        })
-                      }
-                    >
-                      Ubah
-                    </button>
-                    <button
-                      type="button"
-                      className="text-xs text-rose-400 hover:underline disabled:opacity-50"
-                      disabled={deleting}
-                      onClick={() => remove(row)}
-                    >
-                      Hapus
-                    </button>
+                  <td className="actions">
+                    <RowActions
+                      label={`Aksi untuk NAS ${row.shortname ?? row.nasname}`}
+                      actions={[
+                        {
+                          key: 'edit',
+                          label: 'Ubah NAS',
+                          onSelect: () =>
+                            setForm({
+                              id: row.id,
+                              nasname: row.nasname,
+                              shortname: row.shortname ?? '',
+                              secret: '',
+                              type: row.type ?? 'other',
+                              description: row.description ?? '',
+                              ports: row.ports ?? 1812,
+                              ros_version: row.ros_version ?? '6',
+                            }),
+                        },
+                        {
+                          key: 'delete',
+                          label: 'Hapus NAS',
+                          tone: 'danger',
+                          disabled: deleting,
+                          onSelect: () => remove(row),
+                        },
+                      ]}
+                    />
                   </td>
                 )}
               </tr>

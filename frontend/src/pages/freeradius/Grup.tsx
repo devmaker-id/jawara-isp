@@ -16,6 +16,7 @@ import {
   errorMessage,
   formatNumber,
 } from '../../components/net/NetUI';
+import { RowActions } from '../../components/table/RowActions';
 
 // Grup RADIUS — satu sumber untuk profil FreeRADIUS dan MikroTik.
 //
@@ -279,15 +280,20 @@ const Grup: React.FC = () => {
                 <td className="px-3 py-2 text-xs">{row.simultaneous_use ?? '-'}</td>
                 <td className="px-3 py-2 text-xs">{formatNumber(row.users)}</td>
                 {isAdmin && (
-                  <td className="px-3 py-2">
-                    <div className="flex gap-1">
-                      <Button onClick={() => void openEdit(row)} disabled={busy}>
-                        Edit
-                      </Button>
-                      <Button variant="danger" onClick={() => setConfirmDelete(row)} disabled={busy}>
-                        Hapus
-                      </Button>
-                    </div>
+                  <td className="actions">
+                    <RowActions
+                      label={`Aksi untuk grup ${row.groupname}`}
+                      actions={[
+                        { key: 'edit', label: 'Ubah grup', disabled: busy, onSelect: () => void openEdit(row) },
+                        {
+                          key: 'delete',
+                          label: 'Hapus grup',
+                          tone: 'danger',
+                          disabled: busy,
+                          onSelect: () => setConfirmDelete(row),
+                        },
+                      ]}
+                    />
                   </td>
                 )}
               </tr>

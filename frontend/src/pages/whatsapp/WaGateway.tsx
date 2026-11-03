@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../../services/api';
+import { RowActions } from '../../components/table/RowActions';
 
 /**
  * WhatsApp Gateway milik Jawara-ISP.
@@ -290,9 +291,9 @@ export const WaSecurity: React.FC = () => {
         </div>
 
         <div className="mt-4 overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="tbl-compact">
             <thead>
-              <tr className="border-b border-slate-700/50 text-left text-xs uppercase text-slate-400">
+              <tr>
                 <th className="py-2">Jenis</th>
                 <th className="py-2">Nilai</th>
                 <th className="py-2">Label</th>
@@ -303,19 +304,29 @@ export const WaSecurity: React.FC = () => {
             </thead>
             <tbody>
               {(list.data ?? []).map((row) => (
-                <tr key={row.id} className="border-b border-slate-700/30">
+                <tr key={row.id}>
                   <td className="py-2 text-slate-300">{row.kind}</td>
                   <td className="py-2 font-mono text-xs text-slate-100">{row.value}</td>
                   <td className="py-2 text-slate-400">{row.label ?? '—'}</td>
                   <td className="py-2">{row.is_admin ? 'ya' : '—'}</td>
                   <td className="py-2">{row.is_active ? 'ya' : 'tidak'}</td>
                   <td className="py-2 text-right">
-                    <button className="mr-3 text-xs text-cyan-300" onClick={() => void toggle(row)}>
-                      {row.is_active ? 'Nonaktifkan' : 'Aktifkan'}
-                    </button>
-                    <button className="text-xs text-red-400" onClick={() => void remove(row)}>
-                      Hapus
-                    </button>
+                    <RowActions
+                      label={`Aksi untuk ${row.value}`}
+                      actions={[
+                        {
+                          key: 'toggle',
+                          label: row.is_active ? 'Nonaktifkan' : 'Aktifkan',
+                          onSelect: () => void toggle(row),
+                        },
+                        {
+                          key: 'delete',
+                          label: 'Hapus entri',
+                          tone: 'danger',
+                          onSelect: () => void remove(row),
+                        },
+                      ]}
+                    />
                   </td>
                 </tr>
               ))}
@@ -346,9 +357,9 @@ export const WaCommands: React.FC = () => {
         <p className="text-xs text-slate-400">
           Dijalankan sebelum AI. Perintah di bawah tidak memanggil model dan tidak memakai token provider.
         </p>
-        <table className="mt-4 w-full text-sm">
+        <table className="tbl-compact mt-4">
           <thead>
-            <tr className="border-b border-slate-700/50 text-left text-xs uppercase text-slate-400">
+            <tr>
               <th className="py-2">Perintah</th>
               <th className="py-2">Keterangan</th>
               <th className="py-2">Akses</th>
@@ -356,7 +367,7 @@ export const WaCommands: React.FC = () => {
           </thead>
           <tbody>
             {(data?.rows ?? []).map((row) => (
-              <tr key={row.name} className="border-b border-slate-700/30">
+              <tr key={row.name}>
                 <td className="py-2 font-mono text-xs text-cyan-300">{row.usage}</td>
                 <td className="py-2 text-slate-300">{row.description}</td>
                 <td className="py-2 text-slate-400">{row.admin_only ? 'administrator' : 'semua pengguna terdaftar'}</td>
@@ -408,9 +419,9 @@ export const WaAi: React.FC = () => {
 
       <div className={card}>
         <h3 className="text-sm font-semibold text-white">Pemakaian AI</h3>
-        <table className="mt-3 w-full text-sm">
+        <table className="tbl-compact mt-3">
           <thead>
-            <tr className="border-b border-slate-700/50 text-left text-xs uppercase text-slate-400">
+            <tr>
               <th className="py-2">Tanggal</th>
               <th className="py-2">Panggilan</th>
               <th className="py-2">Berhasil</th>
@@ -419,7 +430,7 @@ export const WaAi: React.FC = () => {
           </thead>
           <tbody>
             {(monitor.data?.ai_usage ?? []).map((row) => (
-              <tr key={row.day} className="border-b border-slate-700/30">
+              <tr key={row.day}>
                 <td className="py-2 text-slate-300">{row.day}</td>
                 <td className="py-2">{row.calls}</td>
                 <td className="py-2">{row.ok}</td>
@@ -468,9 +479,9 @@ export const WaMessages: React.FC = () => {
         </div>
         <p className="text-xs text-slate-400">Isi pesan disimpan terpotong 200 karakter untuk audit.</p>
         <div className="mt-3 overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="tbl-compact">
             <thead>
-              <tr className="border-b border-slate-700/50 text-left text-xs uppercase text-slate-400">
+              <tr>
                 <th className="py-2">Waktu</th>
                 <th className="py-2">Arah</th>
                 <th className="py-2">Chat</th>
@@ -481,7 +492,7 @@ export const WaMessages: React.FC = () => {
             </thead>
             <tbody>
               {(data ?? []).map((row) => (
-                <tr key={row.id} className="border-b border-slate-700/30">
+                <tr key={row.id}>
                   <td className="py-2 text-xs text-slate-400">{fmt(row.created_at)}</td>
                   <td className="py-2">{row.direction === 'in' ? 'masuk' : 'keluar'}</td>
                   <td className="py-2 text-xs text-slate-300">
@@ -558,9 +569,9 @@ export const WaMonitor: React.FC = () => {
 
       <div className={card}>
         <h3 className="text-sm font-semibold text-white">Aktivitas harian</h3>
-        <table className="mt-3 w-full text-sm">
+        <table className="tbl-compact mt-3">
           <thead>
-            <tr className="border-b border-slate-700/50 text-left text-xs uppercase text-slate-400">
+            <tr>
               <th className="py-2">Tanggal</th>
               <th className="py-2">Masuk</th>
               <th className="py-2">Keluar</th>
@@ -571,7 +582,7 @@ export const WaMonitor: React.FC = () => {
           </thead>
           <tbody>
             {(monitor.data?.daily ?? []).map((row) => (
-              <tr key={row.day} className="border-b border-slate-700/30">
+              <tr key={row.day}>
                 <td className="py-2 text-slate-300">{row.day}</td>
                 <td className="py-2">{row.inbound ?? 0}</td>
                 <td className="py-2">{row.outbound ?? 0}</td>

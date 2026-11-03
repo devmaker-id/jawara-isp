@@ -135,9 +135,9 @@ export const CustomerReceivablePanel: React.FC<{ customerId: number; canSetLimit
 
       {data.invoices.length > 0 && (
         <div className="mt-2 overflow-x-auto">
-          <table className="w-full text-xs">
+          <table className="tbl-compact">
             <thead>
-              <tr className="border-b border-slate-700/50 text-left text-slate-400">
+              <tr>
                 <th className="py-1 pr-2">Tagihan</th>
                 <th className="py-1 pr-2">Jatuh tempo</th>
                 <th className="py-1 pr-2">Status</th>
@@ -146,7 +146,7 @@ export const CustomerReceivablePanel: React.FC<{ customerId: number; canSetLimit
             </thead>
             <tbody>
               {data.invoices.map((invoice) => (
-                <tr key={invoice.id} className="border-b border-slate-700/30">
+                <tr key={invoice.id}>
                   <td className="py-1 pr-2 font-mono text-[11px] text-slate-300">{invoice.invoice_number}</td>
                   <td className="py-1 pr-2 text-slate-300">
                     {tanggal(invoice.due_date)}

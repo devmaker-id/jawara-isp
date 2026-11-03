@@ -13,6 +13,7 @@ import {
   Table,
   errorMessage,
 } from '../../components/net/NetUI';
+import { RowActions } from '../../components/table/RowActions';
 
 // Profil Hotspot / PPP — satu komponen untuk dua tipe karena aturannya hampir
 // sama. Perbedaan: PPP tidak punya quota base, dan shared > 1 ditolak bila
@@ -453,12 +454,26 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
                 </td>
                 <td className="px-3 py-2 text-xs text-slate-400">{row.created_by_name ?? '—'}</td>
                 {isAdmin && (
-                  <td className="px-3 py-2">
-                    <div className="flex flex-wrap gap-1">
-                      <Button onClick={() => void showPreview(row)} disabled={busy}>Pratinjau</Button>
-                      <Button onClick={() => openEdit(row)} disabled={busy}>Edit</Button>
-                      <Button variant="danger" onClick={() => setConfirm(row)} disabled={busy}>Hapus</Button>
-                    </div>
+                  <td className="actions">
+                    <RowActions
+                      label={`Aksi untuk ${row.name}`}
+                      actions={[
+                        {
+                          key: 'preview',
+                          label: 'Pratinjau profil',
+                          disabled: busy,
+                          onSelect: () => void showPreview(row),
+                        },
+                        { key: 'edit', label: 'Ubah profil', disabled: busy, onSelect: () => openEdit(row) },
+                        {
+                          key: 'delete',
+                          label: 'Hapus profil',
+                          tone: 'danger',
+                          disabled: busy,
+                          onSelect: () => setConfirm(row),
+                        },
+                      ]}
+                    />
                   </td>
                 )}
               </tr>

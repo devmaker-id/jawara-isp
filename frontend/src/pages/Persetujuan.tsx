@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState, useRef } from 'react';
 import api from '../services/api';
 import { useBackgroundRefresh } from '../hooks/useBackgroundRefresh';
+import { RowActions } from '../components/table/RowActions';
 
 /**
  * Antrean persetujuan hapus.
@@ -152,40 +153,40 @@ const Persetujuan: React.FC = () => {
 
       <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="tbl min-w-[820px]">
             <thead>
-              <tr className="bg-slate-700/30">
-                <th className="px-4 py-3 text-left font-medium text-slate-400">Diminta oleh</th>
-                <th className="px-4 py-3 text-left font-medium text-slate-400">Data</th>
-                <th className="px-4 py-3 text-left font-medium text-slate-400">Waktu</th>
-                <th className="px-4 py-3 text-left font-medium text-slate-400">Status</th>
-                <th className="px-4 py-3 text-right font-medium text-slate-400">Aksi</th>
+              <tr>
+                <th>Diminta oleh</th>
+                <th>Data</th>
+                <th>Waktu</th>
+                <th className="center">Status</th>
+                <th className="actions">Aksi</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-700/50">
+            <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                  <td colSpan={5} className="center text-slate-500">
                     Memuat…
                   </td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                  <td colSpan={5} className="center text-slate-500">
                     Tidak ada permintaan.
                   </td>
                 </tr>
               ) : (
                 rows.map((row) => (
-                  <tr key={row.id} className="hover:bg-slate-700/20 transition">
-                    <td className="px-4 py-3 text-slate-200">
+                  <tr key={row.id}>
+                    <td className="text-slate-200">
                       {row.requester_name ?? `#${row.requested_by}`}
                     </td>
-                    <td className="px-4 py-3 text-slate-300">{row.summary}</td>
-                    <td className="px-4 py-3 text-slate-400 text-xs">
+                    <td className="text-slate-300">{row.summary}</td>
+                    <td className="cell-sub">
                       {new Date(row.created_at).toLocaleString('id-ID')}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="center">
                       <span
                         className={`px-2 py-1 rounded-full text-xs ${
                           row.status === 'pending'
@@ -198,33 +199,31 @@ const Persetujuan: React.FC = () => {
                         {STATUS_LABEL[row.status]}
                       </span>
                     </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-2">
-                        {row.status === 'pending' ? (
-                          <>
-                            <button
-                              type="button"
-                              disabled={busy === row.id}
-                              onClick={() => void decide(row, true)}
-                              className="px-2.5 py-1.5 rounded-lg text-xs text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 disabled:opacity-40 transition"
-                            >
-                              Setujui &amp; hapus
-                            </button>
-                            <button
-                              type="button"
-                              disabled={busy === row.id}
-                              onClick={() => void decide(row, false)}
-                              className="px-2.5 py-1.5 rounded-lg text-xs text-red-300 bg-red-500/10 hover:bg-red-500/20 disabled:opacity-40 transition"
-                            >
-                              Tolak
-                            </button>
-                          </>
-                        ) : (
-                          <span className="text-xs text-slate-500">
-                            {row.decider_name ? `oleh ${row.decider_name}` : '—'}
-                          </span>
-                        )}
-                      </div>
+                    <td className="actions">
+                      {row.status === 'pending' ? (
+                        <RowActions
+                          label={`Aksi untuk permintaan ${row.summary}`}
+                          actions={[
+                            {
+                              key: 'approve',
+                              label: 'Setujui & hapus',
+                              disabled: busy === row.id,
+                              onSelect: () => void decide(row, true),
+                            },
+                            {
+                              key: 'reject',
+                              label: 'Tolak',
+                              tone: 'danger',
+                              disabled: busy === row.id,
+                              onSelect: () => void decide(row, false),
+                            },
+                          ]}
+                        />
+                      ) : (
+                        <span className="cell-sub">
+                          {row.decider_name ? `oleh ${row.decider_name}` : '—'}
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))

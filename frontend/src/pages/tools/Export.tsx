@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import api from '../../services/api';
 import { Badge, Button, Card, ErrorNote, Loading, PageHeader, Table, errorMessage } from '../../components/net/NetUI';
+import { RowActions } from '../../components/table/RowActions';
 
 // Ekspor isi database per tabel. Dua format:
 //   .csv — data saja, cocok untuk dibuka di spreadsheet atau diedit massal
@@ -117,21 +118,30 @@ const ExportPage: React.FC = () => {
                   {row.rows === 0 ? <Badge tone="mute">kosong</Badge> : row.rows.toLocaleString('id-ID')}
                 </td>
                 <td className="px-3 py-2 text-xs text-slate-400">{row.columns.length}</td>
-                <td className="px-3 py-2">
-                  <div className="flex flex-wrap gap-1">
-                    <Button onClick={() => void download(row.table, 'csv')} disabled={busy !== null}>
-                      {busy === `${row.table}-csv` ? 'Menyiapkan…' : 'CSV'}
-                    </Button>
-                    <Button onClick={() => void download(row.table, 'sql')} disabled={busy !== null}>
-                      {busy === `${row.table}-sql` ? 'Menyiapkan…' : 'SQL'}
-                    </Button>
-                    <Button
-                      onClick={() => void showPreview(row.table, 'csv')}
-                      disabled={busy !== null || row.rows === 0}
-                    >
-                      Pratinjau
-                    </Button>
-                  </div>
+                <td className="actions">
+                  <RowActions
+                    label={`Aksi untuk tabel ${row.table}`}
+                    actions={[
+                      {
+                        key: 'csv',
+                        label: busy === `${row.table}-csv` ? 'Menyiapkan…' : 'Unduh CSV',
+                        disabled: busy !== null,
+                        onSelect: () => void download(row.table, 'csv'),
+                      },
+                      {
+                        key: 'sql',
+                        label: busy === `${row.table}-sql` ? 'Menyiapkan…' : 'Unduh SQL',
+                        disabled: busy !== null,
+                        onSelect: () => void download(row.table, 'sql'),
+                      },
+                      {
+                        key: 'preview',
+                        label: 'Pratinjau CSV',
+                        disabled: busy !== null || row.rows === 0,
+                        onSelect: () => void showPreview(row.table, 'csv'),
+                      },
+                    ]}
+                  />
                 </td>
               </tr>
             ))}

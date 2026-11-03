@@ -7,6 +7,7 @@ import { TablePager } from '../components/TablePager';
 import { OnuHistoryModal } from '../components/onu/OnuPanels';
 import { RenewDialog } from '../components/customer/RenewDialog';
 import { CustomerReceivablePanel } from '../components/customer/CustomerReceivablePanel';
+import { RowActions } from '../components/table/RowActions';
 
 // Halaman pelanggan = pintu masuk layanan. Satu pelanggan langsung memiliki
 // akun RADIUS (username, profil hotspot/ppp, limit waktu & kuota), karena
@@ -668,43 +669,45 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
         ) : (
           <>
             <div className="hidden md:block overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="tbl min-w-[980px]">
                 <thead>
-                  <tr className="text-left text-slate-400 border-b border-slate-700/50 bg-slate-700/30">
-                    <th className="px-4 py-3 font-medium">Nama</th>
-                    <th className="px-4 py-3 font-medium">No. Internet</th>
-                    <th className="px-4 py-3 font-medium">ONU</th>
-                    <th className="px-4 py-3 font-medium">Kontak</th>
-                    <th className="px-4 py-3 font-medium">Akun RADIUS</th>
-                    <th className="px-4 py-3 font-medium">Status</th>
-                    <th className="px-4 py-3 font-medium">Pemilik</th>
-                    <th className="px-4 py-3 font-medium">Dibuat oleh</th>
-                    <th className="px-4 py-3 font-medium text-right">Aksi</th>
+                  <tr>
+                    <th>Nama</th>
+                    <th>No. Internet</th>
+                    <th>ONU</th>
+                    <th>Kontak</th>
+                    <th>Akun RADIUS</th>
+                    <th className="center">Status</th>
+                    <th>Pemilik</th>
+                    <th>Dibuat oleh</th>
+                    <th className="actions">Aksi</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-700/50">
+                <tbody>
                   {customers.map((customer) => {
                     const account = accountOf(customer);
                     const status = (customer.status ?? 'active') as CustomerStatus;
                     return (
-                      <tr key={customer.id} className="hover:bg-slate-700/20 transition">
-                        <td className="px-4 py-3">
+                      <tr key={customer.id}>
+                        <td>
                           <div className="font-medium text-white">{customer.name}</div>
                           {customer.address && (
-                            <div className="text-xs text-slate-500 truncate max-w-[220px]">{customer.address}</div>
+                            <div className="cell-sub cell-trunc" title={customer.address}>
+                              {customer.address}
+                            </div>
                           )}
-                          <div className="text-[11px] text-slate-600">
+                          <div className="cell-sub">
                             sejak {formatDate(customer.created_at)}
                           </div>
                         </td>
-                        <td className="px-4 py-3">
+                        <td>
                           {customer.internet_no ? (
                             <span className="font-mono text-xs text-cyan-300">{customer.internet_no}</span>
                           ) : (
                             <span className="text-xs text-slate-500">—</span>
                           )}
                         </td>
-                        <td className="px-4 py-3">
+                        <td>
                           {customer.onu ? (
                             <div className="leading-tight">
                               <div className="font-mono text-xs text-slate-200">
@@ -719,11 +722,11 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
                             <span className="text-xs text-slate-500">—</span>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-slate-300">
+                        <td className="text-slate-300">
                           <div className="text-xs">{customer.email}</div>
                           <div className="text-xs text-slate-500">{customer.phone}</div>
                         </td>
-                        <td className="px-4 py-3">
+                        <td>
                           {account ? (
                             <div className="leading-tight">
                               <div>
@@ -742,7 +745,7 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
                             <span className="text-xs text-amber-400">belum punya akun</span>
                           )}
                         </td>
-                        <td className="px-4 py-3">
+                        <td className="center">
                           <span
                             className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${STATUS_CLASS[status]}`}
                           >
@@ -750,7 +753,7 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
                           </span>
                         </td>
                         {ownerAvailable && (
-                          <td className="px-4 py-3 text-slate-400 text-xs">
+                          <td className="cell-sub">
                             {customer.owner_name ?? ownerLabel(customer.owner_id) ? (
                               customer.owner_name ?? ownerLabel(customer.owner_id)
                             ) : (
@@ -758,47 +761,38 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
                             )}
                           </td>
                         )}
-                        <td className="px-4 py-3 text-xs text-slate-400">
+                        <td className="cell-sub">
                           {customer.created_by_name ?? '—'}
                         </td>
-                        <td className="px-4 py-3 text-right whitespace-nowrap">
-                          {account && (
-                            <button
-                              type="button"
-                              onClick={() => setRenewTarget(customer)}
-                              className="text-emerald-300 hover:text-emerald-200 transition mr-3"
-                            >
-                              Perpanjang
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => openEdit(customer)}
-                            className="text-cyan-400 hover:text-cyan-300 transition mr-3"
-                          >
-                            Ubah
-                          </button>
-                          {canAssignOwner && ownerAvailable && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setOwnerTarget(customer);
-                                setOwnerValue(customer.owner_id ? String(customer.owner_id) : '');
-                              }}
-                              className="text-amber-300 hover:text-amber-200 transition mr-3"
-                            >
-                              Pemilik
-                            </button>
-                          )}
-                          {canDelete && (
-                            <button
-                              type="button"
-                              onClick={() => setConfirmTarget(customer)}
-                              className="text-red-400 hover:text-red-300 transition"
-                            >
-                              Hapus
-                            </button>
-                          )}
+                        <td className="actions">
+                          <RowActions
+                            label={`Aksi untuk ${customer.name}`}
+                            actions={[
+                              {
+                                key: 'renew',
+                                label: 'Perpanjang layanan',
+                                hidden: !account,
+                                onSelect: () => setRenewTarget(customer),
+                              },
+                              { key: 'edit', label: 'Ubah pelanggan', onSelect: () => openEdit(customer) },
+                              {
+                                key: 'owner',
+                                label: 'Ubah pemilik',
+                                hidden: !(canAssignOwner && ownerAvailable),
+                                onSelect: () => {
+                                  setOwnerTarget(customer);
+                                  setOwnerValue(customer.owner_id ? String(customer.owner_id) : '');
+                                },
+                              },
+                              {
+                                key: 'delete',
+                                label: 'Hapus pelanggan',
+                                tone: 'danger',
+                                hidden: !canDelete,
+                                onSelect: () => setConfirmTarget(customer),
+                              },
+                            ]}
+                          />
                         </td>
                       </tr>
                     );
@@ -847,33 +841,34 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
                     {customer.address && <p className="text-xs text-slate-500 break-words">{customer.address}</p>}
                     <div className="flex items-center justify-between pt-1">
                       <span className="text-xs text-slate-500">{formatDate(customer.created_at)}</span>
-                      <div className="flex gap-3">
-                        {account && (
-                          <button
-                            type="button"
-                            onClick={() => setRenewTarget(customer)}
-                            className="text-xs font-medium text-emerald-300 hover:text-emerald-200 transition"
-                          >
-                            Perpanjang
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => openEdit(customer)}
-                          className="text-xs font-medium text-cyan-400 hover:text-cyan-300 transition"
-                        >
-                          Ubah
-                        </button>
-                        {canDelete && (
-                          <button
-                            type="button"
-                            onClick={() => setConfirmTarget(customer)}
-                            className="text-xs font-medium text-red-400 hover:text-red-300 transition"
-                          >
-                            Hapus
-                          </button>
-                        )}
-                      </div>
+                      <RowActions
+                        label={`Aksi untuk ${customer.name}`}
+                        actions={[
+                          {
+                            key: 'renew',
+                            label: 'Perpanjang layanan',
+                            hidden: !account,
+                            onSelect: () => setRenewTarget(customer),
+                          },
+                          { key: 'edit', label: 'Ubah pelanggan', onSelect: () => openEdit(customer) },
+                          {
+                            key: 'owner',
+                            label: 'Ubah pemilik',
+                            hidden: !(canAssignOwner && ownerAvailable),
+                            onSelect: () => {
+                              setOwnerTarget(customer);
+                              setOwnerValue(customer.owner_id ? String(customer.owner_id) : '');
+                            },
+                          },
+                          {
+                            key: 'delete',
+                            label: 'Hapus pelanggan',
+                            tone: 'danger',
+                            hidden: !canDelete,
+                            onSelect: () => setConfirmTarget(customer),
+                          },
+                        ]}
+                      />
                     </div>
                   </div>
                 );

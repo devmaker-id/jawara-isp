@@ -20,6 +20,7 @@ import {
   DeviceBar,
   useNet,
 } from '../../components/net/NetUI';
+import { RowActions } from '../../components/table/RowActions';
 
 interface PppProfileRow {
   id: string;
@@ -232,28 +233,33 @@ const Ppp: React.FC = () => {
                     {row.disabled ? <Badge tone="bad">nonaktif</Badge> : <Badge tone="good">aktif</Badge>}
                   </td>
                   {isAdmin && (
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      <button
-                        type="button"
-                        className="mr-2 text-xs text-cyan-400 hover:underline"
-                        onClick={() =>
-                          setForm({
-                            id: row.id,
-                            name: row.name,
-                            password: '',
-                            service: (row.service as SecretForm['service']) || 'pppoe',
-                            profile: row.profile,
-                            remote_address: row.remote_address,
-                            comment: row.comment,
-                            disabled: row.disabled,
-                          })
-                        }
-                      >
-                        Ubah
-                      </button>
-                      <button type="button" className="text-xs text-rose-400 hover:underline" onClick={() => remove(row)}>
-                        Hapus
-                      </button>
+                    <td className="actions">
+                      <RowActions
+                        label={`Aksi untuk secret ${row.name}`}
+                        actions={[
+                          {
+                            key: 'edit',
+                            label: 'Ubah secret',
+                            onSelect: () =>
+                              setForm({
+                                id: row.id,
+                                name: row.name,
+                                password: '',
+                                service: (row.service as SecretForm['service']) || 'pppoe',
+                                profile: row.profile,
+                                remote_address: row.remote_address,
+                                comment: row.comment,
+                                disabled: row.disabled,
+                              }),
+                          },
+                          {
+                            key: 'delete',
+                            label: 'Hapus secret',
+                            tone: 'danger',
+                            onSelect: () => remove(row),
+                          },
+                        ]}
+                      />
                     </td>
                   )}
                 </tr>

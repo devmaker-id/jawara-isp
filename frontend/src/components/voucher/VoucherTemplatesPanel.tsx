@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useState } from 'react';
 import api from '../../services/api';
 import { CodeEditor, type CodeEditorHandle } from './CodeEditor';
+import { RowActions } from '../table/RowActions';
 import {
   buildPrintDocument,
   templateProblems,
@@ -253,10 +254,10 @@ export const VoucherTemplatesPanel: React.FC<{
       <td className={`${cellClass} font-mono text-xs`}>
         {row.html.length.toLocaleString('id-ID')} / {MAX_HTML.toLocaleString('id-ID')}
       </td>
-      <td className={cellClass}>
+      <td className="actions">
         {confirmIndex === index ? (
-          <span className="flex items-center gap-2">
-            <span className="text-xs text-slate-400">Hapus template ini?</span>
+          <span className="flex items-center justify-center gap-2">
+            <span className="text-xs text-slate-400">Hapus?</span>
             <button
               type="button"
               onClick={() => remove(index)}
@@ -273,50 +274,43 @@ export const VoucherTemplatesPanel: React.FC<{
             </button>
           </span>
         ) : (
-          <span className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => openEdit(index)}
-              disabled={!canEdit}
-              className="rounded bg-slate-700/60 px-2 py-1 text-xs text-slate-100 hover:bg-slate-700 disabled:opacity-40"
-            >
-              Ubah
-            </button>
-            <button
-              type="button"
-              onClick={() => duplicate(index)}
-              disabled={!canEdit || busy || list.length >= MAX_TEMPLATES}
-              className="rounded bg-slate-700/40 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-40"
-            >
-              Gandakan
-            </button>
-            {index !== defaultIndex && (
-              <button
-                type="button"
-                onClick={() => makeDefault(index)}
-                disabled={!canEdit || busy}
-                className="rounded bg-cyan-600/15 px-2 py-1 text-xs text-cyan-300 hover:bg-cyan-600/25 disabled:opacity-40"
-              >
-                Jadikan default
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => toggleEnabled(index)}
-              disabled={!canEdit || busy}
-              className="rounded bg-slate-700/40 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-40"
-            >
-              {row.enabled ? 'Nonaktifkan' : 'Aktifkan'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setConfirmIndex(index)}
-              disabled={!canEdit}
-              className="rounded bg-rose-500/10 px-2 py-1 text-xs text-rose-300 hover:bg-rose-500/20 disabled:opacity-40"
-            >
-              Hapus
-            </button>
-          </span>
+          <RowActions
+            label={`Aksi untuk template ${row.name || index + 1}`}
+            actions={[
+              {
+                key: 'edit',
+                label: 'Ubah kode',
+                hidden: !canEdit,
+                onSelect: () => openEdit(index),
+              },
+              {
+                key: 'duplicate',
+                label: 'Gandakan template',
+                disabled: !canEdit || busy || list.length >= MAX_TEMPLATES,
+                onSelect: () => duplicate(index),
+              },
+              {
+                key: 'default',
+                label: 'Jadikan default',
+                hidden: index === defaultIndex,
+                disabled: !canEdit || busy,
+                onSelect: () => makeDefault(index),
+              },
+              {
+                key: 'toggle',
+                label: row.enabled ? 'Nonaktifkan template' : 'Aktifkan template',
+                disabled: !canEdit || busy,
+                onSelect: () => toggleEnabled(index),
+              },
+              {
+                key: 'delete',
+                label: 'Hapus template',
+                tone: 'danger',
+                hidden: !canEdit,
+                onSelect: () => setConfirmIndex(index),
+              },
+            ]}
+          />
         )}
       </td>
     </tr>
@@ -346,7 +340,7 @@ export const VoucherTemplatesPanel: React.FC<{
 
       {/* Desktop: tabel penuh */}
       <div className="hidden overflow-x-auto rounded-lg border border-slate-700/60 md:block">
-        <table className="min-w-full divide-y divide-slate-700/60">
+        <table className="tbl-compact">
           <thead className="bg-slate-800/60">
             <tr>
               {['Nama template', 'Layout', 'Status', 'Kode', 'Aksi'].map((head) => (
@@ -356,7 +350,7 @@ export const VoucherTemplatesPanel: React.FC<{
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800">
+          <tbody>
             {tableRows}
           </tbody>
         </table>

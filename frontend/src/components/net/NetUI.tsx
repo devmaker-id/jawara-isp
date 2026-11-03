@@ -271,27 +271,36 @@ export const Button: React.FC<
   );
 };
 
+export type TableColumn = string | { label: string; align?: 'left' | 'right' | 'center' };
+
 export const Table: React.FC<{
-  columns: string[];
+  columns: TableColumn[];
   children: React.ReactNode;
   empty?: string;
   isEmpty?: boolean;
 }> = ({ columns, children, empty = 'Tidak ada data.', isEmpty }) => (
-  <div className="overflow-x-auto rounded-xl border border-slate-700/60">
-    <table className="min-w-full text-sm">
-      <thead className="bg-slate-800/80 text-left text-xs uppercase tracking-wide text-slate-400">
+  <div className="tbl-wrap rounded-xl border border-slate-700/60">
+    <table className="tbl">
+      <thead>
         <tr>
-          {columns.map((column) => (
-            <th key={column} className="px-3 py-2 font-medium whitespace-nowrap">
-              {column}
-            </th>
-          ))}
+          {columns.map((column, index) => {
+            const label = typeof column === 'string' ? column : column.label;
+            const align = typeof column === 'string' ? undefined : column.align;
+            return (
+              <th
+                key={`${label}-${index}`}
+                className={align === 'right' ? 'num' : align === 'center' ? 'center' : undefined}
+              >
+                {label}
+              </th>
+            );
+          })}
         </tr>
       </thead>
-      <tbody className="divide-y divide-slate-700/60 text-slate-200">
+      <tbody>
         {isEmpty ? (
           <tr>
-            <td colSpan={columns.length} className="px-3 py-6 text-center text-slate-400">
+            <td colSpan={columns.length} className="center text-slate-400">
               {empty}
             </td>
           </tr>

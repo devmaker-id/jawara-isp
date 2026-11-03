@@ -4,6 +4,7 @@ import api from '../services/api';
 import { useBackgroundRefresh } from '../hooks/useBackgroundRefresh';
 import { useAuth } from '../contexts/AuthContext';
 import { downloadCsv } from '../utils/csv';
+import { RowActions } from '../components/table/RowActions';
 
 interface PaymentItem {
   id: number;
@@ -556,37 +557,37 @@ const Payments: React.FC = () => {
         !loadError && (
           <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="tbl min-w-[900px]">
                 <thead>
-                  <tr className="bg-slate-700/30">
-                    <th className="px-4 py-3 text-left font-medium text-slate-400">Tanggal</th>
-                    <th className="px-4 py-3 text-left font-medium text-slate-400">Invoice</th>
-                    <th className="px-4 py-3 text-left font-medium text-slate-400">Pelanggan</th>
-                    <th className="px-4 py-3 text-left font-medium text-slate-400">Metode</th>
-                    <th className="px-4 py-3 text-right font-medium text-slate-400">Nominal</th>
-                    <th className="px-4 py-3 text-left font-medium text-slate-400">Petugas</th>
-                    <th className="px-4 py-3 text-left font-medium text-slate-400">Status</th>
-                    <th className="px-4 py-3 text-right font-medium text-slate-400">Aksi</th>
+                  <tr>
+                    <th>Tanggal</th>
+                    <th>Invoice</th>
+                    <th>Pelanggan</th>
+                    <th>Metode</th>
+                    <th className="num">Nominal</th>
+                    <th>Petugas</th>
+                    <th className="center">Status</th>
+                    <th className="actions">Aksi</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-700/50">
+                <tbody>
                   {rows.map((row) => (
-                    <tr key={row.id} className="hover:bg-slate-700/20 transition">
-                      <td className="px-4 py-3 text-slate-400 whitespace-nowrap">
+                    <tr key={row.id} data-dim={Boolean(row.voided_at)}>
+                      <td className="text-slate-400 whitespace-nowrap">
                         {formatDate(row.paid_at)}
                       </td>
-                      <td className="px-4 py-3 text-cyan-400 whitespace-nowrap">{row.invoice_number}</td>
-                      <td className="px-4 py-3 text-slate-300">{row.customer_name}</td>
-                      <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
+                      <td className="text-cyan-400 whitespace-nowrap">{row.invoice_number}</td>
+                      <td className="text-slate-300">{row.customer_name}</td>
+                      <td className="text-slate-300 whitespace-nowrap">
                         {METHOD_LABEL[row.method]}
                       </td>
-                      <td className="px-4 py-3 text-right text-white whitespace-nowrap">
+                      <td className="num text-white">
                         {formatRupiah(row.amount)}
                       </td>
-                      <td className="px-4 py-3 text-slate-400 whitespace-nowrap">
+                      <td className="text-slate-400 whitespace-nowrap">
                         {row.recorded_by_name ?? '-'}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="center">
                         <span
                           className={`px-2 py-1 rounded-full text-xs font-medium ${
                             row.voided_at
@@ -597,29 +598,24 @@ const Payments: React.FC = () => {
                           {row.voided_at ? 'Void' : 'Valid'}
                         </span>
                       </td>
-                      <td className="px-4 py-3">
-                        <div className="flex justify-end gap-3">
-                          <button
-                            type="button"
-                            onClick={() => setDetail(row)}
-                            className="text-slate-400 hover:text-cyan-400 transition"
-                          >
-                            Detail
-                          </button>
-                          {canVoid && !row.voided_at && (
-                            <button
-                              type="button"
-                              onClick={() => {
+                      <td className="actions">
+                        <RowActions
+                          label={`Aksi untuk ${row.invoice_number}`}
+                          actions={[
+                            { key: 'detail', label: 'Lihat detail', onSelect: () => setDetail(row) },
+                            {
+                              key: 'void',
+                              label: 'Void pembayaran',
+                              tone: 'danger',
+                              hidden: !(canVoid && !row.voided_at),
+                              onSelect: () => {
                                 setVoidTarget(row);
                                 setVoidReason('');
                                 setVoidError(null);
-                              }}
-                              className="text-slate-400 hover:text-red-400 transition"
-                            >
-                              Void
-                            </button>
-                          )}
-                        </div>
+                              },
+                            },
+                          ]}
+                        />
                       </td>
                     </tr>
                   ))}

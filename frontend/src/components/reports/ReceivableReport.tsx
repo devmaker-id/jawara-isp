@@ -416,9 +416,9 @@ export const ReceivableReport: React.FC<{ onChangeType: (type: ReportType) => vo
       {error && <p className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</p>}
 
       <div className="overflow-x-auto rounded-xl border border-slate-700/60 bg-slate-800/40">
-        <table className="w-full text-sm">
+        <table className="tbl-compact">
           <thead>
-            <tr className="border-b border-slate-700/50 bg-slate-700/30 text-left text-xs uppercase text-slate-400">
+            <tr>
               <th className="px-3 py-2">Invoice</th>
               <th className="px-3 py-2">Pelanggan</th>
               <th className="px-3 py-2">No. Internet</th>

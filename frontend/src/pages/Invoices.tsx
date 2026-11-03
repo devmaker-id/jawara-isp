@@ -4,6 +4,7 @@ import api from '../services/api';
 import { useBackgroundRefresh } from '../hooks/useBackgroundRefresh';
 import { TablePager } from '../components/TablePager';
 import { useAuth } from '../contexts/AuthContext';
+import { RowActions } from '../components/table/RowActions';
 
 interface InvoiceItem {
   id: number;
@@ -765,89 +766,76 @@ const Invoices: React.FC = () => {
       ) : (
         <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="tbl min-w-[1000px]">
               <thead>
-                <tr className="bg-slate-700/30">
-                  <th className="px-4 py-3 text-left font-medium text-slate-400">Nomor</th>
-                  <th className="px-4 py-3 text-left font-medium text-slate-400">Pelanggan</th>
-                  <th className="px-4 py-3 text-left font-medium text-slate-400">Akun RADIUS</th>
-                  <th className="px-4 py-3 text-right font-medium text-slate-400">Jumlah</th>
-                  <th className="px-4 py-3 text-left font-medium text-slate-400">Status</th>
-                  <th className="px-4 py-3 text-left font-medium text-slate-400">Jatuh Tempo</th>
-                  <th className="px-4 py-3 text-left font-medium text-slate-400">Periode</th>
-                  <th className="px-4 py-3 text-left font-medium text-slate-400">Dibayar</th>
-                  <th className="px-4 py-3 text-right font-medium text-slate-400">Aksi</th>
+                <tr>
+                  <th>Nomor</th>
+                  <th>Pelanggan</th>
+                  <th>Akun RADIUS</th>
+                  <th className="num">Jumlah</th>
+                  <th className="center">Status</th>
+                  <th>Jatuh Tempo</th>
+                  <th>Periode</th>
+                  <th>Dibayar</th>
+                  <th className="actions">Aksi</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-700/50">
+              <tbody>
                 {invoices.map((invoice) => (
                   <tr
                     key={invoice.id}
-                    className={`transition hover:bg-slate-700/20 ${
-                      invoice.status === 'void' ? 'opacity-60' : ''
-                    }`}
+                    data-dim={invoice.status === 'void'}
                   >
-                    <td className="px-4 py-3 font-medium text-cyan-400 whitespace-nowrap">
+                    <td className="font-medium text-cyan-400 whitespace-nowrap">
                       {invoice.invoice_number}
                     </td>
-                    <td className="px-4 py-3 text-slate-300">{invoice.customer_name}</td>
-                    <td className="px-4 py-3">
+                    <td className="text-slate-300">{invoice.customer_name}</td>
+                    <td>
                       {invoice.username ? (
                         <span className="font-mono text-xs text-slate-200">{invoice.username}</span>
                       ) : (
-                        <span className="text-[11px] text-slate-500">tanpa akun</span>
+                        <span className="cell-sub">tanpa akun</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-right text-white whitespace-nowrap">
+                    <td className="num text-white">
                       {formatRupiah(invoice.amount)}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="center">
                       <span className={`px-2 py-1 rounded-full text-xs font-medium ${STATUS_CLASS[invoice.status]}`}>
                         {STATUS_LABEL[invoice.status]}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-slate-400 whitespace-nowrap">{formatDate(invoice.due_date)}</td>
-                    <td className="px-4 py-3 text-slate-400 whitespace-nowrap text-xs">
+                    <td className="text-slate-400 whitespace-nowrap">{formatDate(invoice.due_date)}</td>
+                    <td className="cell-sub whitespace-nowrap">
                       {periodLabel(invoice)}
                     </td>
-                    <td className="px-4 py-3 text-slate-400 whitespace-nowrap">{formatDate(invoice.paid_date)}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap justify-end gap-3">
-                        <button
-                          type="button"
-                          onClick={() => void openDetail(invoice)}
-                          className="text-slate-400 hover:text-cyan-400 transition"
-                        >
-                          Detail
-                        </button>
-                        {canWrite && invoice.status !== 'paid' && invoice.status !== 'void' && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => openPay(invoice)}
-                              className="text-slate-400 hover:text-emerald-400 transition"
-                            >
-                              Bayar
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => openEdit(invoice)}
-                              className="text-slate-400 hover:text-cyan-400 transition"
-                            >
-                              Edit
-                            </button>
-                          </>
-                        )}
-                        {canWrite && invoice.status !== 'void' && (
-                          <button
-                            type="button"
-                            onClick={() => openInvoiceVoid(invoice)}
-                            className="text-slate-400 hover:text-red-400 transition"
-                          >
-                            Batalkan
-                          </button>
-                        )}
-                      </div>
+                    <td className="text-slate-400 whitespace-nowrap">{formatDate(invoice.paid_date)}</td>
+                    <td className="actions">
+                      <RowActions
+                        label={`Aksi untuk ${invoice.invoice_number}`}
+                        actions={[
+                          { key: 'detail', label: 'Lihat detail', onSelect: () => void openDetail(invoice) },
+                          {
+                            key: 'pay',
+                            label: 'Catat pembayaran',
+                            hidden: !(canWrite && invoice.status !== 'paid' && invoice.status !== 'void'),
+                            onSelect: () => openPay(invoice),
+                          },
+                          {
+                            key: 'edit',
+                            label: 'Ubah tagihan',
+                            hidden: !(canWrite && invoice.status !== 'paid' && invoice.status !== 'void'),
+                            onSelect: () => openEdit(invoice),
+                          },
+                          {
+                            key: 'void',
+                            label: 'Batalkan tagihan',
+                            tone: 'danger',
+                            hidden: !(canWrite && invoice.status !== 'void'),
+                            onSelect: () => openInvoiceVoid(invoice),
+                          },
+                        ]}
+                      />
                     </td>
                   </tr>
                 ))}

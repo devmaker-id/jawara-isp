@@ -96,9 +96,9 @@ const HistoryTable: React.FC<{ onuId: number }> = ({ onuId }) => {
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-sm">
+      <table className="tbl-compact">
         <thead>
-          <tr className="border-b border-slate-700/50 text-left text-xs uppercase text-slate-400">
+          <tr>
             <th className="py-2 pr-3">Waktu</th>
             <th className="py-2 pr-3">Tindakan</th>
             <th className="py-2 pr-3">Dari</th>
@@ -120,7 +120,7 @@ const HistoryTable: React.FC<{ onuId: number }> = ({ onuId }) => {
                 <span className="text-slate-500">—</span>
               );
             return (
-              <tr key={row.id} className="border-b border-slate-700/30 align-top">
+              <tr key={row.id} className="align-top">
                 <td className="py-2 pr-3 text-xs text-slate-400">{waktu(row.created_at)}</td>
                 <td className={`py-2 pr-3 text-xs font-medium ${aksi.tone}`}>{aksi.label}</td>
                 <td className="py-2 pr-3 text-xs text-slate-300">{sisi(row.from_customer_name, row.from_internet_no)}</td>

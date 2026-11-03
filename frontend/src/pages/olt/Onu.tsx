@@ -11,6 +11,7 @@ import {
   formatNumber,
   useNet,
 } from '../../components/net/NetUI';
+import { RowActions } from '../../components/table/RowActions';
 import { TablePager } from '../../components/TablePager';
 import api from '../../services/api';
 import { OnuDetailDrawer, type OnuRow } from '../../components/onu/OnuPanels';
@@ -307,30 +308,20 @@ const OnuInventory: React.FC = () => {
                 <td className="px-3 py-2 font-mono text-xs text-slate-400">
                   {row.temperature === null ? '—' : `${row.temperature.toFixed(1)} °C`}
                 </td>
-                <td className="px-3 py-2 text-right whitespace-nowrap">
-                  {row.customer_id ? (
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void release(row);
-                      }}
-                      className="text-xs font-medium text-red-400 hover:text-red-300"
-                    >
-                      Lepas
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        openAssign(row);
-                      }}
-                      className="text-xs font-medium text-cyan-400 hover:text-cyan-300"
-                    >
-                      Pasang
-                    </button>
-                  )}
+                <td className="actions">
+                  <RowActions
+                    label={`Aksi untuk ONU ${row.serial_number ?? row.id}`}
+                    actions={[
+                      row.customer_id
+                        ? {
+                            key: 'release',
+                            label: 'Lepas dari pelanggan',
+                            tone: 'danger',
+                            onSelect: () => void release(row),
+                          }
+                        : { key: 'assign', label: 'Pasang ke pelanggan', onSelect: () => openAssign(row) },
+                    ]}
+                  />
                 </td>
               </tr>
             ))}

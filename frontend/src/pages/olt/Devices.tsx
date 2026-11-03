@@ -13,6 +13,7 @@ import {
   formatNumber,
   useNet,
 } from '../../components/net/NetUI';
+import { RowActions } from '../../components/table/RowActions';
 import { useAuth } from '../../contexts/AuthContext';
 
 interface OltDevice {
@@ -282,40 +283,41 @@ const OltDevices: React.FC = () => {
                 </p>
               )}
             </td>
-            <td className="px-3 py-2">
-              <div className="flex flex-wrap justify-end gap-1.5">
-                {canWrite && (
-                  <>
-                    <Button
-                      onClick={() => run(device, 'test')}
-                      disabled={busy !== null}
-                      title="Buka sesi, baca satu PON, lalu tutup"
-                    >
-                      {busy === `test-${device.id}` ? 'Menguji…' : 'Uji'}
-                    </Button>
-                    <Button
-                      variant="primary"
-                      onClick={() => run(device, 'sync')}
-                      disabled={busy !== null || !device.is_active}
-                      title="Baca seluruh port PON dan simpan inventori"
-                    >
-                      {busy === `sync-${device.id}` ? 'Membaca…' : 'Sinkron'}
-                    </Button>
-                    <Button onClick={() => setForm(formFrom(device))} disabled={busy !== null}>
-                      Ubah
-                    </Button>
-                  </>
-                )}
-                {canDelete && (
-                  <Button
-                    variant="danger"
-                    onClick={() => remove(device)}
-                    disabled={busy !== null}
-                  >
-                    Hapus
-                  </Button>
-                )}
-              </div>
+            <td className="actions">
+              <RowActions
+                label={`Aksi untuk ${device.name}`}
+                actions={[
+                  {
+                    key: 'test',
+                    label: busy === `test-${device.id}` ? 'Menguji…' : 'Uji koneksi',
+                    disabled: busy !== null,
+                    hidden: !canWrite,
+                    onSelect: () => run(device, 'test'),
+                  },
+                  {
+                    key: 'sync',
+                    label: busy === `sync-${device.id}` ? 'Membaca…' : 'Sinkron inventori',
+                    disabled: busy !== null || !device.is_active,
+                    hidden: !canWrite,
+                    onSelect: () => run(device, 'sync'),
+                  },
+                  {
+                    key: 'edit',
+                    label: 'Ubah perangkat',
+                    disabled: busy !== null,
+                    hidden: !canWrite,
+                    onSelect: () => setForm(formFrom(device)),
+                  },
+                  {
+                    key: 'delete',
+                    label: 'Hapus perangkat',
+                    tone: 'danger',
+                    disabled: busy !== null,
+                    hidden: !canDelete,
+                    onSelect: () => remove(device),
+                  },
+                ]}
+              />
             </td>
           </tr>
         ))}

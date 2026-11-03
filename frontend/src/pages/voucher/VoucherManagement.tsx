@@ -12,6 +12,7 @@ import {
   errorMessage,
 } from '../../components/net/NetUI';
 import { TablePager, useTablePager } from '../../components/TablePager';
+import { RowActions } from '../../components/table/RowActions';
 import {
   buildPrintDocument,
   cardFromRow,
@@ -868,10 +869,10 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
           <Loading label="Memuat voucher…" />
         ) : (
           <div className="overflow-x-auto rounded-xl border border-slate-700/60">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-800/80 text-left text-xs uppercase tracking-wide text-slate-400">
+            <table className="tbl min-w-[1100px]">
+              <thead>
                 <tr>
-                  <th className="px-3 py-2">
+                  <th className="center">
                     <input
                       type="checkbox"
                       checked={allChecked}
@@ -880,19 +881,19 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
                       className="h-4 w-4 rounded border-slate-500 bg-slate-700 text-cyan-500"
                     />
                   </th>
-                  <th className="px-3 py-2 font-medium">Username</th>
-                  <th className="px-3 py-2 font-medium">Password</th>
-                  <th className="px-3 py-2 font-medium">Profil</th>
-                  <th className="px-3 py-2 font-medium">Pelanggan</th>
-                  <th className="px-3 py-2 font-medium">Status</th>
-                  <th className="px-3 py-2 font-medium">Harga</th>
-                  <th className="px-3 py-2 font-medium">Kedaluwarsa</th>
-                  <th className="px-3 py-2 font-medium">Pemilik</th>
-                  <th className="px-3 py-2 font-medium">Dibuat oleh</th>
-                  <th className="px-3 py-2 font-medium">Aksi</th>
+                  <th>Username</th>
+                  <th>Password</th>
+                  <th>Profil</th>
+                  <th>Pelanggan</th>
+                  <th className="center">Status</th>
+                  <th className="num">Harga</th>
+                  <th>Kedaluwarsa</th>
+                  <th>Pemilik</th>
+                  <th>Dibuat oleh</th>
+                  <th className="actions">Aksi</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-700/60 text-slate-200">
+              <tbody className="text-slate-200">
                 {visible.length === 0 ? (
                   <tr>
                     <td colSpan={11} className="px-3 py-6 text-center text-slate-400">
@@ -901,8 +902,8 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
                   </tr>
                 ) : (
                   pager.pageRows.map((row) => (
-                    <tr key={row.id} className={selected.has(row.id) ? 'bg-cyan-500/5' : undefined}>
-                      <td className="px-3 py-2">
+                    <tr key={row.id} data-dim={false} className={selected.has(row.id) ? 'bg-cyan-500/5' : undefined}>
+                      <td className="center">
                         <input
                           type="checkbox"
                           checked={selected.has(row.id)}
@@ -911,31 +912,36 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
                           className="h-4 w-4 rounded border-slate-500 bg-slate-700 text-cyan-500"
                         />
                       </td>
-                      <td className="px-3 py-2 font-mono text-xs text-cyan-200">{row.username}</td>
-                      <td className="px-3 py-2 font-mono text-xs">{row.password}</td>
-                      <td className="px-3 py-2 text-xs">{row.profile_name}</td>
-                      <td className="px-3 py-2 text-xs">
+                      <td className="font-mono text-xs text-cyan-200">{row.username}</td>
+                      <td className="font-mono text-xs">{row.password}</td>
+                      <td className="cell-sub">{row.profile_name}</td>
+                      <td className="cell-sub">
                         {row.customer_name ?? <span className="text-slate-500">-</span>}
                       </td>
-                      <td className="px-3 py-2">
+                      <td className="center">
                         <Badge tone={STATUS_TONE[row.status]}>{STATUS_LABEL[row.status]}</Badge>
                       </td>
-                      <td className="px-3 py-2 text-xs">
+                      <td className="num cell-sub">
                         {rupiah(Number(row.price) + Number(row.tax_amount))}
                       </td>
-                      <td className="px-3 py-2 text-[11px] text-slate-400">{time(row.expires_at)}</td>
-                      <td className="px-3 py-2 text-xs text-slate-400">
+                      <td className="cell-sub">{time(row.expires_at)}</td>
+                      <td className="cell-sub">
                         {row.owner_name ?? <span className="text-slate-500">Tanpa pemilik</span>}
                       </td>
-                      <td className="px-3 py-2 text-xs text-slate-400">{row.created_by_name ?? '—'}</td>
-                      <td className="px-3 py-2">
-                        <div className="flex flex-wrap gap-1">
-                          {canBulkWrite && row.status !== 'active' && row.status !== 'expired' && (
-                            <Button onClick={() => void activateOne(row)} disabled={busy}>
-                              Aktifkan
-                            </Button>
-                          )}
-                        </div>
+                      <td className="cell-sub">{row.created_by_name ?? '—'}</td>
+                      <td className="actions">
+                        <RowActions
+                          label={`Aksi untuk voucher ${row.username}`}
+                          actions={[
+                            {
+                              key: 'activate',
+                              label: 'Aktifkan voucher',
+                              disabled: busy,
+                              hidden: !(canBulkWrite && row.status !== 'active' && row.status !== 'expired'),
+                              onSelect: () => void activateOne(row),
+                            },
+                          ]}
+                        />
                       </td>
                     </tr>
                   ))
