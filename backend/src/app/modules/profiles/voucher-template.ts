@@ -31,6 +31,8 @@ export interface VoucherTemplateLayout {
 }
 
 export interface VoucherTemplate {
+  /** Template bawaan: tidak boleh dihapus (dijaga di server). */
+  locked?: boolean;
   id: string;
   name: string;
   /** HTML + CSS kartu; boleh memakai variabel {{...}}. */
@@ -98,10 +100,59 @@ h2{font-size:13px;margin:2px 0 4px}
 
 const card = (body: string): string => `${CARD_CSS}\n<div class="card">\n${body}\n</div>`;
 
+/** Nama template bawaan yang tidak boleh dihapus, bahkan oleh admin. */
+export const LOCKED_TEMPLATE_NAMES = ['Default', 'Klasik', 'Voucher panjang'] as const;
+
+const isLockedName = (name: string): boolean =>
+  LOCKED_TEMPLATE_NAMES.some((locked) => locked.toLowerCase() === name.trim().toLowerCase());
+
+const PANJANG_HTML = `<style>
+.card{position:relative;display:flex;height:100%;border:2.5px solid #0f172a;background:#fff;color:#0f172a;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow:hidden}
+.price{width:24mm;flex:0 0 24mm;background:var(--tier-color,#16a34a);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;letter-spacing:.02em;writing-mode:vertical-rl;transform:rotate(180deg)}
+.body{flex:1;min-width:0;padding:6px 8px;display:flex;flex-direction:column;justify-content:space-between;gap:2px}
+.head{font-size:9px;letter-spacing:.18em;text-transform:uppercase;font-weight:700}
+.code{font-size:22px;font-weight:800;text-align:center;word-break:break-all;line-height:1.1}
+.valid{font-size:9px;text-align:center;color:#334155}
+.foot{display:flex;justify-content:space-between;gap:6px;font-size:8px;color:#475569;border-top:1px dashed #cbd5e1;padding-top:3px}
+</style>
+<div class="card">
+  <div class="price">{{price}}</div>
+  <div class="body">
+    <div class="head">Voucher WiFi</div>
+    <div class="code">{{credential}}</div>
+    <div class="valid">{{profile}}</div>
+    <div class="foot"><span>Seller: {{owner}}</span><span>{{brand}}_{{created_at}}</span></div>
+  </div>
+</div>`;
+
 export const DEFAULT_TEMPLATES: VoucherTemplate[] = [
+  {
+    id: 'default',
+    name: 'Default',
+    locked: true,
+    html: card(
+      [
+        '<div class="brand">{{brand}}</div>',
+        '<h2>{{credential}}</h2>',
+        '<div class="row">{{profile}} · {{price}}</div>',
+        '<div class="brand">{{printed_at}}</div>',
+      ].join('\n'),
+    ),
+    enabled: true,
+    layout: DEFAULT_LAYOUT,
+  },
+  {
+    id: 'panjang',
+    name: 'Voucher panjang',
+    locked: true,
+    html: PANJANG_HTML,
+    enabled: true,
+    layout: { ...DEFAULT_LAYOUT, columns: 2, rows: 5, orientation: 'portrait' },
+  },
   {
     id: 'klasik',
     name: 'Klasik',
+    locked: true,
     html: card(
       [
         '<div class="brand">{{brand}}</div>',
@@ -218,7 +269,7 @@ function cleanLayout(value: unknown): VoucherTemplateLayout {
   if (!Number.isFinite(gapMm) || gapMm < 2 || gapMm > 15) {
     throw new TemplateValidationError('layout.gapMm harus antara 2 dan 15.');
   }
-  return { columns, marginMm, gapMm };
+  return { columns, marginMm, gapMm, rows, orientation };
 }
 
 const slug = (value: string): string =>
@@ -295,8 +346,18 @@ export function validateTemplates(raw: string | undefined | null): VoucherTempla
       html,
       enabled: row.enabled === undefined ? true : row.enabled === true,
       layout: cleanLayout(row.layout),
+      locked: isLockedName(name),
     };
   });
+
+  // Template bawaan tidak boleh hilang dari daftar (dihapus atau diganti nama).
+  for (const lockedName of LOCKED_TEMPLATE_NAMES) {
+    if (!templates.some((template) => template.name.toLowerCase() === lockedName.toLowerCase())) {
+      throw new TemplateValidationError(
+        `Template bawaan "${lockedName}" tidak boleh dihapus atau diganti namanya.`,
+      );
+    }
+  }
 
   // Batas kolom config (TEXT): satu nilai JSON tidak boleh melebihi ~60 ribu
   // karakter. Dihitung dari JSON final supaya kesalahan dilaporkan sebelum
@@ -321,6 +382,40 @@ export function parseTemplates(raw: string | undefined | null): VoucherTemplate[
   try {
     return validateTemplates(raw);
   } catch {
+    // Config lama (mis. belum punya "Voucher panjang") tidak boleh membuat
+    // seluruh daftar jatuh ke bawaan: baca apa adanya lalu lengkapi yang terkunci.
+    try {
+      const parsed = JSON.parse(raw ?? '[]');
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const list: VoucherTemplate[] = [];
+        for (const item of parsed) {
+          if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+          const row = item as Record<string, unknown>;
+          const name = String(row.name ?? '').trim();
+          if (!name) continue;
+          list.push({
+            id: slug(name),
+            name,
+            html: String(row.html ?? ''),
+            enabled: row.enabled !== false,
+            layout: { ...DEFAULT_LAYOUT, ...((row.layout as object) ?? {}) } as VoucherTemplateLayout,
+            locked: isLockedName(name),
+          });
+        }
+        if (list.length > 0) {
+          for (const lockedName of LOCKED_TEMPLATE_NAMES) {
+            if (list.some((template) => template.name.toLowerCase() === lockedName.toLowerCase())) continue;
+            const builtin = DEFAULT_TEMPLATES.find(
+              (template) => template.name.toLowerCase() === lockedName.toLowerCase(),
+            );
+            if (builtin) list.push({ ...builtin, locked: true });
+          }
+          return list;
+        }
+      }
+    } catch {
+      /* jatuh ke bawaan */
+    }
     return DEFAULT_TEMPLATES;
   }
 }

@@ -23,6 +23,8 @@ export type VoucherTemplateLayout = VoucherPrintLayout;
 export interface VoucherTemplate {
   id?: string;
   name: string;
+  /** Template bawaan: tidak boleh dihapus. */
+  locked?: boolean;
   html: string;
   enabled: boolean;
   layout: VoucherTemplateLayout;
@@ -203,6 +205,10 @@ export const VoucherTemplatesPanel: React.FC<{
 
   const remove = (index: number) => {
     setConfirmIndex(null);
+    if (list[index]?.locked) {
+      setMessage({ type: 'err', text: `Template bawaan "${list[index].name}" tidak boleh dihapus.` });
+      return;
+    }
     if (list.length === 1) {
       setMessage({ type: 'err', text: 'Minimal satu template harus ada. Nonaktifkan saja bila tidak dipakai.' });
       return;
@@ -304,9 +310,9 @@ export const VoucherTemplatesPanel: React.FC<{
               },
               {
                 key: 'delete',
-                label: 'Hapus template',
+                label: row.locked ? 'Template bawaan (tidak bisa dihapus)' : 'Hapus template',
                 tone: 'danger',
-                hidden: !canEdit,
+                hidden: !canEdit || row.locked,
                 onSelect: () => setConfirmIndex(index),
               },
             ]}
@@ -367,7 +373,12 @@ export const VoucherTemplatesPanel: React.FC<{
           <div key={`m-${row.name}-${index}`} className="rounded-lg border border-slate-700/60 bg-slate-800/40 p-3">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-slate-200">{row.name || '(tanpa nama)'}</p>
+                <p className="truncate text-sm font-medium text-slate-200">
+                  {row.name || '(tanpa nama)'}
+                  {row.locked && (
+                    <span className="ml-2 rounded bg-cyan-500/15 px-1.5 py-0.5 text-[10px] text-cyan-300">bawaan</span>
+                  )}
+                </p>
                 <p className="mt-0.5 text-[11px] text-slate-400">
                   {row.layout.columns} kolom · {row.layout.marginMm} mm · {row.html.length.toLocaleString('id-ID')} kar.
                 </p>
@@ -430,10 +441,11 @@ export const VoucherTemplatesPanel: React.FC<{
                 <button
                   type="button"
                   onClick={() => setConfirmIndex(index)}
-                  disabled={!canEdit}
+                  disabled={!canEdit || row.locked}
+                  title={row.locked ? 'Template bawaan tidak bisa dihapus' : 'Hapus template'}
                   className="rounded bg-rose-500/10 px-3 py-2 text-xs text-rose-300 disabled:opacity-40"
                 >
-                  Hapus
+                  {row.locked ? 'Bawaan' : 'Hapus'}
                 </button>
                 {index !== defaultIndex && (
                   <button
