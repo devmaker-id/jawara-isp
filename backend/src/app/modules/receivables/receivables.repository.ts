@@ -23,6 +23,11 @@ function asOfTs(asOf?: string): string {
   return asOf ? `'${asOf} 23:59:59'` : 'NOW()';
 }
 
+/** Tanggal acuan untuk umur piutang (aging): as_of, atau hari ini. */
+function asOfDate(asOf?: string): string {
+  return asOf ? `'${asOf}'` : 'CURDATE()';
+}
+
 /** Syarat invoice masih berlaku pada titik waktu tertentu. */
 function invoiceAsOf(asOf?: string): string {
   const ts = asOfTs(asOf);
@@ -129,7 +134,7 @@ export class ReceivablesRepository {
     const sql = `SELECT i.id, i.invoice_number, i.amount, COALESCE(p.paid, 0) AS paid,
               GREATEST(i.amount - COALESCE(p.paid, 0), 0) AS balance,
               i.status, i.due_date, i.period_start, i.period_end,
-              DATEDIFF(CURDATE(), i.due_date) AS days_late
+              DATEDIFF(${asOfDate(asOf)}, i.due_date) AS days_late
          FROM invoices i ${balanceSubquery(asOf)}
         WHERE i.customer_id = ? AND ${invoiceAsOf(asOf)}
           AND (i.amount - COALESCE(p.paid, 0)) > 0
@@ -245,7 +250,7 @@ export class ReceivablesRepository {
       `SELECT i.id, i.invoice_number, i.amount, COALESCE(p.paid, 0) AS paid,
               GREATEST(i.amount - COALESCE(p.paid, 0), 0) AS balance,
               i.status, i.due_date, i.period_start, i.period_end,
-              DATEDIFF(CURDATE(), i.due_date) AS days_late,
+              DATEDIFF(${asOfDate(asOf)}, i.due_date) AS days_late,
               c.id AS customer_id, c.name AS customer_name, c.internet_no,
               c.owner_id, o.name AS owner_name, v.profile_type, v.profile_name,
               i.username, i.created_at
@@ -340,7 +345,7 @@ export class ReceivablesRepository {
               SUM(t.days_late > 90) AS c_over_90
          FROM (
            SELECT i.customer_id, GREATEST(i.amount - COALESCE(p.paid, 0), 0) AS balance,
-                  DATEDIFF(CURDATE(), i.due_date) AS days_late
+                  DATEDIFF(${asOfDate(asOf)}, i.due_date) AS days_late
              FROM invoices i ${balanceSubquery(asOf)}
              JOIN customers c ON c.id = i.customer_id
             WHERE ${invoiceAsOf(asOf)}${scopeSql}
