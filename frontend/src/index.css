@@ -471,6 +471,25 @@ html[data-theme='light'] .hover\:bg-cyan-500:hover {
   white-space: nowrap;
 }
 
+/* ===== Dasbor =====
+   Nominal dan angka memakai tabular-nums supaya lebar digit tidak bergoyang
+   saat data diperbarui di latar belakang. */
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Catatan penjelas di bawah deretan KPI: blok penuh, bukan sel grid — kalau
+   dijadikan sel, ia mendorong kartu lain dan menyisakan lubang di kanan. */
+.dash-note {
+  border-left: 2px solid color-mix(in srgb, var(--primary) 55%, transparent);
+  background: color-mix(in srgb, var(--card) 60%, var(--bg));
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  line-height: 1.55;
+}
+
 /* ===== Varian rapat untuk tabel ringkas di dalam kartu/modal =====
    Tidak menyuntikkan padding (tabel lama sudah punya px/py sendiri), hanya
    menyamakan tipografi header, garis pemisah, dan hover. */

@@ -175,12 +175,12 @@ const Kpi: React.FC<{
   badge?: React.ReactNode;
   children?: React.ReactNode;
 }> = ({ label, value, tone = 'text-slate-100', badge, children }) => (
-  <Card>
+  <Card className="min-w-0">
     <div className="flex items-start justify-between gap-2">
       <p className="text-xs text-slate-400">{label}</p>
       {badge}
     </div>
-    <p className={`mt-1 text-2xl font-semibold leading-tight sm:text-3xl ${tone}`}>{value}</p>
+    <p className={`num mt-1 text-2xl font-semibold leading-tight sm:text-3xl ${tone}`}>{value}</p>
     {children && <div className="mt-2 space-y-0.5 text-[11px] text-slate-400">{children}</div>}
   </Card>
 );
@@ -194,7 +194,7 @@ const Bar: React.FC<{ label: string; value: number; note: string; tone: string }
   <div>
     <div className="flex items-baseline justify-between gap-2 text-[11px]">
       <span className="text-slate-400">{label}</span>
-      <span className="text-slate-300">{note}</span>
+      <span className="num text-slate-300">{note}</span>
     </div>
     <div className="mt-1 h-1.5 overflow-hidden rounded bg-slate-700/60">
       <span className={`block h-full ${tone}`} style={{ width: `${Math.min(100, value)}%` }} />
@@ -310,16 +310,9 @@ const Dashboard: React.FC = () => {
               </p>
             </Kpi>
 
-            <p className="md:col-span-2 rounded-lg border border-slate-700/50 bg-slate-800/40 px-3 py-2 text-[11px] leading-relaxed text-slate-400">
-              Tiga angka ini berbeda dan tidak saling mengurangi: <span className="text-slate-200">tagihan
-              diterbitkan</span> dihitung dari tanggal invoice, <span className="text-slate-200">kas masuk</span> dari
-              tanggal pembayaran, dan <span className="text-slate-200">saldo piutang</span> dari sisa tagihan yang belum
-              lunas (unpaid/partial).
-            </p>
-
             <Link
               to="/customers?state=active"
-              className="group rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+              className="group rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 sm:col-span-2 xl:col-span-1"
               aria-label="Buka daftar pelanggan aktif"
             >
               <Card className="h-full transition group-hover:border-cyan-500/50 group-hover:bg-slate-800/80">
@@ -327,7 +320,7 @@ const Dashboard: React.FC = () => {
                   <p className="text-xs text-slate-400">Pelanggan aktif</p>
                   <Badge tone="mute">{angka(data.customers.total)} terdaftar</Badge>
                 </div>
-                <p className="mt-1 text-2xl font-semibold leading-tight text-slate-100 sm:text-3xl">
+                <p className="num mt-1 text-2xl font-semibold leading-tight text-slate-100 sm:text-3xl">
                   {angka(data.customers.active)}
                 </p>
                 <div className="mt-2 space-y-0.5 text-[11px] text-slate-400">
@@ -346,6 +339,13 @@ const Dashboard: React.FC = () => {
               </Card>
             </Link>
           </div>
+
+          <p className="dash-note">
+            Tiga angka ini berbeda dan tidak saling mengurangi: <span className="text-slate-200">tagihan
+            diterbitkan</span> dihitung dari tanggal invoice, <span className="text-slate-200">kas masuk</span> dari
+            tanggal pembayaran, dan <span className="text-slate-200">saldo piutang</span> dari sisa tagihan yang belum
+            lunas (unpaid/partial).
+          </p>
 
           {/* Koneksi dipisah: PPPoE dan Hotspot masing-masing bisa diklik */}
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -460,8 +460,8 @@ const Dashboard: React.FC = () => {
           )}
 
           {/* Tagihan terlambat + pembayaran terbaru */}
-          <div className="grid gap-3 lg:grid-cols-3">
-            <Card className="lg:col-span-2">
+          <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
+            <Card className="xl:col-span-2">
               <div className="mb-2 flex items-start justify-between gap-2">
                 <div>
                   <p className="text-sm font-medium text-slate-200">Tagihan terlambat</p>
@@ -479,7 +479,7 @@ const Dashboard: React.FC = () => {
               ) : (
                 <>
                   {/* Ponsel: daftar kartu, bukan tabel yang terpotong */}
-                  <ul className="divide-y divide-slate-700/50 sm:hidden">
+                  <ul className="divide-y divide-slate-700/50 xl:hidden">
                     {data.receivable.oldest.map((invoice) => (
                       <li key={invoice.id} className="py-2 first:pt-0 last:pb-0">
                         <div className="flex items-start justify-between gap-3">
@@ -490,7 +490,7 @@ const Dashboard: React.FC = () => {
                             </p>
                           </div>
                           <div className="shrink-0 text-right">
-                            <p className="text-sm text-slate-100">{rupiah(invoice.amount)}</p>
+                            <p className="num text-sm text-slate-100">{rupiah(invoice.amount)}</p>
                             <p className="text-[11px] text-rose-300">
                               {angka(invoice.days_late)} hari
                             </p>
@@ -500,24 +500,30 @@ const Dashboard: React.FC = () => {
                     ))}
                   </ul>
 
-                  <div className="hidden sm:block">
-                    <Table columns={['Nomor', 'Pelanggan', 'Sisa tagihan', 'Terlambat']} isEmpty={false}>
+                  <div className="hidden xl:block">
+                    <Table
+                      columns={[
+                        { label: 'Nomor' },
+                        { label: 'Pelanggan' },
+                        { label: 'Sisa tagihan', align: 'right' },
+                        { label: 'Terlambat', align: 'right' },
+                      ]}
+                      isEmpty={false}
+                    >
                       {data.receivable.oldest.map((invoice) => (
                         <tr key={invoice.id}>
-                          <td className="px-3 py-2 whitespace-nowrap">
+                          <td className="whitespace-nowrap">
                             <InvoiceLink id={invoice.id} number={invoice.invoice_number} />
                           </td>
-                          <td className="px-3 py-2 truncate max-w-[16rem]">
-                            {invoice.customer_name}
-                          </td>
-                          <td className="px-3 py-2 text-right whitespace-nowrap">
-                            {rupiah(invoice.amount)}
-                          </td>
-                          <td className="px-3 py-2 text-rose-300 whitespace-nowrap">
-                            {angka(invoice.days_late)} hari
-                            <span className="ml-1 text-[10px] text-slate-500">
-                              ({tanggal(invoice.due_date)})
+                          <td>
+                            <span className="block max-w-[9rem] truncate xl:max-w-[15rem]" title={invoice.customer_name}>
+                              {invoice.customer_name}
                             </span>
+                          </td>
+                          <td className="num">{rupiah(invoice.amount)}</td>
+                          <td className="num text-rose-300">
+                            {angka(invoice.days_late)} hari
+                            <span className="cell-sub block">{tanggal(invoice.due_date)}</span>
                           </td>
                         </tr>
                       ))}
@@ -542,7 +548,7 @@ const Dashboard: React.FC = () => {
                         <span className="min-w-0 truncate text-sm text-slate-200">
                           {payment.customer_name}
                         </span>
-                        <span className="shrink-0 text-sm font-medium text-emerald-300">
+                        <span className="num shrink-0 text-sm font-medium text-emerald-300">
                           {rupiah(payment.amount)}
                         </span>
                       </div>
@@ -570,7 +576,7 @@ const Dashboard: React.FC = () => {
               <p className="text-xs text-slate-500">Belum ada tagihan terbit.</p>
             ) : (
               <>
-                <ul className="divide-y divide-slate-700/50 sm:hidden">
+                <ul className="divide-y divide-slate-700/50 xl:hidden">
                   {data.recent_invoices.map((invoice) => {
                     const status = STATUS[invoice.status] ?? {
                       label: invoice.status,
@@ -589,7 +595,7 @@ const Dashboard: React.FC = () => {
                             </p>
                           </div>
                           <div className="shrink-0 space-y-1 text-right">
-                            <p className="text-sm text-slate-100">{rupiah(invoice.amount)}</p>
+                            <p className="num text-sm text-slate-100">{rupiah(invoice.amount)}</p>
                             <Badge tone={status.tone}>{status.label}</Badge>
                           </div>
                         </div>
@@ -598,9 +604,15 @@ const Dashboard: React.FC = () => {
                   })}
                 </ul>
 
-                <div className="hidden sm:block">
+                <div className="hidden xl:block">
                   <Table
-                    columns={['Nomor', 'Pelanggan', 'Nominal', 'Status', 'Jatuh tempo']}
+                    columns={[
+                      { label: 'Nomor' },
+                      { label: 'Pelanggan' },
+                      { label: 'Nominal', align: 'right' },
+                      { label: 'Status', align: 'center' },
+                      { label: 'Jatuh tempo' },
+                    ]}
                     isEmpty={false}
                   >
                     {data.recent_invoices.map((invoice) => {
@@ -610,19 +622,19 @@ const Dashboard: React.FC = () => {
                       };
                       return (
                         <tr key={invoice.id}>
-                          <td className="px-3 py-2 whitespace-nowrap">
+                          <td className="whitespace-nowrap">
                             <InvoiceLink id={invoice.id} number={invoice.invoice_number} />
                           </td>
-                          <td className="px-3 py-2 truncate max-w-[14rem]">
-                            {invoice.customer_name}
+                          <td>
+                            <span className="block max-w-[9rem] truncate xl:max-w-[15rem]" title={invoice.customer_name}>
+                              {invoice.customer_name}
+                            </span>
                           </td>
-                          <td className="px-3 py-2 text-right whitespace-nowrap">
-                            {rupiah(invoice.amount)}
-                          </td>
-                          <td className="px-3 py-2">
+                          <td className="num">{rupiah(invoice.amount)}</td>
+                          <td className="center">
                             <Badge tone={status.tone}>{status.label}</Badge>
                           </td>
-                          <td className="px-3 py-2 text-slate-400 whitespace-nowrap">
+                          <td className="whitespace-nowrap text-slate-400">
                             {tanggal(invoice.due_date)}
                           </td>
                         </tr>
