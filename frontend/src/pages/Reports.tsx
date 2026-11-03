@@ -2,8 +2,9 @@ import React, { useCallback, useEffect, useState, useRef } from 'react';
 import api from '../services/api';
 import { useBackgroundRefresh } from '../hooks/useBackgroundRefresh';
 import { downloadCsv } from '../utils/csv';
+import { ReceivableReport } from '../components/reports/ReceivableReport';
 
-type ReportType = 'summary' | 'transactions' | 'unpaid' | 'by-method' | 'vouchers' | 'voucher-usage';
+type ReportType = 'summary' | 'transactions' | 'unpaid' | 'by-method' | 'vouchers' | 'voucher-usage' | 'receivables';
 type PaymentMethod = 'cash' | 'transfer' | 'qris' | 'other';
 
 interface ReportSummary {
@@ -141,6 +142,7 @@ const TYPE_LABEL: Record<ReportType, string> = {
   'by-method': 'Pemasukan per metode',
   vouchers: 'Penjualan voucher',
   'voucher-usage': 'Laporan Penggunaan Pertama Voucher',
+  receivables: 'Laporan Piutang',
 };
 
 const formatRupiah = (value: number): string =>
@@ -741,6 +743,14 @@ const Reports: React.FC = () => {
       </div>
     );
   };
+
+  if (type === 'receivables') {
+    return (
+      <div className="space-y-4">
+        <ReceivableReport onChangeType={changeType} />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

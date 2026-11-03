@@ -71,6 +71,9 @@ interface OverdueInvoice {
 }
 
 interface ReceivableSnapshot {
+  total: number;
+  not_due_total: number;
+  open_invoices: number;
   overdue_count: number;
   overdue_total: number;
   due_soon_count: number;
@@ -286,16 +289,20 @@ const Dashboard: React.FC = () => {
             </Kpi>
 
             <Kpi
-              label="Piutang belum tertagih"
-              value={rupiah(data.unpaid_total)}
+              label="Total piutang"
+              value={rupiah(data.receivable.total ?? data.unpaid_total)}
               tone="text-amber-300"
             >
               <p>
-                {angka(data.unpaid_count)} tagihan dari {angka(data.total_invoices)} total tagihan
+                {angka(data.receivable.open_invoices ?? data.unpaid_count)} tagihan terbuka dari{' '}
+                {angka(data.total_invoices)} total tagihan
               </p>
               <p className={data.receivable.overdue_count > 0 ? 'text-rose-300' : 'text-slate-500'}>
-                Terlambat {angka(data.receivable.overdue_count)} ·{' '}
+                Sudah jatuh tempo {angka(data.receivable.overdue_count)} ·{' '}
                 {rupiah(data.receivable.overdue_total)}
+              </p>
+              <p className="text-slate-500">
+                Belum jatuh tempo · {rupiah(data.receivable.not_due_total ?? 0)}
               </p>
               <p className="text-slate-500">
                 Jatuh tempo ≤7 hari {angka(data.receivable.due_soon_count)} ·{' '}

@@ -47,9 +47,13 @@ export interface ReceivableRow extends ReceivableInvoice {
   customer_id: number;
   customer_name: string;
   internet_no: string | null;
+  username: string | null;
   owner_id: number | null;
   owner_name: string | null;
   profile_type: string | null;
+  profile_name: string | null;
+  /** Tanggal transaksi (invoice dibuat), bukan periode layanan. */
+  created_at: string;
   bucket: AgingBucket;
 }
 
@@ -212,7 +216,8 @@ export class ReceivablesRepository {
               i.status, i.due_date, i.period_start, i.period_end,
               DATEDIFF(CURDATE(), i.due_date) AS days_late,
               c.id AS customer_id, c.name AS customer_name, c.internet_no,
-              c.owner_id, o.name AS owner_name, v.profile_type
+              c.owner_id, o.name AS owner_name, v.profile_type, v.profile_name,
+              i.username, i.created_at
          FROM invoices i ${BALANCE_SUBQUERY} ${joins}
         WHERE ${whereSql} AND (i.amount - COALESCE(p.paid, 0)) > 0
         ORDER BY i.due_date ASC, i.id ASC
@@ -237,9 +242,12 @@ export class ReceivablesRepository {
           customer_id: Number(row.customer_id),
           customer_name: String(row.customer_name),
           internet_no: row.internet_no === null ? null : String(row.internet_no),
+          username: row.username === null ? null : String(row.username),
           owner_id: row.owner_id === null ? null : Number(row.owner_id),
           owner_name: row.owner_name === null ? null : String(row.owner_name),
           profile_type: row.profile_type === null ? null : String(row.profile_type),
+          profile_name: row.profile_name === null ? null : String(row.profile_name),
+          created_at: toDateOnly(row.created_at),
           bucket: agingBucket(daysLate),
         };
       }),
@@ -256,12 +264,28 @@ export class ReceivablesRepository {
     not_due: number;
     open_invoices: number;
     paid_invoices: number;
+    customers_with_debt: number;
+    buckets: Record<AgingBucket, { count: number; total: number }>;
   }> {
     const params: unknown[] = [];
     let scopeSql = '';
     if (scope.isReseller) {
       if (!scope.ownerId || scope.ownerId <= 0) {
-        return { outstanding: 0, overdue: 0, not_due: 0, open_invoices: 0, paid_invoices: 0 };
+        return {
+          outstanding: 0,
+          overdue: 0,
+          not_due: 0,
+          open_invoices: 0,
+          paid_invoices: 0,
+          customers_with_debt: 0,
+          buckets: {
+            not_due: { count: 0, total: 0 },
+            d1_30: { count: 0, total: 0 },
+            d31_60: { count: 0, total: 0 },
+            d61_90: { count: 0, total: 0 },
+            over_90: { count: 0, total: 0 },
+          },
+        };
       }
       scopeSql = ' AND c.owner_id = ?';
       params.push(scope.ownerId);
@@ -271,9 +295,20 @@ export class ReceivablesRepository {
       `SELECT COALESCE(SUM(t.balance), 0) AS outstanding,
               COALESCE(SUM(IF(t.days_late > 0, t.balance, 0)), 0) AS overdue,
               COALESCE(SUM(IF(t.days_late <= 0, t.balance, 0)), 0) AS not_due,
-              COUNT(*) AS open_invoices
+              COUNT(*) AS open_invoices,
+              COUNT(DISTINCT t.customer_id) AS customers_with_debt,
+              COALESCE(SUM(IF(t.days_late <= 0, t.balance, 0)), 0) AS b_not_due,
+              COALESCE(SUM(IF(t.days_late BETWEEN 1 AND 30, t.balance, 0)), 0) AS b_d1_30,
+              COALESCE(SUM(IF(t.days_late BETWEEN 31 AND 60, t.balance, 0)), 0) AS b_d31_60,
+              COALESCE(SUM(IF(t.days_late BETWEEN 61 AND 90, t.balance, 0)), 0) AS b_d61_90,
+              COALESCE(SUM(IF(t.days_late > 90, t.balance, 0)), 0) AS b_over_90,
+              SUM(t.days_late <= 0) AS c_not_due,
+              SUM(t.days_late BETWEEN 1 AND 30) AS c_d1_30,
+              SUM(t.days_late BETWEEN 31 AND 60) AS c_d31_60,
+              SUM(t.days_late BETWEEN 61 AND 90) AS c_d61_90,
+              SUM(t.days_late > 90) AS c_over_90
          FROM (
-           SELECT GREATEST(i.amount - COALESCE(p.paid, 0), 0) AS balance,
+           SELECT i.customer_id, GREATEST(i.amount - COALESCE(p.paid, 0), 0) AS balance,
                   DATEDIFF(CURDATE(), i.due_date) AS days_late
              FROM invoices i ${BALANCE_SUBQUERY}
              JOIN customers c ON c.id = i.customer_id
@@ -296,6 +331,14 @@ export class ReceivablesRepository {
       not_due: Number(row?.not_due ?? 0),
       open_invoices: Number(row?.open_invoices ?? 0),
       paid_invoices: Number(paid?.total ?? 0),
+      customers_with_debt: Number(row?.customers_with_debt ?? 0),
+      buckets: {
+        not_due: { count: Number(row?.c_not_due ?? 0), total: Number(row?.b_not_due ?? 0) },
+        d1_30: { count: Number(row?.c_d1_30 ?? 0), total: Number(row?.b_d1_30 ?? 0) },
+        d31_60: { count: Number(row?.c_d31_60 ?? 0), total: Number(row?.b_d31_60 ?? 0) },
+        d61_90: { count: Number(row?.c_d61_90 ?? 0), total: Number(row?.b_d61_90 ?? 0) },
+        over_90: { count: Number(row?.c_over_90 ?? 0), total: Number(row?.b_over_90 ?? 0) },
+      },
     };
   }
 

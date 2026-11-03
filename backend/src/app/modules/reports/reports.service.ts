@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InvoiceBalance, LedgerSummary, MethodTotal, Payment } from '../payments/payments.repository';
 import { PaymentsService } from '../payments/payments.service';
+import { InvoicesService } from '../invoices/invoices.service';
 import { SalesService } from '../sales/sales.service';
 import { RequestScope, SYSTEM_SCOPE } from '../auth/request-scope';
 import { ReportQueryDto, ReportType } from './dto/report.dto';
@@ -13,6 +14,12 @@ export interface ReportResult {
   method: string | null;
   // Ringkasan selalu berbasis query: pemasukan periode + saldo tagihan saat ini.
   summary: LedgerSummary;
+  /**
+   * Omzet = nilai invoice yang diterbitkan pada periode (void dikecualikan),
+   * dihitung dari tanggal transaksi. Berbeda dari `summary.income` (kas masuk
+   * berdasarkan tanggal pembayaran).
+   */
+  issued: { total: number; count: number };
   /**
    * Pendapatan periode dari dua sumber: tagihan (payments) dan penjualan
    * voucher. `summary.income` tetap khusus pembayaran tagihan agar angka lama
@@ -36,6 +43,7 @@ export interface ReportResult {
 export class ReportsService {
   constructor(
     private readonly payments: PaymentsService,
+    private readonly invoices: InvoicesService,
     private readonly sales: SalesService,
     private readonly voucherUsage: VoucherUsageService,
   ) {}
@@ -48,9 +56,10 @@ export class ReportsService {
 
     // Pendapatan dihitung sekali di SalesService dan dipakai semua jenis
     // laporan, supaya angkanya tidak berbeda antar halaman.
-    const [summary, revenue] = await Promise.all([
+    const [summary, revenue, issued] = await Promise.all([
       this.payments.summary(query.from, query.to, scope),
       this.sales.revenue(query.from, query.to, scope),
+      this.invoices.issued(query.from, query.to, scope),
     ]);
     const base = {
       type: query.type,
@@ -58,6 +67,7 @@ export class ReportsService {
       to: query.to ?? null,
       method: query.method ?? null,
       summary,
+      issued,
       revenue,
       voucher_sales: [] as Array<Record<string, unknown>>,
       voucher_usage: null as VoucherUsageReport | null,

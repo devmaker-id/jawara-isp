@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { DatabaseService } from '../../database/database.service';
 import { RequestScope, SYSTEM_SCOPE } from '../auth/request-scope';
 import { SalesService } from '../sales/sales.service';
+import { ReceivablesRepository } from '../receivables/receivables.repository';
 import { readServerMetrics, ServerMetrics } from './system-metrics';
 
 // Ringkasan dashboard: uang, pelanggan, tagihan yang perlu ditindak, aktivitas
@@ -111,6 +112,12 @@ export interface OverdueInvoice {
 }
 
 export interface ReceivableSnapshot {
+  /** Total saldo piutang (unpaid + partial, paid/void dikecualikan). */
+  total: number;
+  /** Bagian yang belum jatuh tempo. */
+  not_due_total: number;
+  /** Jumlah tagihan yang masih terbuka. */
+  open_invoices: number;
   overdue_count: number;
   overdue_total: number;
   /** Jatuh tempo dalam 7 hari ke depan (belum lewat). */
@@ -198,6 +205,7 @@ export class DashboardService {
   private readonly logger = new Logger(DashboardService.name);
 
   constructor(
+    private readonly receivables: ReceivablesRepository,
     private readonly db: DatabaseService,
     private readonly sales: SalesService,
   ) {}
@@ -210,7 +218,7 @@ export class DashboardService {
         this.online(),
         this.sales.revenueSnapshot(scope).catch(() => EMPTY_REVENUE),
         this.customerBreakdown(),
-        this.receivable(),
+        this.receivable(scope),
         this.recentPayments(),
         this.recentInvoices(),
         this.onuHealth(),
@@ -264,8 +272,11 @@ export class DashboardService {
    * tempo. Sisa tagihan (bukan nominal penuh) yang dijumlahkan, supaya tagihan
    * yang sudah dibayar sebagian tidak terlihat menunggak penuh.
    */
-  private async receivable(): Promise<ReceivableSnapshot> {
+  private async receivable(scope: RequestScope = SYSTEM_SCOPE): Promise<ReceivableSnapshot> {
     const empty: ReceivableSnapshot = {
+      total: 0,
+      not_due_total: 0,
+      open_invoices: 0,
       overdue_count: 0,
       overdue_total: 0,
       due_soon_count: 0,
@@ -273,6 +284,9 @@ export class DashboardService {
       oldest: [],
     };
     try {
+      // Sumber angka yang sama dengan laporan piutang, supaya dashboard dan
+      // laporan tidak pernah berbeda.
+      const ar = await this.receivables.summary(scope);
       const row = await this.db.queryOne<Record<string, number | string>>(
         `SELECT
            SUM(late > 0) AS overdue_count,
@@ -305,9 +319,18 @@ export class DashboardService {
           LIMIT 5`,
       );
 
+      const overdueCount =
+        ar.buckets.d1_30.count +
+        ar.buckets.d31_60.count +
+        ar.buckets.d61_90.count +
+        ar.buckets.over_90.count;
+
       return {
-        overdue_count: Number(row?.overdue_count ?? 0),
-        overdue_total: Number(row?.overdue_total ?? 0),
+        total: ar.outstanding,
+        not_due_total: ar.not_due,
+        open_invoices: ar.open_invoices,
+        overdue_count: overdueCount,
+        overdue_total: ar.overdue,
         due_soon_count: Number(row?.due_soon_count ?? 0),
         due_soon_total: Number(row?.due_soon_total ?? 0),
         oldest: oldest.map((item) => ({

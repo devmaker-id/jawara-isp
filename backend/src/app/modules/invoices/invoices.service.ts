@@ -138,6 +138,10 @@ export class InvoicesService {
     return this.repository.findByCustomer(customerId, scope).catch((error) => this.rethrow(error));
   }
 
+  issued(from?: string, to?: string, scope: RequestScope = SYSTEM_SCOPE) {
+    return this.repository.issued(from, to, scope).catch((error) => this.rethrow(error));
+  }
+
   getSummary(scope: RequestScope = SYSTEM_SCOPE): Promise<InvoiceSummary> {
     return this.repository.summary(scope).catch((error) => this.rethrow(error));
   }

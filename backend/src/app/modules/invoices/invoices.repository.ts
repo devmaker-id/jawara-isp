@@ -238,6 +238,39 @@ export class InvoicesRepository {
   }
 
   /**
+   * Omzet periode = nilai invoice yang DITERBITKAN pada rentang tanggal
+   * transaksi (`created_at`), bukan tanggal pembayaran dan bukan periode
+   * layanan. Invoice void tidak dihitung. Berbeda dari kas masuk (payments).
+   */
+  async issued(
+    from?: string,
+    to?: string,
+    scope: RequestScope = SYSTEM_SCOPE,
+  ): Promise<{ total: number; count: number }> {
+    const owner = ownerFilter(scope, 'invoices');
+    const where: string[] = ["status <> 'void'"];
+    const params: unknown[] = [];
+    if (owner.sql) {
+      where.push(owner.sql);
+      params.push(...owner.params);
+    }
+    if (from) {
+      where.push('created_at >= ?');
+      params.push(`${from} 00:00:00`);
+    }
+    if (to) {
+      where.push('created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+      params.push(to);
+    }
+    const row = await this.db.queryOne<RowDataPacket & { total: number | string; n: number | string }>(
+      `SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS n
+         FROM invoices WHERE ${where.join(' AND ')}`,
+      params,
+    );
+    return { total: Number(row?.total ?? 0), count: Number(row?.n ?? 0) };
+  }
+
+  /**
    * `conn` opsional dipakai pemanggil yang sudah memegang transaksi (mis.
    * perpanjangan dengan piutang yang harus memeriksa limit dan membuat tagihan
    * dalam satu langkah atomik). Tanpa `conn`, perilaku lama tetap: transaksi
