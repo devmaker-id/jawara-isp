@@ -19,11 +19,15 @@
 
 export interface VoucherTemplateLayout {
   /** Kolom kartu per halaman: 1-3. */
-  columns: 1 | 2 | 3;
+  columns: number;
   /** Margin halaman dalam milimeter: 5-24. */
   marginMm: number;
   /** Jarak antar kartu dalam milimeter: 2-15. */
   gapMm: number;
+  /** Orientasi kertas cetak. */
+  orientation?: 'portrait' | 'landscape';
+  /** Baris per halaman; 0 = kartu mengalir tanpa pemenggalan. */
+  rows?: number;
 }
 
 export interface VoucherTemplate {
@@ -63,6 +67,9 @@ export const TEMPLATE_VARIABLES: Array<{ token: string; label: string }> = [
   { token: '{{username}}', label: 'Username voucher' },
   { token: '{{password}}', label: 'Password voucher' },
   { token: '{{price}}', label: 'Harga + pajak (Rupiah)' },
+  { token: '{{price_value}}', label: 'Harga + pajak sebagai angka (untuk logika CSS)' },
+  { token: '{{price_tier}}', label: 'Label nominal ringkas: 2k, 5k, 10k' },
+  { token: '{{credential}}', label: 'Satu kode bila username = password, selain itu username · password' },
   { token: '{{owner}}', label: 'Nama pemilik voucher' },
   { token: '{{created_by}}', label: 'Nama pembuat voucher' },
   { token: '{{customer}}', label: 'Nama pelanggan (akun member)' },
@@ -194,7 +201,17 @@ function cleanLayout(value: unknown): VoucherTemplateLayout {
   const columns = Number(row.columns ?? DEFAULT_LAYOUT.columns);
   const marginMm = Number(row.marginMm ?? DEFAULT_LAYOUT.marginMm);
   const gapMm = Number(row.gapMm ?? DEFAULT_LAYOUT.gapMm);
-  if (![1, 2, 3].includes(columns)) throw new TemplateValidationError('layout.columns harus 1, 2, atau 3.');
+  if (!Number.isInteger(columns) || columns < 1 || columns > 10) {
+    throw new TemplateValidationError('layout.columns harus 1 sampai 10.');
+  }
+  const rows = Number(row.rows ?? 0);
+  if (!Number.isInteger(rows) || rows < 0 || rows > 12) {
+    throw new TemplateValidationError('layout.rows harus 0 sampai 12.');
+  }
+  const orientation = row.orientation ?? 'portrait';
+  if (orientation !== 'portrait' && orientation !== 'landscape') {
+    throw new TemplateValidationError('layout.orientation harus portrait atau landscape.');
+  }
   if (!Number.isFinite(marginMm) || marginMm < 5 || marginMm > 24) {
     throw new TemplateValidationError('layout.marginMm harus antara 5 dan 24.');
   }

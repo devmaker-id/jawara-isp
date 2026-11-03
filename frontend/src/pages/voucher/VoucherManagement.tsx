@@ -217,6 +217,8 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
   const [printOpen, setPrintOpen] = useState(false);
   const [printUseSelection, setPrintUseSelection] = useState(true);
   const [printTemplate, setPrintTemplate] = useState('');
+  // Preset halaman cetak: 'template' = ikuti layout template, selain itu override.
+  const [printPreset, setPrintPreset] = useState<'template' | 'p30' | 'l60'>('template');
   const [templates, setTemplates] = useState<PrintTemplate[]>([]);
   const [printBrand, setPrintBrand] = useState<VoucherPrintBrand>({ brand: '', tagline: '' });
   const [printStatus, setPrintStatus] = useState<'' | Status>('new-created');
@@ -515,7 +517,11 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
         buildPrintDocument(
           template.html,
           chosen.map((row) => cardFromRow(row)),
-          template.layout ?? { columns: 3, marginMm: 8.5, gapMm: 3.5 },
+          printPreset === 'p30'
+            ? { ...(template.layout ?? { columns: 6, marginMm: 8, gapMm: 2 }), columns: 6, rows: 5, orientation: 'portrait' as const }
+            : printPreset === 'l60'
+              ? { ...(template.layout ?? { columns: 10, marginMm: 8, gapMm: 2 }), columns: 10, rows: 6, orientation: 'landscape' as const }
+              : template.layout ?? { columns: 3, marginMm: 8.5, gapMm: 3.5 },
           printBrand,
           printedAt,
         ),
@@ -997,6 +1003,18 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
                     </option>
                   ))}
               </select>
+              <label className="mt-3 block text-xs font-medium text-slate-300">
+                Susunan halaman
+                <select
+                  value={printPreset}
+                  onChange={(event) => setPrintPreset(event.target.value as 'template' | 'p30' | 'l60')}
+                  className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+                >
+                  <option value="template">Ikuti template</option>
+                  <option value="p30">A4 potret 6×5 — 30 kartu/halaman</option>
+                  <option value="l60">A4 lanskap 10×6 — 60 kartu/halaman</option>
+                </select>
+              </label>
               <p className="mt-1 text-[11px] text-slate-500">
                 Template diatur di Pengaturan → Template Voucher (HTML/CSS). Cetak memakai dialog browser —
                 pilih &quot;Save as PDF&quot; bila ingin menyimpan berkas.

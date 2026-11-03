@@ -75,6 +75,9 @@ const SAMPLE_VOUCHER: VoucherPrintCard = {
   status: 'baru dibuat',
   expires: '10/11/2026',
   created_at: '03/11/2026',
+  credential: 'BBT-8F2K · 4821',
+  price_value: 5000,
+  price_tier: '5k',
 };
 
 const SAMPLE_MEMBER: VoucherPrintCard = {
@@ -88,6 +91,9 @@ const SAMPLE_MEMBER: VoucherPrintCard = {
   created_by: 'Admin',
   customer: 'Soleh',
   status: 'aktif',
+  credential: 'soleh@bibitnet',
+  price_value: 150000,
+  price_tier: '150k',
   expires: '30/11/2026',
   created_at: '01/11/2026',
 };
@@ -610,23 +616,85 @@ export const VoucherTemplatesPanel: React.FC<{
                     <p className="mb-1 mt-3 text-[11px] font-medium uppercase tracking-wider text-slate-400">
                       Grid halaman
                     </p>
-                    <div className="mb-2 grid grid-cols-3 gap-1.5">
-                      {[1, 2, 3].map((cols) => (
+                    <div className="mb-2 grid grid-cols-3 gap-2">
+                      <label className="block">
+                        <span className="mb-0.5 block text-[11px] text-slate-400">Kolom</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={10}
+                          value={draft.layout.columns}
+                          onChange={(e) =>
+                            setDraft({
+                              ...draft,
+                              layout: { ...draft.layout, columns: Math.min(10, Math.max(1, Number(e.target.value) || 1)) },
+                            })
+                          }
+                          className="w-full rounded bg-slate-900 px-2 py-1.5 font-mono text-xs text-slate-100 ring-1 ring-slate-700"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-0.5 block text-[11px] text-slate-400">Baris/halaman</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={12}
+                          value={draft.layout.rows ?? 0}
+                          onChange={(e) =>
+                            setDraft({
+                              ...draft,
+                              layout: { ...draft.layout, rows: Math.min(12, Math.max(0, Number(e.target.value) || 0)) },
+                            })
+                          }
+                          className="w-full rounded bg-slate-900 px-2 py-1.5 font-mono text-xs text-slate-100 ring-1 ring-slate-700"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-0.5 block text-[11px] text-slate-400">Kertas</span>
+                        <select
+                          value={draft.layout.orientation ?? 'portrait'}
+                          onChange={(e) =>
+                            setDraft({
+                              ...draft,
+                              layout: { ...draft.layout, orientation: e.target.value as 'portrait' | 'landscape' },
+                            })
+                          }
+                          className="w-full rounded bg-slate-900 px-2 py-1.5 text-xs text-slate-100 ring-1 ring-slate-700"
+                        >
+                          <option value="portrait">Potret</option>
+                          <option value="landscape">Lanskap</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div className="mb-2 flex flex-wrap gap-1.5">
+                      {[
+                        { label: 'Potret 30', columns: 6, rows: 5, orientation: 'portrait' as const },
+                        { label: 'Lanskap 60', columns: 10, rows: 6, orientation: 'landscape' as const },
+                      ].map((preset) => (
                         <button
-                          key={cols}
+                          key={preset.label}
                           type="button"
                           onClick={() =>
-                            setDraft({ ...draft, layout: { ...draft.layout, columns: cols as 1 | 2 | 3 } })
+                            setDraft({
+                              ...draft,
+                              layout: {
+                                ...draft.layout,
+                                columns: preset.columns,
+                                rows: preset.rows,
+                                orientation: preset.orientation,
+                              },
+                            })
                           }
-                          className={`rounded border py-1.5 font-mono text-xs ${
-                            draft.layout.columns === cols
-                              ? 'border-cyan-500 bg-cyan-500/10 text-cyan-300'
-                              : 'border-slate-700 text-slate-300 hover:border-slate-500'
-                          }`}
+                          className="rounded border border-slate-700 px-2 py-1 text-[11px] text-slate-300 hover:border-cyan-500 hover:text-cyan-300"
                         >
-                          {cols} kolom
+                          {preset.label}
                         </button>
                       ))}
+                      <span className="self-center text-[11px] text-slate-500">
+                        {draft.layout.rows
+                          ? `${draft.layout.columns * draft.layout.rows} kartu/halaman`
+                          : 'mengalir tanpa pemenggalan'}
+                      </span>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       <label className="block">
@@ -661,6 +729,15 @@ export const VoucherTemplatesPanel: React.FC<{
                   </div>
 
                   <div className={pane === 'pratinjau' ? 'hidden xl:block' : ''}>
+                    <div className="mb-2 rounded border border-slate-700 bg-slate-900/40 p-2 text-[11px] leading-relaxed text-slate-400">
+                      Warna menurut nominal (bebas diatur di CSS template):
+                      <code className="mt-1 block whitespace-pre-wrap font-mono text-[10px] text-cyan-300">
+{'.v-card[data-price="2000"] .harga{background:#2563eb}' + '\n' + '.v-card[data-price="3000"] .harga{background:#f97316}' + '\n' + '.v-card[data-price="5000"] .harga{background:#16a34a}'}
+                      </code>
+                      Tersedia juga <code className="font-mono text-[10px]">var(--tier-color)</code> (warna bawaan),
+                      <code className="font-mono text-[10px]"> data-tier</code>, dan variabel
+                      <code className="font-mono text-[10px]"> {'{{credential}}'}</code> untuk voucher username = password.
+                    </div>
                     <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-slate-400">
                       Variabel ({variables.length}) — klik untuk sisip di kursor
                     </p>
