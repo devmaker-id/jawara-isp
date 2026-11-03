@@ -113,6 +113,8 @@ export const ReceivableReport: React.FC<{ onChangeType: (type: ReportType) => vo
   const [profileType, setProfileType] = useState<'' | 'hotspot' | 'ppp'>('');
   const [status, setStatus] = useState<'' | 'unpaid' | 'partial'>('');
   const [overdueOnly, setOverdueOnly] = useState<'' | 'due' | 'not_due'>('');
+  const [ownerId, setOwnerId] = useState('');
+  const [owners, setOwners] = useState<Array<{ id: number; name: string }>>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -135,6 +137,7 @@ export const ReceivableReport: React.FC<{ onChangeType: (type: ReportType) => vo
             search: search.trim() || undefined,
             profile_type: profileType || undefined,
             status: status || undefined,
+            owner_id: ownerId || undefined,
             page,
             limit,
           },
@@ -151,11 +154,33 @@ export const ReceivableReport: React.FC<{ onChangeType: (type: ReportType) => vo
     } finally {
       setLoading(false);
     }
-  }, [from, to, dueFrom, dueTo, search, profileType, status, overdueOnly, page, limit]);
+  }, [from, to, dueFrom, dueTo, search, profileType, status, overdueOnly, ownerId, page, limit]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .get('/api/admin/users', { params: { limit: 100 } })
+      .then((res) => {
+        if (!alive) return;
+        const list = Array.isArray(res.data) ? res.data : (res.data?.rows ?? []);
+        setOwners(
+          (list as Array<{ id: number; name: string }>)
+            .map((user) => ({ id: Number(user.id), name: String(user.name) }))
+            .filter((user) => Number.isFinite(user.id)),
+        );
+      })
+      .catch(() => {
+        // Tanpa izin (operator/reseller) filter owner memang tidak ditampilkan.
+        if (alive) setOwners([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const halamanTerakhir = Math.max(1, Math.ceil(total / limit));
 
@@ -219,6 +244,17 @@ export const ReceivableReport: React.FC<{ onChangeType: (type: ReportType) => vo
             sampai
             <input type="date" value={to} onChange={(e) => { setTo(e.target.value); setPage(1); }} className={inputClass} />
           </label>
+          {owners.length > 0 && (
+            <label className="text-xs text-slate-400">
+              Owner / reseller
+              <select value={ownerId} onChange={(e) => { setOwnerId(e.target.value); setPage(1); }} className={inputClass}>
+                <option value="">Semua</option>
+                {owners.map((owner) => (
+                  <option key={owner.id} value={owner.id}>{owner.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
           <label className="text-xs text-slate-400">
             Jatuh tempo dari
             <input type="date" value={dueFrom} onChange={(e) => { setDueFrom(e.target.value); setPage(1); }} className={inputClass} />
@@ -253,6 +289,17 @@ export const ReceivableReport: React.FC<{ onChangeType: (type: ReportType) => vo
               <option value="partial">partial</option>
             </select>
           </label>
+          {owners.length > 0 && (
+            <label className="text-xs text-slate-400">
+              Owner / reseller
+              <select value={ownerId} onChange={(e) => { setOwnerId(e.target.value); setPage(1); }} className={inputClass}>
+                <option value="">Semua</option>
+                {owners.map((owner) => (
+                  <option key={owner.id} value={owner.id}>{owner.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
           <label className="text-xs text-slate-400">
             Jatuh tempo
             <select value={overdueOnly} onChange={(e) => { setOverdueOnly(e.target.value as '' | 'due' | 'not_due'); setPage(1); }} className={inputClass}>
