@@ -79,7 +79,46 @@ const theme = EditorView.theme({
     backgroundColor: 'var(--card)',
     color: 'var(--code-text)',
     border: '1px solid var(--border)',
+    boxShadow: '0 8px 24px rgba(0, 0, 0, 0.18)',
   },
+  // Autocomplete CodeMirror memakai warna bawaan terang; di tema malam harus
+  // ikut gelap, dan di tema siang harus tetap terang. Semua lewat CSS variable.
+  '.cm-tooltip-autocomplete': {
+    backgroundColor: 'var(--card)',
+    color: 'var(--code-text)',
+    border: '1px solid var(--border)',
+    borderRadius: '8px',
+  },
+  '.cm-tooltip-autocomplete > ul > li': {
+    color: 'var(--code-text)',
+    padding: '3px 8px',
+  },
+  '.cm-tooltip-autocomplete > ul > li[aria-selected]': {
+    backgroundColor: 'var(--code-selection)',
+    color: 'var(--code-text)',
+  },
+  '.cm-completionLabel': { color: 'var(--code-text)' },
+  '.cm-completionDetail': { color: 'var(--code-muted)', fontStyle: 'normal' },
+  '.cm-completionMatchedText': {
+    color: 'var(--syn-var)',
+    textDecoration: 'none',
+    fontWeight: '600',
+  },
+  // Panel pencarian (Ctrl+F) juga bagian dari antarmuka editor.
+  '.cm-panels.cm-panels-top': { borderBottom: '1px solid var(--border)' },
+  '.cm-panels.cm-panels-bottom': { borderTop: '1px solid var(--border)' },
+  '.cm-textfield': {
+    backgroundColor: 'var(--code-bg)',
+    color: 'var(--code-text)',
+    border: '1px solid var(--border)',
+  },
+  '.cm-button': {
+    backgroundColor: 'var(--card-hover)',
+    color: 'var(--code-text)',
+    border: '1px solid var(--border)',
+    backgroundImage: 'none',
+  },
+  '&.cm-focused': { outline: 'none' },
 });
 
 const highlight = HighlightStyle.define([
@@ -241,7 +280,10 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
   }, [readOnly]);
 
   return (
-    <div className="voucher-editor-shell rounded-lg border border-slate-700 bg-slate-900" style={{ height }}>
+    <div
+      className="voucher-editor-shell rounded-lg"
+      style={{ height, border: '1px solid var(--border)', backgroundColor: 'var(--code-bg)' }}
+    >
       <div ref={host} className="h-full w-full overflow-hidden" aria-label={ariaLabel ?? 'Editor kode template'} />
     </div>
   );
