@@ -26,8 +26,8 @@ const Login: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800">
-      <div className="w-full max-w-md p-8 space-y-6 bg-slate-800/50 rounded-2xl border border-slate-700 shadow-2xl">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800 px-4 py-10 sm:px-6">
+      <div className="w-full max-w-md p-6 sm:p-8 space-y-6 bg-slate-800/50 rounded-2xl border border-slate-700 shadow-2xl">
         <div className="text-center">
           {/* Identitas panel dari Pengaturan -> Branding; halaman login harus
               menampilkannya sebelum ada token. */}
