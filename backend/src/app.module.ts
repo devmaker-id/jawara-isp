@@ -8,6 +8,7 @@ import { CustomersModule } from './app/modules/customers/customers.module';
 import { PackagesModule } from './app/modules/packages/packages.module';
 import { InvoicesModule } from './app/modules/invoices/invoices.module';
 import { RenewalModule } from './app/modules/renewals/renewal.module';
+import { ReceivablesModule } from './app/modules/receivables/receivables.module';
 import { PaymentsModule } from './app/modules/payments/payments.module';
 import { SettingsModule } from './app/modules/settings/settings.module';
 import { ReportsModule } from './app/modules/reports/reports.module';
@@ -40,6 +41,7 @@ import { WhatsAppGatewayModule } from './app/modules/whatsapp-gateway/wa-gateway
     PackagesModule,
     InvoicesModule,
     RenewalModule,
+    ReceivablesModule,
     PaymentsModule,
     SettingsModule,
     ReportsModule,

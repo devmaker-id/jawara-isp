@@ -237,11 +237,30 @@ export class InvoicesRepository {
     };
   }
 
-  async create(dto: CreateInvoiceDto, actor: InvoiceActor): Promise<Invoice> {
+  /**
+   * `conn` opsional dipakai pemanggil yang sudah memegang transaksi (mis.
+   * perpanjangan dengan piutang yang harus memeriksa limit dan membuat tagihan
+   * dalam satu langkah atomik). Tanpa `conn`, perilaku lama tetap: transaksi
+   * sendiri.
+   */
+  async create(
+    dto: CreateInvoiceDto,
+    actor: InvoiceActor,
+    conn?: PoolConnection,
+  ): Promise<Invoice> {
     const periodError = validateInvoicePeriod(dto.period_start, dto.period_end);
     if (periodError) throw new InvoiceError('INVALID_PERIOD', periodError);
 
-    return this.db.withTransaction(async (conn) => {
+    if (conn) return this.insertInvoice(conn, dto, actor);
+    return this.db.withTransaction((connection) => this.insertInvoice(connection, dto, actor));
+  }
+
+  private async insertInvoice(
+    conn: PoolConnection,
+    dto: CreateInvoiceDto,
+    actor: InvoiceActor,
+  ): Promise<Invoice> {
+    {
       const customerName = await this.customerName(conn, dto.customer_id);
       const invoiceNumber = await this.nextInvoiceNumber(conn);
 
@@ -273,7 +292,7 @@ export class InvoicesRepository {
         actor,
       });
       return created;
-    });
+    }
   }
 
   async update(id: number, dto: UpdateInvoiceDto, actor: InvoiceActor): Promise<Invoice> {

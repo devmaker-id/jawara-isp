@@ -78,7 +78,7 @@ export interface ApplyRenewalInput {
   durationSeconds: number;
   amount: number;
   invoiceId: number;
-  paymentId: number;
+  paymentId: number | null;
   actorId: number;
   actorName: string;
   note: string | null;
@@ -228,8 +228,16 @@ export class RenewalRepository {
    * `SELECT ... FOR UPDATE` + pembandingan masa aktif lama mencegah dua
    * permintaan bersamaan memperpanjang dua kali.
    */
-  async apply(input: ApplyRenewalInput): Promise<RenewalRecord> {
-    return this.db.withTransaction(async (connection: PoolConnection) => {
+  async apply(input: ApplyRenewalInput, conn?: PoolConnection): Promise<RenewalRecord> {
+    if (conn) return this.applyWith(conn, input);
+    return this.db.withTransaction((connection) => this.applyWith(connection, input));
+  }
+
+  private async applyWith(
+    connection: PoolConnection,
+    input: ApplyRenewalInput,
+  ): Promise<RenewalRecord> {
+    {
       const [locked] = await connection.query<RowDataPacket[]>(
         'SELECT id, expires_at FROM radius_vouchers WHERE id = ? FOR UPDATE',
         [input.accountId],
@@ -332,7 +340,7 @@ export class RenewalRepository {
         [insertId],
       );
       return toRecord(rows[0]);
-    });
+    }
   }
 
   /** Perpanjangan yang sudah tercatat dengan kunci ini (idempotensi). */

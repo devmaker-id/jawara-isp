@@ -33,10 +33,24 @@ export class RenewalPreviewQueryDto {
 }
 
 export class RenewCustomerDto extends RenewalPreviewQueryDto {
+  /**
+   * cash  = bayar langsung (wajib lunas, method wajib)
+   * credit = piutang (hanya admin; tidak ada pembayaran saat transaksi)
+   */
+  @IsOptional()
+  @IsIn(['cash', 'credit'], { message: 'payment_mode harus cash atau credit' })
+  payment_mode?: 'cash' | 'credit';
+
+  @IsOptional()
   @IsIn(RENEWAL_METHODS as unknown as string[], {
     message: 'method harus cash, transfer, qris, atau other',
   })
-  method!: RenewalMethod;
+  method?: RenewalMethod;
+
+  // Jatuh tempo piutang. Bila kosong: hari ini + batas bawaan sistem.
+  @IsOptional()
+  @Matches(DATE_ONLY, { message: 'due_date harus format YYYY-MM-DD' })
+  due_date?: string;
 
   @IsOptional()
   @IsString({ message: 'reference harus teks' })

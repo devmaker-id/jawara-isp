@@ -26,6 +26,23 @@ interface Preview {
   amount: { base: number; tax: number; total: number };
 }
 
+interface ReceivableInfo {
+  outstanding: number;
+  limit: number;
+  remaining: number;
+  open_invoices: number;
+  overdue: number;
+  not_due: number;
+  invoices: Array<{
+    id: number;
+    invoice_number: string;
+    balance: number;
+    status: string;
+    due_date: string;
+    days_late: number;
+  }>;
+}
+
 interface ProfileOption {
   id: number;
   name: string;
@@ -50,6 +67,15 @@ const readError = (error: unknown, fallback: string): string => {
 const inputClass =
   'w-full rounded-lg border border-slate-600 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400';
 
+const isAdmin = (): boolean => {
+  try {
+    const raw = localStorage.getItem('user');
+    return !!raw && (JSON.parse(raw) as { role?: string }).role === 'admin';
+  } catch {
+    return false;
+  }
+};
+
 export const RenewDialog: React.FC<{
   customerId: number;
   onClose: () => void;
@@ -64,6 +90,10 @@ export const RenewDialog: React.FC<{
   const [preview, setPreview] = useState<Preview | null>(null);
   const [profiles, setProfiles] = useState<ProfileOption[]>([]);
   const [profileId, setProfileId] = useState<string>('');
+  const [mode, setMode] = useState<'cash' | 'credit'>('cash');
+  const [receivable, setReceivable] = useState<ReceivableInfo | null>(null);
+  const [dueDate, setDueDate] = useState<string>('');
+  const [approved, setApproved] = useState(false);
   const [method, setMethod] = useState<Method>('cash');
   const [reference, setReference] = useState('');
   const [note, setNote] = useState('');
@@ -89,6 +119,14 @@ export const RenewDialog: React.FC<{
           );
         }
         setError(null);
+
+        const ar = await api.get<ReceivableInfo>(`/api/customers/${customerId}/receivable`);
+        setReceivable(ar.data);
+        if (!dueDate) {
+          const d = new Date();
+          d.setDate(d.getDate() + 30);
+          setDueDate(d.toISOString().slice(0, 10));
+        }
       } catch (e) {
         setError(readError(e, 'Gagal memuat data perpanjangan.'));
       }
@@ -113,13 +151,19 @@ export const RenewDialog: React.FC<{
     try {
       const { data } = await api.post(`/api/customers/${customerId}/renew`, {
         profile_id: profileId ? Number(profileId) : undefined,
-        method,
+        payment_mode: mode,
+        method: mode === 'cash' ? method : undefined,
+        due_date: mode === 'credit' ? dueDate : undefined,
         reference: reference.trim() || undefined,
         note: note.trim() || undefined,
         idempotency_key: idempotencyKey.current,
       });
       const sisa = data?.account?.expires_at ? tanggal(data.account.expires_at) : '—';
-      onDone(`Layanan diperpanjang sampai ${sisa}.`);
+      onDone(
+        mode === 'credit'
+          ? `Layanan diperpanjang sampai ${sisa}. Tagihan ${data?.invoice?.invoice_number ?? ''} dicatat sebagai piutang, jatuh tempo ${tanggal(data?.invoice?.due_date)}.`
+          : `Layanan diperpanjang sampai ${sisa}.`,
+      );
     } catch (e) {
       setError(readError(e, 'Perpanjangan gagal diproses.'));
       setBusy(false);
@@ -199,28 +243,89 @@ export const RenewDialog: React.FC<{
                 </div>
               </div>
 
-              <label className="block text-sm">
-                <span className="mb-1 block text-slate-400">Metode pembayaran</span>
-                <select value={method} onChange={(e) => setMethod(e.target.value as Method)} className={inputClass}>
-                  <option value="cash">Tunai</option>
-                  <option value="transfer">Transfer</option>
-                  <option value="qris">QRIS</option>
-                  <option value="other">Lainnya</option>
-                </select>
-              </label>
+              {isAdmin() && (
+                <div className="flex gap-1 rounded-lg border border-slate-700 p-1 text-xs">
+                  {(['cash', 'credit'] as const).map((key) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setMode(key)}
+                      className={`flex-1 rounded px-2 py-1 font-medium transition ${
+                        mode === key ? 'bg-cyan-500/20 text-cyan-200' : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {key === 'cash' ? 'Bayar langsung' : 'Piutang (admin)'}
+                    </button>
+                  ))}
+                </div>
+              )}
 
-              {method === 'transfer' || method === 'qris' ? (
-                <label className="block text-sm">
-                  <span className="mb-1 block text-slate-400">Referensi pembayaran</span>
-                  <input
-                    value={reference}
-                    onChange={(e) => setReference(e.target.value)}
-                    maxLength={64}
-                    placeholder="Nomor transaksi / berita transfer"
-                    className={inputClass}
-                  />
-                </label>
-              ) : null}
+              {mode === 'cash' ? (
+                <>
+                  <label className="block text-sm">
+                    <span className="mb-1 block text-slate-400">Metode pembayaran</span>
+                    <select value={method} onChange={(e) => setMethod(e.target.value as Method)} className={inputClass}>
+                      <option value="cash">Tunai</option>
+                      <option value="transfer">Transfer</option>
+                      <option value="qris">QRIS</option>
+                      <option value="other">Lainnya</option>
+                    </select>
+                  </label>
+
+                  {method === 'transfer' || method === 'qris' ? (
+                    <label className="block text-sm">
+                      <span className="mb-1 block text-slate-400">Referensi pembayaran</span>
+                      <input
+                        value={reference}
+                        onChange={(e) => setReference(e.target.value)}
+                        maxLength={64}
+                        placeholder="Nomor transaksi / berita transfer"
+                        className={inputClass}
+                      />
+                    </label>
+                  ) : null}
+                </>
+              ) : (
+                <div className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs">
+                  <p className="font-medium text-amber-200">Perpanjangan dengan piutang</p>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-slate-300">
+                    <span>Piutang sekarang</span>
+                    <span className="text-right">{rupiah(receivable?.outstanding ?? 0)}</span>
+                    <span>Tagihan baru</span>
+                    <span className="text-right">{rupiah(preview.amount.total)}</span>
+                    <span className="font-medium text-amber-200">Total setelah</span>
+                    <span className="text-right font-medium text-amber-200">
+                      {rupiah((receivable?.outstanding ?? 0) + preview.amount.total)}
+                    </span>
+                    <span>Batas piutang</span>
+                    <span className="text-right">{rupiah(receivable?.limit ?? 0)}</span>
+                    <span>Sisa limit</span>
+                    <span className="text-right">
+                      {rupiah(Math.max((receivable?.limit ?? 0) - (receivable?.outstanding ?? 0) - preview.amount.total, 0))}
+                    </span>
+                  </div>
+
+                  <label className="block">
+                    <span className="mb-1 block text-slate-400">Jatuh tempo</span>
+                    <input
+                      type="date"
+                      value={dueDate}
+                      onChange={(e) => setDueDate(e.target.value)}
+                      className={inputClass}
+                    />
+                  </label>
+
+                  <label className="flex items-start gap-2 text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={approved}
+                      onChange={(e) => setApproved(e.target.checked)}
+                      className="mt-0.5"
+                    />
+                    <span>Saya admin dan menyetujui piutang ini. Layanan tetap diperpanjang tanpa pembayaran.</span>
+                  </label>
+                </div>
+              )}
 
               <label className="block text-sm">
                 <span className="mb-1 block text-slate-400">Catatan (opsional)</span>
@@ -245,10 +350,14 @@ export const RenewDialog: React.FC<{
               <button
                 type="button"
                 onClick={() => void kirim()}
-                disabled={busy}
+                disabled={busy || (mode === 'credit' && !approved)}
                 className="rounded-lg bg-cyan-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-cyan-400 disabled:opacity-60"
               >
-                {busy ? 'Memproses…' : `Bayar & Perpanjang ${rupiah(preview.amount.total)}`}
+                {busy
+                  ? 'Memproses…'
+                  : mode === 'credit'
+                    ? `Setujui Piutang ${rupiah(preview.amount.total)}`
+                    : `Bayar & Perpanjang ${rupiah(preview.amount.total)}`}
               </button>
             </div>
           </>

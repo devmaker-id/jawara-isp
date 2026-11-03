@@ -28,6 +28,7 @@ function actorOf(req: AuthenticatedRequest) {
     id: account.id,
     email: account.email,
     name: account.name,
+    role: (account as { role?: string }).role,
     ip: req.ip ?? req.socket?.remoteAddress ?? 'tidak-diketahui',
   };
 }

@@ -6,6 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { TablePager } from '../components/TablePager';
 import { OnuHistoryModal } from '../components/onu/OnuPanels';
 import { RenewDialog } from '../components/customer/RenewDialog';
+import { CustomerReceivablePanel } from '../components/customer/CustomerReceivablePanel';
 
 // Halaman pelanggan = pintu masuk layanan. Satu pelanggan langsung memiliki
 // akun RADIUS (username, profil hotspot/ppp, limit waktu & kuota), karena
@@ -998,6 +999,12 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
                     )}
                   </div>
                 </div>
+
+                {editing && (
+                  <div className="sm:col-span-2">
+                    <CustomerReceivablePanel customerId={editing.id} canSetLimit={canDelete} />
+                  </div>
+                )}
 
                 <div className="sm:col-span-2">
                   <label className="block text-sm font-medium text-slate-300 mb-1" htmlFor="c-name">

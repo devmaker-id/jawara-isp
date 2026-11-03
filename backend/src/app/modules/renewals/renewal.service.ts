@@ -1,15 +1,19 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import type { RowDataPacket } from 'mysql2/promise';
 import { DatabaseService } from '../../database/database.service';
 import { RequestScope } from '../auth/request-scope';
 import { InvoicesService } from '../invoices/invoices.service';
 import { InvoiceActor } from '../invoices/invoices.repository';
 import { PaymentsService } from '../payments/payments.service';
+import { ReceivablesRepository } from '../receivables/receivables.repository';
+import { SettingsService } from '../settings/settings.service';
 import { PaymentActor } from '../payments/payments.repository';
 import { PaymentMethod } from '../payments/dto/payment.dto';
 import { RenewCustomerDto, RenewalPreviewQueryDto } from './dto/renewal.dto';
@@ -87,6 +91,8 @@ export class RenewalService {
     private readonly repository: RenewalRepository,
     private readonly invoices: InvoicesService,
     private readonly payments: PaymentsService,
+    private readonly receivables: ReceivablesRepository,
+    private readonly settings: SettingsService,
   ) {}
 
   /** Membaca pelanggan + akun + paket dengan cakupan pemanggil (fail-closed). */
@@ -170,7 +176,7 @@ export class RenewalService {
     customerId: number,
     dto: RenewCustomerDto,
     scope: RequestScope,
-    actor: InvoiceActor & PaymentActor,
+    actor: InvoiceActor & PaymentActor & { role?: string },
   ) {
     // Klik ganda / kirim ulang: kunci yang sama mengembalikan hasil yang sama
     // tanpa membuat tagihan, pembayaran, atau perpanjangan baru.
@@ -185,6 +191,13 @@ export class RenewalService {
     }
 
     const ctx = await this.context(customerId, dto, scope);
+
+    if (dto.payment_mode === 'credit') {
+      return this.renewOnCredit(ctx, dto, scope, actor);
+    }
+    if (!dto.method) {
+      throw new BadRequestException('Metode pembayaran wajib dipilih untuk perpanjangan tunai.');
+    }
 
     if (ctx.customer.status === 'suspend' || ctx.customer.status === 'disable') {
       throw new ConflictException(
@@ -314,6 +327,192 @@ export class RenewalService {
         .catch((e: unknown) => this.logger.error(`Void tagihan ${invoice.id} gagal: ${String(e)}`));
       throw this.mapError(error);
     }
+  }
+
+
+  /** Batas hari jatuh tempo piutang dari pengaturan sistem (bawaan 30). */
+  private async receivableMaxDays(): Promise<number> {
+    const raw = await this.settings.rawValue('receivable_max_days').catch(() => '30');
+    const days = Number(raw);
+    return Number.isFinite(days) && days > 0 ? Math.min(Math.trunc(days), 365) : 30;
+  }
+
+  /**
+   * Perpanjangan dengan piutang (deferred payment).
+   *
+   * Tidak ada pembayaran palsu: tagihan dibuat `unpaid` dengan periode, masa
+   * aktif langsung diperpanjang, dan saldo piutang dihitung dari sisa tagihan.
+   * Seluruh langkah (cek limit → tagihan → masa aktif) berada dalam SATU
+   * transaksi dengan baris pelanggan dikunci, sehingga dua permintaan
+   * bersamaan tidak bisa melewati batas piutang.
+   */
+  private async renewOnCredit(
+    ctx: RenewalContext,
+    dto: RenewCustomerDto,
+    scope: RequestScope,
+    actor: InvoiceActor & PaymentActor & { role?: string },
+  ) {
+    // Hanya admin. Diperiksa di backend, bukan hanya disembunyikan di UI.
+    if (actor.role !== 'admin') {
+      throw new ForbiddenException(
+        'Perpanjangan dengan piutang hanya dapat disetujui oleh admin.',
+      );
+    }
+
+    if (ctx.customer.status === 'suspend' || ctx.customer.status === 'disable') {
+      throw new ConflictException(
+        `Pelanggan berstatus "${ctx.customer.status}" tidak dapat diperpanjang.`,
+      );
+    }
+
+    const amount = dto.amount ?? ctx.money.total;
+    if (amount > ctx.money.total) {
+      throw new BadRequestException(
+        `Nominal melebihi harga paket + pajak (${rupiah(ctx.money.total)}).`,
+      );
+    }
+
+    const maxDays = await this.receivableMaxDays();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const maxDue = new Date(today.getTime() + maxDays * 86_400_000);
+    const dueDate = dto.due_date ? new Date(`${dto.due_date}T00:00:00`) : maxDue;
+    if (Number.isNaN(dueDate.getTime())) {
+      throw new BadRequestException('Tanggal jatuh tempo tidak valid.');
+    }
+    if (dueDate.getTime() < today.getTime()) {
+      throw new BadRequestException('Jatuh tempo tidak boleh sebelum hari ini.');
+    }
+    if (dueDate.getTime() > maxDue.getTime()) {
+      throw new BadRequestException(
+        `Jatuh tempo piutang maksimal ${maxDays} hari sesuai kebijakan sistem.`,
+      );
+    }
+
+    const periodStartDate = dateOnly(ctx.start);
+    const periodEndDate = dateOnly(ctx.end);
+
+    const existing = await this.repository.invoiceForPeriod(
+      ctx.customer.id,
+      ctx.account.username,
+      periodStartDate,
+    );
+    if (existing) {
+      throw new ConflictException(
+        `Periode ${periodStartDate} sudah ditagih lewat ${existing.invoice_number}.`,
+      );
+    }
+
+    const result = await this.db.withTransaction(async (conn) => {
+      const [rows] = await conn.query<RowDataPacket[]>(
+        'SELECT id, credit_limit FROM customers WHERE id = ? FOR UPDATE',
+        [ctx.customer.id],
+      );
+      if (rows.length === 0) throw new NotFoundException('Pelanggan tidak ditemukan.');
+      const limit = Number(rows[0].credit_limit ?? 0);
+      if (limit <= 0) {
+        throw new ForbiddenException(
+          'Batas piutang pelanggan ini masih 0 (belum diatur). Tetapkan limit terlebih dahulu.',
+        );
+      }
+
+      const receivable = await this.receivables.balance(ctx.customer.id, conn);
+      const after = Math.round((receivable.outstanding + amount) * 100) / 100;
+      if (after > limit) {
+        throw new ConflictException(
+          `Melebihi batas piutang: saldo ${rupiah(receivable.outstanding)} + ` +
+            `${rupiah(amount)} = ${rupiah(after)}, batas ${rupiah(limit)}.`,
+        );
+      }
+
+      const invoice = await this.invoices.create(
+        {
+          customer_id: ctx.customer.id,
+          username: ctx.account.username,
+          amount,
+          status: 'unpaid' as never,
+          due_date: dateOnly(dueDate),
+          period_start: periodStartDate,
+          period_end: periodEndDate,
+          description:
+            `Perpanjangan piutang ${ctx.account.profile_type === 'ppp' ? 'PPPoE' : 'Hotspot'} ` +
+            `${ctx.profile.name} ${periodStartDate} s.d. ${periodEndDate}`,
+        },
+        actor,
+        conn,
+      );
+
+      const renewal = await this.repository.apply(
+        {
+          customerId: ctx.customer.id,
+          accountId: ctx.account.id,
+          username: ctx.account.username,
+          password: ctx.account.password,
+          profileType: ctx.account.profile_type,
+          profileId: ctx.profile.id,
+          profileName: ctx.profile.name,
+          groupname: ctx.profile.radius_group ?? ctx.profile.name,
+          expectedExpiresAt: ctx.account.expires_at,
+          newExpiresAt: ctx.end,
+          periodStart: ctx.start,
+          durationSeconds: ctx.seconds,
+          amount,
+          invoiceId: invoice.id,
+          paymentId: null,
+          actorId: actor.id,
+          actorName: actor.name,
+          note: dto.note?.trim() || 'Perpanjangan dengan piutang',
+          idempotencyKey: dto.idempotency_key,
+        },
+        conn,
+      );
+
+      return { invoice, renewal, before: receivable.outstanding, limit, after };
+    });
+
+    await this.audit(actor, 'customer.renew_credit', {
+      customer_id: ctx.customer.id,
+      internet_no: ctx.customer.internet_no,
+      username: ctx.account.username,
+      profile_type: ctx.account.profile_type,
+      profile_name: ctx.profile.name,
+      invoice_id: result.invoice.id,
+      invoice_number: result.invoice.invoice_number,
+      amount,
+      due_date: dateOnly(dueDate),
+      receivable_before: result.before,
+      receivable_after: result.after,
+      credit_limit: result.limit,
+      renewal_id: result.renewal.id,
+      approved_by: actor.id,
+    });
+
+    return {
+      replayed: false,
+      payment_mode: 'credit',
+      renewal: result.renewal,
+      invoice: {
+        id: result.invoice.id,
+        invoice_number: result.invoice.invoice_number,
+        amount: result.invoice.amount,
+        status: 'unpaid',
+        due_date: dateOnly(dueDate),
+      },
+      receivable: {
+        before: result.before,
+        after: result.after,
+        limit: result.limit,
+        remaining: Math.round(Math.max(result.limit - result.after, 0) * 100) / 100,
+      },
+      account: {
+        id: ctx.account.id,
+        username: ctx.account.username,
+        profile_type: ctx.account.profile_type,
+        profile_name: ctx.profile.name,
+        expires_at: ctx.end,
+        status: 'active',
+      },
+    };
   }
 
   async history(customerId: number, scope: RequestScope): Promise<RenewalRecord[]> {

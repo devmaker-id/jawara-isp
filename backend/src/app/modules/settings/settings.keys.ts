@@ -23,6 +23,10 @@ export const SETTING_KEYS = [
   'telegram_enabled',
   'telegram_bot_token',
   'telegram_chat_id',
+  // Piutang perpanjangan: batas bawaan per pelanggan (0 = piutang tidak
+  // diizinkan) dan umur jatuh tempo maksimum dalam hari.
+  'receivable_limit_default',
+  'receivable_max_days',
   // Penomoran: angka awal Nomor Internet. Kosong = nomor tidak diterbitkan
   // otomatis (pelanggan baru tetap bisa dibuat tanpa nomor).
   'internet_no_start',
@@ -62,6 +66,8 @@ export const SETTING_DEFAULTS: Record<SettingKey, string> = {
   telegram_enabled: '0',
   telegram_bot_token: '',
   telegram_chat_id: '',
+  receivable_limit_default: '0',
+  receivable_max_days: '30',
   // Kosong = Nomor Internet tidak diterbitkan otomatis. Isi angka awal
   // (mis. 1312013) hanya setelah pemilik menetapkan seri penomoran.
   internet_no_start: '',
@@ -95,6 +101,7 @@ export const SETTING_GROUPS: Record<string, SettingKey[]> = {
   branding: ['brand_name', 'brand_tagline', 'brand_primary_color', 'brand_logo_url', 'brand_footer_text'],
   voucher: ['voucher_templates'],
   pelanggan: ['internet_no_start'],
+  piutang: ['receivable_limit_default', 'receivable_max_days'],
   payment: [
     'payment_mode',
     'payment_methods',

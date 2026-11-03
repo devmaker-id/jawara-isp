@@ -5,6 +5,7 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import type { PoolConnection } from 'mysql2/promise';
 import { CreateInvoiceDto, UpdateInvoiceDto } from './dto/invoice.dto';
 import { isMissingOwnerColumn, RequestScope, SYSTEM_SCOPE } from '../auth/request-scope';
 import { FinanceEvent, FinanceEventsRepository } from '../finance/finance-events.repository';
@@ -141,8 +142,10 @@ export class InvoicesService {
     return this.repository.summary(scope).catch((error) => this.rethrow(error));
   }
 
-  create(dto: CreateInvoiceDto, actor: InvoiceActor): Promise<Invoice> {
-    return this.repository.create(dto, actor).catch((error) => this.rethrow(error));
+  // `conn` dipakai pemanggil yang sudah memegang transaksi (perpanjangan
+  // dengan piutang: cek limit + tagihan harus satu langkah atomik).
+  create(dto: CreateInvoiceDto, actor: InvoiceActor, conn?: PoolConnection): Promise<Invoice> {
+    return this.repository.create(dto, actor, conn).catch((error) => this.rethrow(error));
   }
 
   update(id: number, dto: UpdateInvoiceDto, actor: InvoiceActor): Promise<Invoice> {
