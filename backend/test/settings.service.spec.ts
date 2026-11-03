@@ -35,6 +35,7 @@ describe('SettingsService', () => {
       'branding',
       'voucher',
       'pelanggan',
+      'piutang',
       'payment',
       'telegram',
       'integrasi',

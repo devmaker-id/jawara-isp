@@ -18,7 +18,7 @@
  */
 
 export interface VoucherTemplateLayout {
-  /** Kolom kartu per halaman: 1-3. */
+  /** Kolom kartu per halaman: 1-10. */
   columns: number;
   /** Margin halaman dalam milimeter: 5-24. */
   marginMm: number;
@@ -218,7 +218,7 @@ function cleanLayout(value: unknown): VoucherTemplateLayout {
   if (!Number.isFinite(gapMm) || gapMm < 2 || gapMm > 15) {
     throw new TemplateValidationError('layout.gapMm harus antara 2 dan 15.');
   }
-  return { columns: columns as 1 | 2 | 3, marginMm, gapMm };
+  return { columns, marginMm, gapMm };
 }
 
 const slug = (value: string): string =>

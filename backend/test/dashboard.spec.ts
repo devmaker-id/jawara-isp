@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { DashboardService } from '../src/app/modules/dashboard/dashboard.service';
 import type { DatabaseService } from '../src/app/database/database.service';
 import type { SalesService } from '../src/app/modules/sales/sales.service';
+import type { ReceivablesRepository } from '../src/app/modules/receivables/receivables.repository';
 
 // Dashboard adalah layar pertama admin: angka piutang dan daftar tagihan di
 // sini harus benar arahannya. Bug yang pernah terjadi: tagihan yang sudah
@@ -85,7 +86,23 @@ function makeService() {
   const sales = {
     revenueSnapshot: vi.fn().mockResolvedValue(revenue),
   } as unknown as SalesService;
-  return { service: new DashboardService(db, sales), sql };
+  // Angka piutang dashboard berasal dari ReceivablesRepository (sumber yang sama
+  // dengan laporan), jadi stub-nya harus menyediakan buckets aging.
+  const receivables = {
+    summary: vi.fn().mockResolvedValue({
+      outstanding: 65000,
+      not_due: 15000,
+      open_invoices: 3,
+      overdue: 50000,
+      buckets: {
+        d1_30: { count: 1 },
+        d31_60: { count: 1 },
+        d61_90: { count: 0 },
+        over_90: { count: 0 },
+      },
+    }),
+  } as unknown as ReceivablesRepository;
+  return { service: new DashboardService(receivables, db, sales), sql };
 }
 
 describe('DashboardService', () => {

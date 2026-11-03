@@ -75,7 +75,8 @@ describe('validasi template voucher HTML (input dari editor admin)', () => {
     ).toThrow(/Total ukuran semua template/);
     expect(() => validate([row({ html: long })])).not.toThrow();
     expect(() => validate(Array.from({ length: MAX_TEMPLATES + 1 }, () => row()))).toThrow(/Maksimal 20/);
-    expect(() => validate([row({ layout: { columns: 4 } })])).toThrow(/columns/);
+    // Grid boleh sampai 10 kolom (landscape); 11 harus ditolak.
+    expect(() => validate([row({ layout: { columns: 11 } })])).toThrow(/columns/);
     expect(() => validate([row({ layout: { marginMm: 1 } })])).toThrow(/marginMm/);
     expect(() => validate([row({ layout: { gapMm: 40 } })])).toThrow(/gapMm/);
   });

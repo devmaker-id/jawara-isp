@@ -7,8 +7,9 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/home/devmaker/jawara-isp
 EnvironmentFile=/home/devmaker/jawara-isp/var/wa-worker.env
-# Butuh Node.js 20+ (Baileys). Pasang di /usr/local/bin atau sesuaikan PATH.
-Environment=PATH=/usr/local/bin:/usr/bin:/bin
+# Butuh Node.js 20+ (Baileys). Contoh: pasang Node 22 di ~/.local/node22 lalu
+# arahkan PATH ke bin-nya; atau gunakan node dari /usr/local/bin.
+Environment=PATH=/home/devmaker/.local/node22/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/usr/bin/env node /home/devmaker/jawara-isp/wa-gateway/worker.js
 Restart=always
 RestartSec=5
