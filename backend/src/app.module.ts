@@ -7,6 +7,7 @@ import { AuthModule } from './app/modules/auth/auth.module';
 import { CustomersModule } from './app/modules/customers/customers.module';
 import { PackagesModule } from './app/modules/packages/packages.module';
 import { InvoicesModule } from './app/modules/invoices/invoices.module';
+import { RenewalModule } from './app/modules/renewals/renewal.module';
 import { PaymentsModule } from './app/modules/payments/payments.module';
 import { SettingsModule } from './app/modules/settings/settings.module';
 import { ReportsModule } from './app/modules/reports/reports.module';
@@ -38,6 +39,7 @@ import { WhatsAppGatewayModule } from './app/modules/whatsapp-gateway/wa-gateway
     CustomersModule,
     PackagesModule,
     InvoicesModule,
+    RenewalModule,
     PaymentsModule,
     SettingsModule,
     ReportsModule,

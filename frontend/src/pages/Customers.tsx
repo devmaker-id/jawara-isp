@@ -5,6 +5,7 @@ import { useBackgroundRefresh } from '../hooks/useBackgroundRefresh';
 import { useAuth } from '../contexts/AuthContext';
 import { TablePager } from '../components/TablePager';
 import { OnuHistoryModal } from '../components/onu/OnuPanels';
+import { RenewDialog } from '../components/customer/RenewDialog';
 
 // Halaman pelanggan = pintu masuk layanan. Satu pelanggan langsung memiliki
 // akun RADIUS (username, profil hotspot/ppp, limit waktu & kuota), karena
@@ -208,6 +209,7 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
   const [editing, setEditing] = useState<Customer | null>(null);
   const [onuBusy, setOnuBusy] = useState(false);
   const [historyOnu, setHistoryOnu] = useState<Customer['onu'] | null>(null);
+  const [renewTarget, setRenewTarget] = useState<Customer | null>(null);
   const [form, setForm] = useState<CustomerForm>(EMPTY_FORM);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -759,6 +761,15 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
                           {customer.created_by_name ?? '—'}
                         </td>
                         <td className="px-4 py-3 text-right whitespace-nowrap">
+                          {account && (
+                            <button
+                              type="button"
+                              onClick={() => setRenewTarget(customer)}
+                              className="text-emerald-300 hover:text-emerald-200 transition mr-3"
+                            >
+                              Perpanjang
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => openEdit(customer)}
@@ -836,6 +847,15 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
                     <div className="flex items-center justify-between pt-1">
                       <span className="text-xs text-slate-500">{formatDate(customer.created_at)}</span>
                       <div className="flex gap-3">
+                        {account && (
+                          <button
+                            type="button"
+                            onClick={() => setRenewTarget(customer)}
+                            className="text-xs font-medium text-emerald-300 hover:text-emerald-200 transition"
+                          >
+                            Perpanjang
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => openEdit(customer)}
@@ -887,9 +907,20 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
           >
             <form onSubmit={handleSubmit} className="p-5 space-y-4">
               <div className="flex items-center justify-between">
-                <h2 id="customer-modal-title" className="text-lg font-semibold text-white">
-                  {editing ? 'Ubah Pelanggan' : 'Tambah Pelanggan'}
-                </h2>
+                <div className="flex items-center gap-3">
+                  <h2 id="customer-modal-title" className="text-lg font-semibold text-white">
+                    {editing ? 'Ubah Pelanggan' : 'Tambah Pelanggan'}
+                  </h2>
+                  {editing && editing.accounts && editing.accounts.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setRenewTarget(editing)}
+                      className="rounded-lg bg-emerald-500/15 px-3 py-1 text-xs font-medium text-emerald-300 transition hover:bg-emerald-500/25"
+                    >
+                      Perpanjang Layanan
+                    </button>
+                  )}
+                </div>
                 <button
                   type="button"
                   onClick={closeModal}
@@ -1245,6 +1276,18 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
             </form>
           </div>
         </div>
+      )}
+
+      {renewTarget && (
+        <RenewDialog
+          customerId={renewTarget.id}
+          onClose={() => setRenewTarget(null)}
+          onDone={(message) => {
+            setRenewTarget(null);
+            setToast({ type: 'success', text: message });
+            void load();
+          }}
+        />
       )}
 
       {historyOnu && (

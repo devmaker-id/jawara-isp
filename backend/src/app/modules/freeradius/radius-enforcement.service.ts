@@ -116,6 +116,8 @@ export class RadiusEnforcementService implements OnModuleInit, OnModuleDestroy {
 
   /** Interval pemeriksaan; 0 mematikan penegakan otomatis. */
   private readonly intervalMs = Number(process.env.RADIUS_ENFORCE_INTERVAL_MS ?? 60_000);
+  /** null = belum diperiksa. Migrasi 035 belum tentu ada di setiap lingkungan. */
+  private usageResetSupported: boolean | null = null;
 
   constructor(
     private readonly db: DatabaseService,
@@ -190,6 +192,22 @@ export class RadiusEnforcementService implements OnModuleInit, OnModuleDestroy {
     if (accounts.length === 0) return report;
 
     const placeholders = accounts.map(() => '?').join(',');
+    if (this.usageResetSupported === null) {
+      // Kolom `usage_reset_at` ditambahkan migrasi 035. Bila belum ada (mis.
+      // lingkungan yang belum dimigrasi), pemakaian dihitung seperti semula
+      // agar penegakan tidak berhenti karena error SQL.
+      const check = await this.db
+        .queryOne<{ total: number | string }>(
+          `SELECT COUNT(*) AS total FROM information_schema.COLUMNS
+            WHERE table_schema = DATABASE() AND table_name = 'radius_vouchers'
+              AND column_name = 'usage_reset_at'`,
+        )
+        .catch(() => null);
+      this.usageResetSupported = Number(check?.total ?? 0) > 0;
+    }
+    const resetFilter = this.usageResetSupported
+      ? 'AND (rv.usage_reset_at IS NULL OR a.acctstarttime >= rv.usage_reset_at)'
+      : '';
     const usage = await this.db.query<UsageRow>(
       `SELECT a.username,
               SUM(COALESCE(a.acctsessiontime, TIMESTAMPDIFF(SECOND, a.acctstarttime, NOW()))) AS seconds,
@@ -197,7 +215,12 @@ export class RadiusEnforcementService implements OnModuleInit, OnModuleDestroy {
               SUM(a.acctstoptime IS NULL) AS open_sessions,
               MAX(CASE WHEN a.acctstoptime IS NULL THEN a.nasipaddress END) AS nas
          FROM radacct a
+         JOIN radius_vouchers rv ON rv.username = a.username
         WHERE a.username IN (${placeholders})
+          -- Pemakaian dihitung sejak periode berjalan (perpanjangan menggeser
+          -- batas ini). Tanpa klausa ini, kuota/waktu lama tetap terhitung
+          -- sehingga akun langsung diblokir lagi setelah diperpanjang.
+          ${resetFilter}
         GROUP BY a.username`,
       accounts.map((a) => a.username),
     );
