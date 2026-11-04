@@ -12,6 +12,7 @@ import {
 } from '../src/app/modules/olt/syslog/vsol.syslog';
 import { parseSyslogEvent } from '../src/app/modules/olt/syslog/syslog.parser';
 import { normalizeRetentionPolicy } from '../src/app/modules/olt/syslog/syslog.retention';
+import { normalizeHandlerConfig } from '../src/app/modules/olt/syslog/syslog.events';
 
 describe('driver syslog — HiFocus (EPON)', () => {
   it('enable → syslog server <ip> + write', () => {
@@ -145,5 +146,26 @@ describe('retensi log ONU — normalisasi kebijakan', () => {
 
   it('mode tidak dikenal jatuh ke age/day default', () => {
     expect(normalizeRetentionPolicy({ mode: 'age' } as never)).toEqual({ mode: 'age', days: 30 });
+  });
+});
+
+describe('handler event ONU — normalisasi konfigurasi', () => {
+  it('menyaring alert_events hanya ke jenis yang dikenal', () => {
+    const config = normalizeHandlerConfig({
+      inventory_sync: true,
+      whatsapp_alert: true,
+      whatsapp_group: '123@g.us',
+      alert_events: ['ONU_LINKDOWN', 'ONU_DYING_GASP', 'HALO'],
+    });
+    expect(config.inventory_sync).toBe(true);
+    expect(config.whatsapp_group).toBe('123@g.us');
+    expect(config.alert_events).toEqual(['ONU_LINKDOWN', 'ONU_DYING_GASP']);
+  });
+
+  it('default menonaktifkan semua fitur', () => {
+    const config = normalizeHandlerConfig({});
+    expect(config.inventory_sync).toBe(false);
+    expect(config.whatsapp_alert).toBe(false);
+    expect(config.whatsapp_group).toBe('');
   });
 });

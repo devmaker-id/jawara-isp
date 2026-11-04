@@ -16,6 +16,7 @@ import { OltDeviceRow, OltDeviceView, OltOnuFilter, OltRepository } from './olt.
 import { createSyslogDriver } from './syslog/registry';
 import type { SyslogClientState } from './syslog/olt-syslog-driver';
 import { SyslogRetentionService } from './syslog/syslog.retention';
+import { SyslogEventHandlerService } from './syslog/syslog.events';
 
 /**
  * Layanan OLT — baca-saja.
@@ -70,6 +71,7 @@ export class OltService {
     private readonly repository: OltRepository,
     private readonly config: ConfigService,
     private readonly retention: SyslogRetentionService,
+    private readonly events: SyslogEventHandlerService,
   ) {}
 
   supportedVendors(): string[] {
@@ -580,6 +582,24 @@ export class OltService {
     const removed = await this.retention.enforce();
     await this.audit(actor, 'OLT_SYSLOG_RETENTION_SET', { policy, removed });
     return { policy, removed };
+  }
+
+  async getSyslogHandlers() {
+    return { config: await this.events.getConfig() };
+  }
+
+  async setSyslogHandlers(
+    dto: {
+      inventory_sync?: boolean;
+      whatsapp_alert?: boolean;
+      whatsapp_group?: string;
+      alert_events?: string[];
+    },
+    actor: { userId: number; ip: string },
+  ) {
+    const config = await this.events.setConfig(dto);
+    await this.audit(actor, 'OLT_SYSLOG_HANDLERS_SET', { config });
+    return { config };
   }
 
   async listSyslogActions(id: number) {

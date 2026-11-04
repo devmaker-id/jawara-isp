@@ -862,6 +862,43 @@ export class OltRepository {
     return Number(result.affectedRows ?? 0);
   }
 
+  /**
+   * Terapkan event ONU (up/down/dying gasp) dari syslog ke inventori.
+   *
+   * Cocokkan baris inventori lewat (olt_id, port_id, onu_id); jatuh ke MAC bila
+   * PON/ONU kosong. Hanya ditulis saat status berubah (kondisi `online <> ?`),
+   * supaya tiap putaran inventori tidak dianggap "berubah" oleh event yang sama.
+   * Mengembalikan apakah status berubah — dipakai pemanggil untuk dedup alert.
+   */
+  async applySyslogOnuEvent(input: {
+    oltId: number;
+    portId: string | null;
+    onuId: string | null;
+    onuMac: string | null;
+    online: 0 | 1;
+    eventType: string;
+  }): Promise<{ changed: boolean }> {
+    let result: { affectedRows?: number };
+    if (input.portId && input.onuId) {
+      result = await this.db.execute(
+        `UPDATE olt_onus
+            SET online = ?, last_event = ?, last_event_at = NOW(), last_seen_at = NOW()
+          WHERE olt_id = ? AND port_id = ? AND onu_id = ? AND online <> ?`,
+        [input.online, input.eventType, input.oltId, input.portId, input.onuId, input.online],
+      );
+    } else if (input.onuMac) {
+      result = await this.db.execute(
+        `UPDATE olt_onus
+            SET online = ?, last_event = ?, last_event_at = NOW(), last_seen_at = NOW()
+          WHERE olt_id = ? AND onu_mac = ? AND online <> ?`,
+        [input.online, input.eventType, input.oltId, input.onuMac, input.online],
+      );
+    } else {
+      return { changed: false };
+    }
+    return { changed: Number(result.affectedRows ?? 0) > 0 };
+  }
+
   async insertSyslogAction(input: {
     oltId: number;
     action: 'apply' | 'rollback' | 'read';

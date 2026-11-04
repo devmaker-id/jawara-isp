@@ -72,6 +72,14 @@ const EVENT_TONE: Record<string, 'good' | 'bad' | 'warn' | 'mute'> = {
 const waktu = (value: string | null) =>
   value ? new Date(value).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'medium' }) : '—';
 
+const HANDLER_EVENT_OPTS = [
+  { value: 'ONU_LINKUP', label: '🟢 ONU up' },
+  { value: 'ONU_LINKDOWN', label: '🔴 ONU down' },
+  { value: 'ONU_REGISTER', label: '🔵 ONU registrasi' },
+  { value: 'ONU_DEREGISTER', label: '🔴 ONU deregistrasi' },
+  { value: 'ONU_DYING_GASP', label: '⚠️ ONU daya mati (dying gasp)' },
+] as const;
+
 const LogOnu: React.FC = () => {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
@@ -95,6 +103,15 @@ const LogOnu: React.FC = () => {
   const [retentionCount, setRetentionCount] = useState(500);
   const [retentionBusy, setRetentionBusy] = useState(false);
   const [retentionNote, setRetentionNote] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
+
+  // Konfigurasi event ONU (perbarui inventori + alert WhatsApp).
+  const [handlersOpen, setHandlersOpen] = useState(false);
+  const [handlerSync, setHandlerSync] = useState(false);
+  const [handlerAlert, setHandlerAlert] = useState(false);
+  const [handlerGroup, setHandlerGroup] = useState('');
+  const [handlerEvents, setHandlerEvents] = useState<string[]>(['ONU_LINKDOWN', 'ONU_DYING_GASP']);
+  const [handlerBusy, setHandlerBusy] = useState(false);
+  const [handlerNote, setHandlerNote] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
 
   // Perubahan filter kembali ke halaman pertama; hapus massal melintasi halaman,
   // jadi pilihan dibiarkan (bisa jadi menyangkut baris yang sudah tak tampil).
@@ -214,6 +231,45 @@ const LogOnu: React.FC = () => {
     }
   };
 
+  const openHandlers = async () => {
+    setHandlerNote(null);
+    try {
+      const response = await api.get('/api/olt/syslog/handlers');
+      const config = (response.data as {
+        config: { inventory_sync: boolean; whatsapp_alert: boolean; whatsapp_group: string; alert_events: string[] };
+      }).config;
+      setHandlerSync(config.inventory_sync);
+      setHandlerAlert(config.whatsapp_alert);
+      setHandlerGroup(config.whatsapp_group ?? '');
+      setHandlerEvents(config.alert_events ?? []);
+    } catch {
+      // pakai nilai bawaan bila belum pernah diset
+    }
+    setHandlersOpen(true);
+  };
+
+  const toggleHandlerEvent = (event: string) => {
+    setHandlerEvents((prev) => (prev.includes(event) ? prev.filter((e) => e !== event) : [...prev, event]));
+  };
+
+  const saveHandlers = async () => {
+    setHandlerBusy(true);
+    setHandlerNote(null);
+    try {
+      await api.post('/api/olt/syslog/handlers', {
+        inventory_sync: handlerSync,
+        whatsapp_alert: handlerAlert,
+        whatsapp_group: handlerGroup,
+        alert_events: handlerEvents,
+      });
+      setHandlerNote({ tone: 'ok', text: 'Konfigurasi event tersimpan.' });
+    } catch (error) {
+      setHandlerNote({ tone: 'bad', text: readError(error, 'Gagal menyimpan konfigurasi.') });
+    } finally {
+      setHandlerBusy(false);
+    }
+  };
+
   if (devices.loading && logs.loading) return <Loading label="Memuat log ONU…" />;
 
   return (
@@ -223,6 +279,7 @@ const LogOnu: React.FC = () => {
         subtitle="Alur kejadian ONU yang diterima dari OLT (linkup, linkdown, registrasi, dying gasp, login). Sumber: kolektor syslog internal."
         actions={
           <>
+            {isAdmin && <Button onClick={openHandlers}>Konfigurasi Event</Button>}
             {isAdmin && <Button onClick={openRetention}>Penghapusan Terjadwal</Button>}
             <Button onClick={logs.reload} disabled={logs.refreshing}>
               {logs.refreshing ? 'Memuat…' : 'Muat ulang'}
@@ -456,6 +513,91 @@ const LogOnu: React.FC = () => {
       )}
 
       {detail && <LogDetailModal row={detail} onClose={() => setDetail(null)} />}
+
+      {handlersOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
+          <div className="w-full max-w-md space-y-4 rounded-xl border border-slate-700 bg-slate-800 p-5">
+            <div>
+              <h2 className="text-lg font-semibold text-white">Konfigurasi Event ONU</h2>
+              <p className="mt-1 text-xs text-slate-400">
+                Saat log ONU up/down/daya mati masuk dari OLT, panel dapat memperbarui inventori dan mengirim alert WhatsApp.
+              </p>
+            </div>
+
+            {handlerNote && (
+              <div
+                className={`rounded-lg border px-3 py-2 text-sm ${
+                  handlerNote.tone === 'ok'
+                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                    : 'border-red-500/40 bg-red-500/10 text-red-300'
+                }`}
+              >
+                {handlerNote.text}
+              </div>
+            )}
+
+            <label className="flex items-center gap-2 text-sm text-slate-200">
+              <input
+                type="checkbox"
+                checked={handlerSync}
+                onChange={(event) => setHandlerSync(event.target.checked)}
+              />
+              Perbarui inventori ONU (online/offline + jejak event)
+            </label>
+
+            <label className="flex items-center gap-2 text-sm text-slate-200">
+              <input
+                type="checkbox"
+                checked={handlerAlert}
+                onChange={(event) => setHandlerAlert(event.target.checked)}
+              />
+              Kirim alert WhatsApp
+            </label>
+
+            {handlerAlert && (
+              <>
+                <label className="block text-xs text-slate-300">
+                  ID grup WhatsApp
+                  <input
+                    value={handlerGroup}
+                    onChange={(event) => setHandlerGroup(event.target.value)}
+                    placeholder="123456789@g.us"
+                    className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-900/60 px-3 py-2 font-mono text-sm text-slate-100"
+                  />
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    Ambil dari WhatsApp Gateway → Keamanan &amp; Akses (entri grup).
+                  </p>
+                </label>
+
+                <div className="text-sm text-slate-200">
+                  <p className="mb-1 text-xs font-medium text-slate-300">Beri tahu saat:</p>
+                  <div className="flex flex-col gap-1.5">
+                    {HANDLER_EVENT_OPTS.map((opt) => (
+                      <label key={opt.value} className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={handlerEvents.includes(opt.value)}
+                          onChange={() => toggleHandlerEvent(opt.value)}
+                        />
+                        <span>{opt.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+
+            <div className="flex justify-end gap-2 pt-1">
+              <Button onClick={() => setHandlersOpen(false)} disabled={handlerBusy}>
+                Batal
+              </Button>
+              <Button variant="primary" onClick={saveHandlers} disabled={handlerBusy}>
+                {handlerBusy ? 'Menyimpan…' : 'Simpan'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

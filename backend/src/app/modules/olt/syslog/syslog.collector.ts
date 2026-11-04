@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { createSocket, Socket } from 'node:dgram';
 import { parseSyslogEvent, ParsedSyslogEvent } from './syslog.parser';
+import { SyslogEventHandlerService } from './syslog.events';
 import { OltRepository } from '../olt.repository';
 
 /**
@@ -40,7 +41,10 @@ export class SyslogCollectorService implements OnModuleInit, OnModuleDestroy {
   private lastRefresh = 0;
   private readonly refreshMs = 60_000;
 
-  constructor(private readonly repository: OltRepository) {}
+  constructor(
+    private readonly repository: OltRepository,
+    private readonly events: SyslogEventHandlerService,
+  ) {}
 
   async onModuleInit(): Promise<void> {
     await this.refreshAllowlist();
@@ -87,6 +91,7 @@ export class SyslogCollectorService implements OnModuleInit, OnModuleDestroy {
     if (!(await this.isAllowed(sourceIp))) return;
     const parsed = parseSyslogEvent(raw);
     await this.persist(parsed, raw, sourceIp);
+    await this.events.onEvent(parsed, sourceIp);
   }
 
   private async persist(parsed: ParsedSyslogEvent, raw: string, sourceIp: string): Promise<void> {

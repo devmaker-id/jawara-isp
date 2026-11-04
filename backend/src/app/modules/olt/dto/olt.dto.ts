@@ -250,3 +250,24 @@ export class SetSyslogRetentionDto {
   @Max(100000, { message: 'count maksimal 100000.' })
   count?: number;
 }
+
+/** Konfigurasi handler event ONU (inventori + alert WhatsApp). */
+export class SetSyslogHandlerConfigDto {
+  @IsOptional()
+  @IsBoolean()
+  inventory_sync?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  whatsapp_alert?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64, { message: 'ID grup WhatsApp maksimal 64 karakter.' })
+  whatsapp_group?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  alert_events?: string[];
+}
