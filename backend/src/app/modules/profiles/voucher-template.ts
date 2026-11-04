@@ -108,7 +108,7 @@ const isLockedName = (name: string): boolean =>
 
 const PANJANG_HTML = `<style>
 .card{position:relative;display:flex;height:100%;border:1.5px solid #0f172a;background:#fff;color:#0f172a;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow:hidden}
-.price{width:20mm;flex:0 0 20mm;min-width:20mm;max-width:20mm;border-right:1px solid #0f172a;background:var(--tier-color,#64748b);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px;letter-spacing:.05em;white-space:nowrap;overflow:hidden;writing-mode:vertical-rl;transform:rotate(180deg)}
+.price{width:8mm;flex:0 0 8mm;min-width:8mm;max-width:8mm;border-right:1px solid #0f172a;background:var(--tier-color,#64748b);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px;letter-spacing:.05em;white-space:nowrap;overflow:hidden;writing-mode:vertical-rl;transform:rotate(180deg)}
 .body{flex:1;min-width:0;padding:7px 9px;display:flex;flex-direction:column;justify-content:space-between;gap:3px}
 .head{font-size:8.5px;letter-spacing:.12em;text-transform:uppercase;font-weight:700;text-align:center}
 .code{font-size:18px;font-weight:800;text-align:center;word-break:break-all;line-height:1.12;letter-spacing:.03em}
