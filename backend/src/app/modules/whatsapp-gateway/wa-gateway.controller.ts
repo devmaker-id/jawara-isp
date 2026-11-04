@@ -53,6 +53,11 @@ export class WaGatewayController {
     return this.gateway.deleteMessage(id);
   }
 
+  @Post('messages/delete')
+  deleteMessages(@Body() body: { ids?: number[] }) {
+    return this.gateway.deleteMessages(body?.ids ?? []);
+  }
+
   @Delete('events/:id')
   deleteEvent(@Param('id', ParseIntPipe) id: number) {
     return this.gateway.deleteEvent(id);

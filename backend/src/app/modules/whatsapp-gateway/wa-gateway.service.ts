@@ -144,10 +144,21 @@ export class WaGatewayService {
   async messages(limit = 50) {
     const size = Math.min(Math.max(Number(limit) || 50, 1), 200);
     return this.db.query(
-      `SELECT id, direction, chat_id, chat_type, sender, body_preview,
+      `SELECT id, direction, chat_id, chat_type, sender, body_preview, body,
               processing, command, reply_status, error_note, created_at
          FROM wa_messages ORDER BY id DESC LIMIT ${size}`,
     );
+  }
+
+  /** Hapus banyak baris riwayat pesan sekaligus. */
+  async deleteMessages(ids: number[]) {
+    const clean = (ids ?? []).filter((id) => Number.isInteger(Number(id)) && Number(id) > 0);
+    if (clean.length === 0) return { removed: 0 };
+    const result = await this.db.execute(
+      `DELETE FROM wa_messages WHERE id IN (${clean.map(() => '?').join(',')})`,
+      clean,
+    );
+    return { removed: Number(result.affectedRows ?? 0) };
   }
 
   async monitor() {

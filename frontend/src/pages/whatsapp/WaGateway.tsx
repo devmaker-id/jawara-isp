@@ -423,6 +423,7 @@ interface MessageRow {
   chat_type: string;
   sender: string | null;
   body_preview: string | null;
+  body: string | null;
   processing: string;
   command: string | null;
   reply_status: string;
@@ -431,17 +432,59 @@ interface MessageRow {
 }
 
 export const WaMessages: React.FC = () => {
-  const { data, reload } = useEndpoint<MessageRow[]>('/api/whatsapp-gateway/messages?limit=100');
+  const { data, reload } = useEndpoint<MessageRow[]>('/api/whatsapp-gateway/messages?limit=200');
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
   const [confirmId, setConfirmId] = useState<number | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [detail, setDetail] = useState<MessageRow | null>(null);
+
+  const rows = data ?? [];
 
   const remove = async (row: MessageRow) => {
     setBusy(true);
     try {
       await api.delete(`/api/whatsapp-gateway/messages/${row.id}`);
       setConfirmId(null);
+      setSelected((prev) => {
+        const next = new Set(prev);
+        next.delete(row.id);
+        return next;
+      });
       setNote({ tone: 'ok', text: 'Baris riwayat dihapus.' });
+      await reload();
+    } catch (e) {
+      setNote({ tone: 'bad', text: readError(e, 'Gagal menghapus riwayat.') });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggle = (id: number) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const allSelected = rows.length > 0 && rows.every((row) => selected.has(row.id));
+  const togglePage = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allSelected) rows.forEach((row) => next.delete(row.id));
+      else rows.forEach((row) => next.add(row.id));
+      return next;
+    });
+
+  const deleteSelected = async () => {
+    if (selected.size === 0) return;
+    setBusy(true);
+    try {
+      await api.post('/api/whatsapp-gateway/messages/delete', { ids: [...selected] });
+      const count = selected.size;
+      setSelected(new Set());
+      setNote({ tone: 'ok', text: `${count} baris riwayat dihapus.` });
       await reload();
     } catch (e) {
       setNote({ tone: 'bad', text: readError(e, 'Gagal menghapus riwayat.') });
@@ -456,17 +499,36 @@ export const WaMessages: React.FC = () => {
       <div className={card}>
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-white">Riwayat Pesan</h2>
-          <button className={btnGhost} onClick={() => void reload()}>
-            Muat ulang
-          </button>
+          <div className="flex items-center gap-2">
+            {selected.size > 0 && (
+              <button
+                className="rounded-lg px-3 py-2 text-sm font-medium bg-rose-600 text-white hover:bg-rose-500 disabled:opacity-60"
+                onClick={() => void deleteSelected()}
+                disabled={busy}
+              >
+                Hapus terpilih ({selected.size})
+              </button>
+            )}
+            <button className={btnGhost} onClick={() => void reload()}>
+              Muat ulang
+            </button>
+          </div>
         </div>
         <p className="text-xs text-slate-400">
-          Isi pesan disimpan terpotong 200 karakter untuk audit. Gunakan menu ⋮ untuk menghapus satu baris.
+          Ceklis baris untuk menghapus massal; tombol Detail menampilkan isi pesan penuh.
         </p>
         <div className="mt-3 overflow-x-auto">
           <table className="tbl-compact">
             <thead>
               <tr>
+                <th className="py-2 w-9">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={togglePage}
+                    aria-label="Pilih semua baris"
+                  />
+                </th>
                 <th className="py-2">Waktu</th>
                 <th className="py-2">Arah</th>
                 <th className="py-2">Chat</th>
@@ -477,8 +539,16 @@ export const WaMessages: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {(data ?? []).map((row) => (
+              {rows.map((row) => (
                 <tr key={row.id}>
+                  <td className="py-2">
+                    <input
+                      type="checkbox"
+                      checked={selected.has(row.id)}
+                      onChange={() => toggle(row.id)}
+                      aria-label={`Pilih baris ${row.id}`}
+                    />
+                  </td>
                   <td className="py-2 text-xs text-slate-400">{fmt(row.created_at)}</td>
                   <td className="py-2">{row.direction === 'in' ? 'masuk' : 'keluar'}</td>
                   <td className="py-2 text-xs text-slate-300">
@@ -490,48 +560,62 @@ export const WaMessages: React.FC = () => {
                     {row.command && <span className="ml-1 text-cyan-300">/{row.command}</span>}
                     {row.reply_status === 'failed' && <span className="ml-1 text-red-400">gagal</span>}
                   </td>
-                  <td className="py-2 max-w-[380px] truncate text-slate-300" title={row.body_preview ?? ''}>
+                  <td className="py-2 max-w-[340px] truncate text-slate-300" title={row.body_preview ?? ''}>
                     {row.body_preview ?? '—'}
                   </td>
                   <td className="py-2 text-right">
-                    {confirmId === row.id ? (
-                      <span className="flex items-center justify-end gap-2">
-                        <span className="text-xs text-slate-400">Hapus?</span>
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => void remove(row)}
-                          className="rounded bg-rose-600 px-2 py-1 text-xs text-white hover:bg-rose-500 disabled:opacity-50"
-                        >
-                          Ya
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setConfirmId(null)}
-                          className="rounded bg-slate-700 px-2 py-1 text-xs text-slate-200"
-                        >
-                          Batal
-                        </button>
-                      </span>
-                    ) : (
-                      <RowActions
-                        label={`Aksi untuk pesan ${row.id}`}
-                        actions={[
-                          {
-                            key: 'delete',
-                            label: 'Hapus baris riwayat',
-                            tone: 'danger',
-                            onSelect: () => setConfirmId(row.id),
-                          },
-                        ]}
-                      />
-                    )}
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        className="rounded border border-slate-600 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700/40"
+                        onClick={() => setDetail(row)}
+                      >
+                        Detail
+                      </button>
+                      {confirmId === row.id ? (
+                        <span className="flex items-center gap-2">
+                          <span className="text-xs text-slate-400">Hapus?</span>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => void remove(row)}
+                            className="rounded bg-rose-600 px-2 py-1 text-xs text-white hover:bg-rose-500 disabled:opacity-50"
+                          >
+                            Ya
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmId(null)}
+                            className="rounded bg-slate-700 px-2 py-1 text-xs text-slate-200"
+                          >
+                            Batal
+                          </button>
+                        </span>
+                      ) : (
+                        <RowActions
+                          label={`Aksi untuk pesan ${row.id}`}
+                          actions={[
+                            {
+                              key: 'detail',
+                              label: 'Lihat detail',
+                              onSelect: () => setDetail(row),
+                            },
+                            {
+                              key: 'delete',
+                              label: 'Hapus baris riwayat',
+                              tone: 'danger',
+                              onSelect: () => setConfirmId(row.id),
+                            },
+                          ]}
+                        />
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
-              {(data ?? []).length === 0 && (
+              {rows.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="py-3 text-center text-slate-500">
+                  <td colSpan={8} className="py-3 text-center text-slate-500">
                     Belum ada pesan.
                   </td>
                 </tr>
@@ -540,6 +624,69 @@ export const WaMessages: React.FC = () => {
           </table>
         </div>
       </div>
+
+      {detail && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-lg space-y-3 rounded-xl border border-slate-700 bg-slate-800 p-5">
+            <div className="flex items-start justify-between gap-3">
+              <h3 className="text-base font-semibold text-white">Detail Pesan #{detail.id}</h3>
+              <button
+                type="button"
+                className="rounded px-2 py-1 text-slate-400 hover:bg-slate-700/40"
+                onClick={() => setDetail(null)}
+              >
+                ✕
+              </button>
+            </div>
+            <dl className="space-y-1.5 text-sm">
+              <div className="flex justify-between gap-3">
+                <dt className="text-slate-500">Waktu</dt>
+                <dd className="text-slate-200">{fmt(detail.created_at)}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-slate-500">Arah</dt>
+                <dd className="text-slate-200">{detail.direction === 'in' ? 'masuk' : 'keluar'}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-slate-500">Chat</dt>
+                <dd className="text-slate-200">
+                  {detail.chat_type} · <span className="font-mono">{detail.chat_id}</span>
+                </dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-slate-500">Pengirim</dt>
+                <dd className="text-slate-200">{detail.sender ?? '—'}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-slate-500">Proses</dt>
+                <dd className="text-slate-200">
+                  {detail.processing}
+                  {detail.command && <span className="ml-1 text-cyan-300">/{detail.command}</span>}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-slate-500">Status balasan</dt>
+                <dd className="text-slate-200">{detail.reply_status}</dd>
+              </div>
+            </dl>
+            <div>
+              <p className="mb-1 text-xs font-medium text-slate-400">Isi pesan</p>
+              <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg bg-slate-900/60 p-3 text-sm text-slate-100">
+                {detail.body ?? detail.body_preview ?? '—'}
+              </pre>
+            </div>
+            <div className="flex justify-end">
+              <button className={btnGhost} onClick={() => setDetail(null)}>
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

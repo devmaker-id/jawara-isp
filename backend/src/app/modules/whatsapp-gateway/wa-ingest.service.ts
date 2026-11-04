@@ -58,9 +58,9 @@ export class WaIngestService implements OnModuleInit, OnModuleDestroy {
     const preview = message.text.replace(/\s+/g, ' ').slice(0, 200);
     const inserted = await this.db.execute(
       `INSERT IGNORE INTO wa_messages
-         (wa_id, direction, chat_id, chat_type, sender, body_preview, processing)
-       VALUES (?, 'in', ?, ?, ?, ?, 'ignored')`,
-      [message.id || randomUUID(), message.chat_id, message.chat_type, message.sender, preview],
+         (wa_id, direction, chat_id, chat_type, sender, body_preview, body, processing)
+       VALUES (?, 'in', ?, ?, ?, ?, ?, 'ignored')`,
+      [message.id || randomUUID(), message.chat_id, message.chat_type, message.sender, preview, message.text],
     );
     if (inserted.affectedRows === 0) return; // pesan yang sama sudah pernah diproses
 
@@ -120,9 +120,9 @@ export class WaIngestService implements OnModuleInit, OnModuleDestroy {
     }
     await this.db.execute(
       `INSERT IGNORE INTO wa_messages
-         (wa_id, direction, chat_id, chat_type, sender, body_preview, processing, reply_status)
-       VALUES (?, 'out', ?, ?, 'bot', ?, 'direct', ?)`,
-      [`out:${randomUUID()}`, message.chat_id, message.chat_type, text.replace(/\s+/g, ' ').slice(0, 200), status],
+         (wa_id, direction, chat_id, chat_type, sender, body_preview, body, processing, reply_status)
+       VALUES (?, 'out', ?, ?, 'bot', ?, ?, 'direct', ?)`,
+      [`out:${randomUUID()}`, message.chat_id, message.chat_type, text.replace(/\s+/g, ' ').slice(0, 200), text, status],
     );
   }
 
