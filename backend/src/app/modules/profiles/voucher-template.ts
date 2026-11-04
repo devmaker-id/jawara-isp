@@ -107,21 +107,24 @@ const isLockedName = (name: string): boolean =>
   LOCKED_TEMPLATE_NAMES.some((locked) => locked.toLowerCase() === name.trim().toLowerCase());
 
 const PANJANG_HTML = `<style>
-.card{position:relative;display:flex;height:100%;border:2px solid #0f172a;background:#fff;color:#0f172a;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow:hidden}
-.price{width:20mm;flex:0 0 20mm;background:var(--tier-color,#16a34a);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px;letter-spacing:.04em;writing-mode:vertical-rl;transform:rotate(180deg)}
-.body{flex:1;min-width:0;padding:8px 10px;display:flex;flex-direction:column;justify-content:space-between;gap:4px}
-.head{font-size:9px;letter-spacing:.18em;text-transform:uppercase;font-weight:700}
-.code{font-size:20px;font-weight:800;text-align:center;word-break:break-all;line-height:1.15}
-.valid{font-size:9px;text-align:center;color:#334155;line-height:1.3}
-.foot{display:flex;justify-content:space-between;gap:6px;font-size:8px;color:#475569;border-top:1px dashed #cbd5e1;padding-top:4px}
+.card{position:relative;display:flex;height:100%;border:1.5px solid #0f172a;background:#fff;color:#0f172a;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow:hidden}
+.price{width:20mm;flex:0 0 20mm;min-width:20mm;max-width:20mm;border-right:1px solid #0f172a;background:var(--tier-color,#64748b);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px;letter-spacing:.05em;white-space:nowrap;overflow:hidden;writing-mode:vertical-rl;transform:rotate(180deg)}
+.body{flex:1;min-width:0;padding:7px 9px;display:flex;flex-direction:column;justify-content:space-between;gap:3px}
+.head{font-size:8.5px;letter-spacing:.12em;text-transform:uppercase;font-weight:700;text-align:center}
+.code{font-size:18px;font-weight:800;text-align:center;word-break:break-all;line-height:1.12;letter-spacing:.03em}
+.valid{font-size:8.5px;text-align:center;color:#334155;line-height:1.35}
+.foot{display:flex;justify-content:space-between;gap:6px;font-size:7.5px;color:#475569;border-top:1px dashed #94a3b8;padding-top:3px}
+.v-card[data-tier="1k"] .price{background:#2196F3}
+.v-card[data-tier="3k"] .price{background:#009688}
+.v-card[data-tier="5k"] .price{background:#FF9800}
 </style>
 <div class="card">
   <div class="price">{{price}}</div>
   <div class="body">
-    <div class="head">Voucher WiFi</div>
+    <div class="head">{{brand}}</div>
     <div class="code">{{credential}}</div>
-    <div class="valid">{{profile}} · {{profile_type}}<br>{{created_at}}</div>
-    <div class="foot"><span>Seller: {{owner}}</span><span>{{brand}}</span></div>
+    <div class="valid">{{profile}} · {{profile_type}}<br>Berlaku s.d. {{expires}}</div>
+    <div class="foot"><span>Login WiFi</span><span>{{printed_at}}</span></div>
   </div>
 </div>`;
 
