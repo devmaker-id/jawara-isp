@@ -151,4 +151,16 @@ describe('DashboardService', () => {
     expect(summary.onu.total).toBe(0);
     expect(summary.onu.error).toMatch(/olt_onus/);
   });
+
+  it('angka online mengecualikan sesi basi (acctupdatetime > 10 menit)', async () => {
+    const { service, sql } = makeService();
+    await service.summary();
+
+    const query = sql.find((statement) => statement.includes('radacct')) ?? '';
+    // Sesi hidup = acctstoptime IS NULL DAN BUKAN basi. Klausa basi memakai
+    // ambang 10 menit yang sama dengan halaman Sesi Online.
+    expect(query).toContain('acctstoptime IS NULL');
+    expect(query).toContain('acctupdatetime');
+    expect(query).toContain('INTERVAL 10 MINUTE');
+  });
 });

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { DatabaseService } from '../../database/database.service';
 import { ownerFilter, RequestScope, SYSTEM_SCOPE } from '../auth/request-scope';
+import { STALE_SQL } from '../sessions/sessions.repository';
 import { CreateCustomerDto, UpdateCustomerDto } from './dto/customer.dto';
 import {
   CUSTOMER_STATUSES,
@@ -150,9 +151,11 @@ export function normaliseStatus(value: string | null | undefined): CustomerStatu
 
 // Akun RADIUS per pelanggan. `radacct` dipakai untuk status online karena
 // sesi yang benar-benar tercatat AAA, bukan tabel lain yang tidak pernah diisi.
+// Sesi "basi" (acctupdatetime > 10 menit) TIDAK dihitung online — konsisten
+// dengan dashboard dan halaman Sesi Online (`STALE_SQL` sumber tunggal).
 const ACCOUNT_COLUMNS = `v.id, v.username, v.profile_type, v.profile_id, v.profile_name,
   v.user_type, v.status, v.expires_at,
-  EXISTS(SELECT 1 FROM radacct a WHERE a.username = v.username AND a.acctstoptime IS NULL) AS online,
+  EXISTS(SELECT 1 FROM radacct a WHERE a.username = v.username AND a.acctstoptime IS NULL AND NOT ${STALE_SQL}) AS online,
   (SELECT MAX(a.acctstarttime) FROM radacct a WHERE a.username = v.username) AS last_seen`;
 
 /** Satu baris akun RADIUS → objek API. */

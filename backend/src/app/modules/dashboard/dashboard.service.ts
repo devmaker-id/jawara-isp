@@ -4,6 +4,7 @@ import { RequestScope, SYSTEM_SCOPE } from '../auth/request-scope';
 import { SalesService } from '../sales/sales.service';
 import { ReceivablesRepository } from '../receivables/receivables.repository';
 import { readServerMetrics, ServerMetrics } from './system-metrics';
+import { STALE_SQL } from '../sessions/sessions.repository';
 
 // Ringkasan dashboard: uang, pelanggan, tagihan yang perlu ditindak, aktivitas
 // terakhir, dan kondisi jaringan. Semua query baca-saja dan tidak memanggil API
@@ -461,7 +462,12 @@ export class DashboardService {
   }
 
   /**
-   * Angka online HANYA dari radacct.
+   * Angka online HANYA dari radacct, dan hanya sesi yang benar-benar hidup.
+   *
+   * Sesi "basi" (tidak mengirim accounting > 10 menit, `acctupdatetime` terlalu
+   * tua) dikecualikan dari angka ini — sesi basi bukan "online" yang dapat
+   * dipercaya. Definisi basi memakai `STALE_SQL` yang sama dengan halaman Sesi
+   * Online supaya dashboard dan daftar sesi tidak pernah berbeda.
    *
    * Tidak ada cadangan lewat API perangkat: dashboard dibuka sepanjang hari
    * dan tidak boleh membuat koneksi ke router. Bila accounting belum menulis
@@ -529,6 +535,7 @@ export class DashboardService {
                FROM radacct a
                LEFT JOIN radius_vouchers v ON v.username = a.username
               WHERE a.acctstoptime IS NULL
+                AND NOT ${STALE_SQL}
            ) AS a`,
       );
       if (!row) return null;

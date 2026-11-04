@@ -24,6 +24,11 @@ const JENIS_SQL =
 const STALE_SQL =
   "(a.acctupdatetime IS NOT NULL AND a.acctupdatetime < (NOW() - INTERVAL 10 MINUTE))";
 
+// SUMBER KEBENARAN TUNGGAL untuk definisi "basi": dipakai ulang oleh dashboard
+// (angka online) dan sesi online. Jangan salin-tempel definisi ini ke modul
+// lain — impor dari sini supaya ambang tidak bisa menyimpang.
+export { STALE_SQL };
+
 export interface OnlineSession {
   acctuniqueid: string;
   username: string | null;
@@ -91,6 +96,12 @@ export class SessionsRepository {
   } {
     const where: string[] = ['a.acctstoptime IS NULL'];
     const params: unknown[] = [];
+
+    // Sesi "basi" bukan online: jangan tampil/dihitung sebagai sesi hidup.
+    // `NOT ${STALE_SQL}` menyimpan sesi yang acctupdatetime-nya NULL (baru,
+    // belum ada interim) atau masih segar (< 10 menit). Definisi memakai
+    // STALE_SQL — sumber tunggal yang sama dengan dashboard.
+    where.push(`NOT ${STALE_SQL}`);
 
     if (filter.jenis) {
       where.push(`${JENIS_SQL} = ?`);
