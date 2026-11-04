@@ -48,9 +48,9 @@ export const SETTING_DEFAULTS: Record<SettingKey, string> = {
   brand_name: 'JAWARA-ISP',
   brand_tagline: 'BibitNet ISP',
   brand_primary_color: '#06b6d4',
-  // Logo bawaan ikut repo: frontend/public/branding/logo-default.png.
+  // Logo bawaan ikut repo: frontend/public/branding/jawara-isp.png.
   // Boleh diganti URL lain dari Pengaturan -> Branding.
-  brand_logo_url: '/branding/logo-default.png',
+  brand_logo_url: '/branding/jawara-isp.png',
   brand_footer_text: '',
   // Dikosongkan = pakai template bawaan di voucher-template.ts. Halaman
   // Pengaturan → Template Voucher menulis JSON ini.

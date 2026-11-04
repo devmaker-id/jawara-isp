@@ -289,7 +289,7 @@ const Settings: React.FC = () => {
           value={values.brand_logo_url ?? ''}
           onChange={(v) => set('brand_logo_url', v)}
           disabled={!isAdmin}
-          placeholder="/branding/logo-default.png"
+          placeholder="/branding/jawara-isp.png"
           mono
         />
         <div>

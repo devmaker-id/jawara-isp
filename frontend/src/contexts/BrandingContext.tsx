@@ -23,7 +23,7 @@ export interface Branding {
 export const BRANDING_DEFAULTS: Branding = {
   name: 'JAWARA-ISP',
   tagline: 'BibitNet ISP',
-  logo_url: '/branding/logo-default.png',
+  logo_url: '/branding/jawara-isp.png',
   primary_color: '#06b6d4',
   footer_text: '',
 };
