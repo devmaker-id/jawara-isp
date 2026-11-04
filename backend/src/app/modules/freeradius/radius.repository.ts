@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { ResultSetHeader } from 'mysql2/promise';
 import { DatabaseService } from '../../database/database.service';
+import { STALE_SQL } from '../sessions/sessions.repository';
 import {
   NAS_PUBLIC_SELECT,
   NasRow,
@@ -39,7 +40,7 @@ export class RadiusRepository {
       `SELECT
          (SELECT COUNT(*) FROM nas) AS nas,
          (SELECT COUNT(DISTINCT username) FROM radcheck) AS users,
-         (SELECT COUNT(*) FROM radacct WHERE acctstoptime IS NULL) AS sessions,
+         (SELECT COUNT(*) FROM radacct a WHERE a.acctstoptime IS NULL AND NOT ${STALE_SQL}) AS sessions,
          (SELECT COUNT(DISTINCT groupname) FROM radusergroup) AS \`groups\``,
     );
     return rows[0] ?? { nas: 0, users: 0, sessions: 0, groups: 0 };
@@ -330,7 +331,7 @@ export class RadiusRepository {
     return this.db.query<RadiusSessionRow>(
       `SELECT radacctid, username, nasipaddress, framedipaddress, acctstarttime,
               acctsessiontime, acctinputoctets, acctoutputoctets, callingstationid
-         FROM radacct WHERE acctstoptime IS NULL
+         FROM radacct a WHERE a.acctstoptime IS NULL AND NOT ${STALE_SQL}
         ORDER BY acctstarttime DESC LIMIT ?`,
       [Math.min(Math.max(limit, 1), 500)],
     );
