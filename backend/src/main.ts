@@ -9,7 +9,9 @@ async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   // Foto profil disajikan di /api/uploads supaya ikut jalur proxy frontend
   // (vite hanya meneruskan /api) dan tidak perlu aturan tambahan.
-  app.useStaticAssets(join(__dirname, 'uploads'), {
+  // Disajikan dari backend/uploads (bukan dist/): `nest build` memakai
+  // deleteOutDir dan menghapus dist, jadi berkas unggahan tidak boleh ada di sana.
+  app.useStaticAssets(join(process.cwd(), 'uploads'), {
     prefix: '/api/uploads/',
     maxAge: '7d',
   });

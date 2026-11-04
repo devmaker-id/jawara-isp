@@ -23,8 +23,9 @@ import * as crypto from 'crypto';
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
-// Use fixed absolute path for uploads (compiled dist directory)
-const UPLOAD_DIR = '/home/devmaker/jawara-isp/backend/dist/uploads';
+// Simpan di backend/uploads (bukan dist/): `nest build` memakai deleteOutDir
+// sehingga seluruh dist/ — termasuk berkas unggahan — terhapus tiap rebuild.
+const UPLOAD_DIR = join(process.cwd(), 'uploads');
 if (!existsSync(UPLOAD_DIR)) {
   mkdirSync(UPLOAD_DIR, { recursive: true, mode: 0o755 });
 }
