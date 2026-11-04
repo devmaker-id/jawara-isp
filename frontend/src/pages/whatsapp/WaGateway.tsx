@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../../services/api';
 import { RowActions } from '../../components/table/RowActions';
+import { Alert, AlertTone } from '../../components/Alert';
 
 /**
  * WhatsApp Gateway milik Jawara-ISP.
@@ -52,17 +53,12 @@ function useEndpoint<T>(path: string, deps: unknown[] = []) {
   return { data, error, loading, reload: load };
 }
 
-function Toast({ text }: { text: { tone: 'ok' | 'bad'; text: string } | null }) {
+function Toast({ text }: { text: { tone: 'ok' | 'bad' | 'warning'; text: string } | null }) {
   if (!text) return null;
+  const tone: AlertTone = text.tone === 'ok' ? 'success' : text.tone === 'bad' ? 'error' : 'warning';
   return (
-    <div
-      className={`mb-3 rounded-lg border px-4 py-2 text-sm ${
-        text.tone === 'ok'
-          ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-          : 'border-red-500/40 bg-red-500/10 text-red-300'
-      }`}
-    >
-      {text.text}
+    <div className="mb-3">
+      <Alert tone={tone}>{text.text}</Alert>
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { NavLink, Link, useLocation, Outlet } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useBranding } from '../contexts/BrandingContext';
@@ -31,6 +32,20 @@ const MoonIcon: React.FC = () => (
       d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z" />
   </svg>
 );
+
+/** Mobile < 768px pakai drawer/accordion; desktop pakai flyout dropdown. */
+const useIsDesktop = (): boolean => {
+  const [isDesktop, setIsDesktop] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)');
+    const onChange = () => setIsDesktop(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  return isDesktop;
+};
 
 /**
  * Identitas panel: logo + nama + tagline, semuanya dari Pengaturan → Branding.
@@ -135,8 +150,11 @@ const MenuGroup: React.FC<{
   onNavigate: () => void;
   open: boolean;
   onToggle: () => void;
-}> = ({ item, onNavigate, open, onToggle }) => {
+  isDesktop: boolean;
+}> = ({ item, onNavigate, open, onToggle, isDesktop }) => {
   const location = useLocation();
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
   const children = item.children ?? [];
 
   const isChildActive = children.some((child) => matchesMenuPath(child.path, location));
@@ -153,12 +171,58 @@ const MenuGroup: React.FC<{
     );
   }
 
+  const toggle = () => {
+    if (isDesktop && !open && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      const top = Math.max(8, Math.min(rect.top, window.innerHeight - 360));
+      setCoords({ top, left: rect.right + 6 });
+    }
+    onToggle();
+  };
+
+  // Desktop: flyout ke kanan. Di-render lewat portal ke <body>, supaya tidak
+  // terpotong overflow/transform pada <aside> (drawer mobile).
+  const flyout = isDesktop && open && coords && (
+    <div
+      role="menu"
+      aria-label={`Submenu ${item.label}`}
+      className="fixed z-50 w-56 overflow-hidden rounded-xl border border-slate-700 bg-slate-800 p-1.5 shadow-2xl"
+      style={{ top: coords.top, left: coords.left }}
+    >
+      <p className="px-2.5 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+        {item.label}
+      </p>
+      {children.map((child) => {
+        const active = matchesMenuPath(child.path, location);
+        return (
+          <NavLink
+            key={child.path}
+            to={child.path}
+            end
+            onClick={onNavigate}
+            role="menuitem"
+            className={`flex items-center rounded-lg px-2.5 py-2 text-sm transition ${
+              active
+                ? 'bg-cyan-500/10 font-medium text-cyan-300'
+                : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'
+            }`}
+          >
+            {active && <span className="mr-2 h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-400" />}
+            <span className="truncate">{child.label}</span>
+          </NavLink>
+        );
+      })}
+    </div>
+  );
+
   return (
     <div>
       <button
+        ref={buttonRef}
         type="button"
-        onClick={onToggle}
+        onClick={toggle}
         aria-expanded={open}
+        aria-haspopup={isDesktop ? 'menu' : undefined}
         className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
           isChildActive
             ? 'bg-cyan-500/10 text-cyan-400'
@@ -179,37 +243,40 @@ const MenuGroup: React.FC<{
         </svg>
       </button>
 
-      {/* Baris 0fr -> 1fr: tinggi sub-menu dianimasikan, jadi tutup/buka
-          terasa halus, bukan melompat. */}
-      <div
-        className={`grid transition-all duration-200 ease-out ${
-          open ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
-        }`}
-      >
-        <div className="overflow-hidden" aria-hidden={!open}>
-          <div className="mt-1 space-y-0.5 border-l border-slate-700/60 pl-3 ml-5">
-            {children.map((child) => {
-              const active = matchesMenuPath(child.path, location);
-              return (
-                <NavLink
-                  key={child.path}
-                  to={child.path}
-                  end
-                  onClick={onNavigate}
-                  tabIndex={open ? 0 : -1}
-                  className={`flex items-center rounded-lg px-3 py-2 text-sm transition ${
-                    active
-                      ? 'bg-cyan-500/10 text-cyan-300 font-medium'
-                      : 'text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'
-                  }`}
-                >
-                  <span className="truncate">{child.label}</span>
-                </NavLink>
-              );
-            })}
+      {flyout && createPortal(flyout, document.body)}
+
+      {/* Mobile: sub-menu inline sebagai accordion. */}
+      {!isDesktop && (
+        <div
+          className={`grid transition-all duration-200 ease-out ${
+            open ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
+          }`}
+        >
+          <div className="overflow-hidden" aria-hidden={!open}>
+            <div className="mt-1 space-y-0.5 border-l border-slate-700/60 pl-3 ml-5">
+              {children.map((child) => {
+                const active = matchesMenuPath(child.path, location);
+                return (
+                  <NavLink
+                    key={child.path}
+                    to={child.path}
+                    end
+                    onClick={onNavigate}
+                    tabIndex={open ? 0 : -1}
+                    className={`flex items-center rounded-lg px-3 py-2 text-sm transition ${
+                      active
+                        ? 'bg-cyan-500/10 text-cyan-300 font-medium'
+                        : 'text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'
+                    }`}
+                  >
+                    <span className="truncate">{child.label}</span>
+                  </NavLink>
+                );
+              })}
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };
@@ -225,6 +292,8 @@ const Layout: React.FC = () => {
   // Dialog "Cek pemakaian user" — dipakai semua role, dari halaman mana pun.
   const [usageOpen, setUsageOpen] = useState(false);
   const accountRef = useRef<HTMLDivElement>(null);
+  const navRef = useRef<HTMLElement>(null);
+  const isDesktop = useIsDesktop();
   const location = useLocation();
   const { user, logout } = useAuth();
   const brand = useBranding();
@@ -241,13 +310,15 @@ const Layout: React.FC = () => {
       item.children?.some((child) => matchesMenuPath(child.path, location)),
     )?.path ?? null;
 
+  // Auto-buka grup aktif hanya di mobile (accordion). Di desktop flyout dibuka manual.
   useEffect(() => {
-    if (activeGroup) setOpenGroup(activeGroup);
-  }, [activeGroup]);
+    if (activeGroup && !isDesktop) setOpenGroup(activeGroup);
+  }, [activeGroup, isDesktop]);
 
   useEffect(() => {
     setOpen(false);
     setAccountOpen(false);
+    setOpenGroup(null);
   }, [location.pathname]);
 
   // Klik di luar menu akun menutup dropdown.
@@ -261,11 +332,23 @@ const Layout: React.FC = () => {
     return () => document.removeEventListener('mousedown', onPointerDown);
   }, []);
 
+  // Klik di luar sidebar menutup flyout dropdown (desktop) maupun accordion (mobile).
+  useEffect(() => {
+    const onPointerDown = (event: MouseEvent) => {
+      if (navRef.current && !navRef.current.contains(event.target as Node)) {
+        setOpenGroup(null);
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, []);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setOpen(false);
         setAccountOpen(false);
+        setOpenGroup(null);
       }
     };
     window.addEventListener('keydown', handler);
@@ -382,6 +465,7 @@ const Layout: React.FC = () => {
       <div className="flex flex-1 min-h-0 overflow-hidden">
         {/* Sidebar kiri: desktop selalu tampil, mobile drawer dari kiri */}
         <aside
+          ref={navRef}
           className={`fixed inset-y-0 left-0 z-40 flex flex-col flex-shrink-0 border-r border-slate-700/50 bg-slate-800 text-slate-100 transition-transform duration-300 ease-in-out ${open ? 'translate-x-0' : '-translate-x-full'} md:static md:inset-auto md:left-auto md:z-auto md:translate-x-0`}
           style={{ width: 'var(--drawer-width)', maxWidth: 'var(--drawer-max-width)' }}
           aria-label="Sidebar navigasi"
@@ -411,6 +495,7 @@ const Layout: React.FC = () => {
                     item={item}
                     onNavigate={() => setOpen(false)}
                     open={openGroup === item.path}
+                    isDesktop={isDesktop}
                     onToggle={() =>
                       setOpenGroup((previous) => (previous === item.path ? null : item.path))
                     }
