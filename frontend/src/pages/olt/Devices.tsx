@@ -57,6 +57,19 @@ interface FormState {
   is_active: boolean;
 }
 
+interface SyslogState {
+  enabled: boolean;
+  collectorIp: string | null;
+  collectorPort: number;
+  readBack: string | null;
+}
+
+interface SyslogResult {
+  before: SyslogState;
+  after: SyslogState;
+  verified: boolean;
+}
+
 const emptyForm = (vendor = 'vsol'): FormState => ({
   name: '',
   vendor,
@@ -105,6 +118,16 @@ const OltDevices: React.FC = () => {
   const [form, setForm] = useState<FormState | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  // ===== modal Syslog Client =====
+  const canWriteSyslog = user?.role === 'admin';
+  const [syslogDevice, setSyslogDevice] = useState<OltDevice | null>(null);
+  const [syslogState, setSyslogState] = useState<SyslogState | null>(null);
+  const [syslogEnabled, setSyslogEnabled] = useState(true);
+  const [syslogIp, setSyslogIp] = useState('');
+  const [syslogBusy, setSyslogBusy] = useState(false);
+  const [syslogNote, setSyslogNote] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [syslogResult, setSyslogResult] = useState<SyslogResult | null>(null);
 
   const rows = devices.data?.rows ?? [];
   const vendors = devices.data?.vendors ?? ['vsol'];
@@ -200,13 +223,78 @@ const OltDevices: React.FC = () => {
     }
   };
 
+  const openSyslog = async (device: OltDevice) => {
+    setSyslogDevice(device);
+    setSyslogState(null);
+    setSyslogResult(null);
+    setSyslogNote(null);
+    setSyslogEnabled(true);
+    setSyslogIp('');
+    setSyslogBusy(true);
+    try {
+      const response = await api.get(`/api/olt/devices/${device.id}/syslog`);
+      const data = response.data as { state: SyslogState; vendor: string };
+      setSyslogState(data.state);
+      setSyslogEnabled(data.state.enabled);
+      if (data.state.collectorIp) setSyslogIp(data.state.collectorIp);
+    } catch (error) {
+      setSyslogNote({ kind: 'err', text: errorMessage(error) });
+    } finally {
+      setSyslogBusy(false);
+    }
+  };
+
+  const applySyslog = async () => {
+    if (!syslogDevice) return;
+    setSyslogBusy(true);
+    setSyslogNote(null);
+    setSyslogResult(null);
+    try {
+      const response = await api.post(`/api/olt/devices/${syslogDevice.id}/syslog`, {
+        enabled: syslogEnabled,
+        collector_ip: syslogEnabled ? syslogIp : undefined,
+      });
+      setSyslogResult(response.data as SyslogResult);
+      setSyslogState((response.data as SyslogResult).after);
+      setSyslogNote({
+        kind: (response.data as SyslogResult).verified ? 'ok' : 'err',
+        text: (response.data as SyslogResult).verified
+          ? 'Berhasil diterapkan dan terverifikasi di perangkat.'
+          : 'Diterapkan, tetapi read-back belum cocok — periksa hasil di bawah.',
+      });
+      devices.reload();
+    } catch (error) {
+      setSyslogNote({ kind: 'err', text: errorMessage(error) });
+    } finally {
+      setSyslogBusy(false);
+    }
+  };
+
+  const rollbackSyslog = async () => {
+    if (!syslogDevice) return;
+    setSyslogBusy(true);
+    setSyslogNote(null);
+    setSyslogResult(null);
+    try {
+      const response = await api.post(`/api/olt/devices/${syslogDevice.id}/syslog/rollback`);
+      setSyslogResult(response.data as SyslogResult);
+      setSyslogState((response.data as SyslogResult).after);
+      setSyslogNote({ kind: 'ok', text: 'Rollback selesai ke snapshot sebelumnya.' });
+      devices.reload();
+    } catch (error) {
+      setSyslogNote({ kind: 'err', text: errorMessage(error) });
+    } finally {
+      setSyslogBusy(false);
+    }
+  };
+
   if (devices.loading) return <Loading label="Memuat perangkat OLT…" />;
 
   return (
     <div className="page-container">
       <PageHeader
         title="Perangkat OLT"
-        subtitle="Inventori ONU dibaca langsung dari perangkat lewat SSH/telnet. Panel hanya membaca — tidak ada perubahan konfigurasi OLT dari sini."
+        subtitle="Inventori ONU dibaca langsung dari perangkat lewat SSH/telnet (baca-saja). Pengaturan Syslog Client OLT lewat aksi 'Syslog Client'."
         actions={
           canWrite ? (
             <Button variant="primary" onClick={() => setForm(emptyForm(vendors[0]))}>
@@ -300,6 +388,12 @@ const OltDevices: React.FC = () => {
                     disabled: busy !== null || !device.is_active,
                     hidden: !canWrite,
                     onSelect: () => run(device, 'sync'),
+                  },
+                  {
+                    key: 'syslog',
+                    label: 'Syslog Client',
+                    disabled: busy !== null,
+                    onSelect: () => openSyslog(device),
                   },
                   {
                     key: 'edit',
@@ -466,6 +560,125 @@ const OltDevices: React.FC = () => {
               </Button>
               <Button variant="primary" onClick={save} disabled={busy === 'save'}>
                 {busy === 'save' ? 'Menyimpan…' : 'Simpan'}
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {syslogDevice && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/70 p-4">
+          <Card className="mt-10 w-full max-w-2xl">
+            <h2 className="mb-1 text-lg font-semibold text-white">
+              Syslog Client — {syslogDevice.name}
+            </h2>
+            <p className="mb-4 text-xs text-slate-400">
+              vendor {syslogDevice.vendor} · kolektor internal Jawara-ISP (UDP/514)
+            </p>
+
+            {syslogNote && (
+              <div
+                className={`mb-3 rounded-lg border px-3 py-2 text-sm ${
+                  syslogNote.kind === 'ok'
+                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
+                    : 'border-rose-500/40 bg-rose-500/10 text-rose-200'
+                }`}
+              >
+                {syslogNote.text}
+              </div>
+            )}
+
+            <div className="mb-4 rounded-lg border border-slate-700 bg-slate-900/50 p-3 text-xs">
+              <p className="mb-1 font-medium text-slate-300">Status di perangkat (read-back)</p>
+              {syslogBusy && !syslogState ? (
+                <p className="text-slate-500">Membaca…</p>
+              ) : syslogState ? (
+                <>
+                  <p className="text-slate-200">
+                    Syslog:{' '}
+                    <span className={syslogState.enabled ? 'text-emerald-300' : 'text-rose-300'}>
+                      {syslogState.enabled ? 'aktif' : 'nonaktif'}
+                    </span>
+                    {syslogState.collectorIp
+                      ? ` · tujuan ${syslogState.collectorIp}:${syslogState.collectorPort}`
+                      : ''}
+                  </p>
+                  {syslogState.readBack && (
+                    <p className="mt-1 truncate text-slate-500">{syslogState.readBack.slice(0, 140)}</p>
+                  )}
+                </>
+              ) : (
+                <p className="text-slate-500">Belum ada data. Klik Segarkan.</p>
+              )}
+            </div>
+
+            {canWriteSyslog ? (
+              <>
+                <label className="flex items-center gap-2 text-xs text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={syslogEnabled}
+                    onChange={(event) => setSyslogEnabled(event.target.checked)}
+                    className="h-4 w-4 rounded border-slate-600 bg-slate-900"
+                  />
+                  Aktifkan Syslog Client
+                </label>
+                {syslogEnabled && (
+                  <label className="mt-3 block text-xs text-slate-300">
+                    IP kolektor internal
+                    <input
+                      value={syslogIp}
+                      onChange={(event) => setSyslogIp(event.target.value)}
+                      placeholder="192.168.76.254"
+                      className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-900/60 px-3 py-2 font-mono text-sm text-slate-100"
+                    />
+                  </label>
+                )}
+                <p className="mt-2 text-[11px] text-slate-500">
+                  {syslogDevice.vendor === 'vsol' || syslogDevice.vendor === 'global'
+                    ? 'VSOL: menetapkan remote IP + mengaktifkan event/alarm ONU (bawaan).'
+                    : 'HiFocus: hanya IP tujuan; port/protocol/severity tetap UDP/514.'}
+                </p>
+              </>
+            ) : (
+              <p className="text-[11px] text-slate-500">
+                Anda hanya dapat melihat status (mengubah hanya untuk admin).
+              </p>
+            )}
+
+            {syslogResult && (
+              <div className="mt-3 rounded-lg border border-slate-700 bg-slate-900/50 p-3 text-xs">
+                <p className="font-medium text-slate-300">Hasil terapkan</p>
+                <p className="text-slate-200">
+                  sebelum: {syslogResult.before.enabled ? `aktif · ${syslogResult.before.collectorIp}` : 'nonaktif'}
+                </p>
+                <p className="text-slate-200">
+                  sesudah: {syslogResult.after.enabled ? `aktif · ${syslogResult.after.collectorIp}` : 'nonaktif'}
+                </p>
+                <p className={syslogResult.verified ? 'text-emerald-300' : 'text-rose-300'}>
+                  {syslogResult.verified
+                    ? '✓ terverifikasi (read-back cocok)'
+                    : '✗ read-back belum cocok — tinjau & rollback bila perlu'}
+                </p>
+              </div>
+            )}
+
+            <div className="mt-5 flex justify-end gap-2">
+              <Button onClick={() => openSyslog(syslogDevice)} disabled={syslogBusy}>
+                Segarkan
+              </Button>
+              {canWriteSyslog && (
+                <>
+                  <Button onClick={rollbackSyslog} disabled={syslogBusy}>
+                    Rollback
+                  </Button>
+                  <Button variant="primary" onClick={applySyslog} disabled={syslogBusy}>
+                    {syslogBusy ? 'Memproses…' : 'Terapkan'}
+                  </Button>
+                </>
+              )}
+              <Button onClick={() => setSyslogDevice(null)} disabled={syslogBusy}>
+                Tutup
               </Button>
             </div>
           </Card>

@@ -13,6 +13,8 @@ import { createAdapter, supportedVendors } from './driver/registry';
 import { CreateOltDeviceDto, UpdateOltDeviceDto } from './dto/olt.dto';
 import { decryptOltSecret, encryptOltSecret } from './olt-crypto';
 import { OltDeviceRow, OltDeviceView, OltOnuFilter, OltRepository } from './olt.repository';
+import { createSyslogDriver } from './syslog/registry';
+import type { SyslogClientState } from './syslog/olt-syslog-driver';
 
 /**
  * Layanan OLT — baca-saja.
@@ -461,6 +463,118 @@ export class OltService {
     const onu = await this.repository.findOnu(onuId);
     if (!onu) throw new NotFoundException(`ONU #${onuId} tidak ditemukan`);
     return { onu, rows: await this.repository.onuHistory(onuId) };
+  }
+
+  // -------------------------------------------------------------------------
+  // Syslog client — akses tulis TERBATAS, digerbang izin `olt.syslog.write`.
+  // Perangkat tetap sumber kebenaran: status selalu dibaca kembali dari
+  // perangkat, bukan dari database.
+  // -------------------------------------------------------------------------
+
+  async readSyslog(id: number) {
+    const device = await this.requireDevice(id);
+    const driver = createSyslogDriver(this.connection(device));
+    try {
+      const state = await driver.read();
+      return { state, vendor: device.vendor };
+    } finally {
+      await driver.close().catch(() => undefined);
+    }
+  }
+
+  async applySyslog(
+    id: number,
+    dto: { enabled: boolean; collector_ip?: string; events?: string[] },
+    actor: { userId: number; ip: string },
+  ) {
+    const device = await this.requireDevice(id);
+    const collectorIp = (dto.collector_ip ?? '').trim();
+    if (dto.enabled && !/^\d{1,3}(\.\d{1,3}){3}$/.test(collectorIp)) {
+      throw new BadRequestException(
+        'IP kolektor tidak valid. Isi alamat IPv4 kolektor internal saat mengaktifkan syslog.',
+      );
+    }
+
+    const driver = createSyslogDriver(this.connection(device));
+    try {
+      const before = await driver.read();
+      const after = await driver.apply({
+        enabled: dto.enabled,
+        collectorIp: dto.enabled ? collectorIp : '0.0.0.0',
+        events: dto.events,
+      });
+
+      await this.repository
+        .insertSyslogAction({ oltId: id, action: 'apply', before, after, userId: actor.userId })
+        .catch((error: unknown) =>
+          this.logger.warn(`Riwayat syslog gagal ditulis: ${error instanceof Error ? error.message : String(error)}`),
+        );
+      await this.audit(actor, 'OLT_SYSLOG_APPLIED', {
+        id,
+        enabled: dto.enabled,
+        collector_ip: dto.enabled ? collectorIp : null,
+      });
+
+      return {
+        before,
+        after,
+        verified: this.syslogMatchesTarget(dto.enabled, collectorIp, after),
+      };
+    } finally {
+      await driver.close().catch(() => undefined);
+    }
+  }
+
+  async rollbackSyslog(id: number, actor: { userId: number; ip: string }) {
+    const latest = await this.repository.latestSyslogAction(id, 'apply');
+    if (!latest?.before_state) {
+      throw new BadRequestException('Tidak ada snapshot sebelumnya untuk rollback.');
+    }
+    const before = JSON.parse(String(latest.before_state)) as {
+      enabled: boolean;
+      collectorIp: string | null;
+    };
+    const enabled = Boolean(before.enabled);
+    const collectorIp = before.collectorIp ?? '0.0.0.0';
+
+    const device = await this.requireDevice(id);
+    const driver = createSyslogDriver(this.connection(device));
+    try {
+      const after = await driver.apply({ enabled, collectorIp });
+      await this.repository.insertSyslogAction({
+        oltId: id,
+        action: 'rollback',
+        before: latest.before_state,
+        after,
+        message: 'Rollback ke snapshot sebelum apply terakhir',
+        userId: actor.userId,
+      });
+      await this.audit(actor, 'OLT_SYSLOG_ROLLBACK', { id });
+      return { before, after, verified: this.syslogMatchesTarget(enabled, collectorIp, after) };
+    } finally {
+      await driver.close().catch(() => undefined);
+    }
+  }
+
+  async listSyslogEvents(filter: { oltId?: number; type?: string; page?: number; size?: number }) {
+    return this.repository.listSyslogEvents(filter);
+  }
+
+  async listSyslogActions(id: number) {
+    await this.requireDevice(id);
+    return { rows: await this.repository.listSyslogActions(id) };
+  }
+
+  /** Bandingkan read-back dengan yang diminta (verifikasi dua arah). */
+  private syslogMatchesTarget(
+    enabled: boolean,
+    collectorIp: string,
+    state: SyslogClientState,
+  ): boolean {
+    if (!enabled) {
+      return state.enabled === false || state.collectorIp === '0.0.0.0' || state.collectorIp === null;
+    }
+    return state.enabled === true && state.collectorIp === collectorIp;
   }
 
   private rethrowAssign(error: unknown): never {

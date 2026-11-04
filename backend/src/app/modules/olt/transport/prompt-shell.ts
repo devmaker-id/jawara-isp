@@ -26,7 +26,7 @@ export const DEFAULT_PROMPT = /(?:^|\n)\s*(?:[A-Za-z0-9._-]+(?:\([^)]*\))?[>#]|>
 
 /** Penanda halaman keluaran panjang — dikirim spasi agar lanjut. */
 const MORE_MARKER =
-  /--\s?More\s?--|\(q\)\s*uit|Press any key|---?\s*Enter Key To Continue\s*-*/gi;
+  /--\s?More\s?--|\(q\)\s*uit|Press any key|---?\s*Enter Key To Continue\s*-*|--\s*Press\s+Enter\s*--/gi;
 
 export class ShellTimeoutError extends Error {
   constructor(command: string, timeoutMs: number, tail: string) {

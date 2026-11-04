@@ -724,6 +724,137 @@ export class OltRepository {
     );
   }
 
+  // -------------------------------------------------------------------------
+  // Syslog client (kolektor + riwayat aksi)
+  // -------------------------------------------------------------------------
+
+  /** Daftar `host` perangkat (untuk filter sumber syslog; IPv4 disaring pemanggil). */
+  async listDeviceIpAddresses(): Promise<string[]> {
+    const rows = await this.db.query<RowDataPacket>('SELECT DISTINCT host FROM olt_devices');
+    return rows.map((row) => String(row.host));
+  }
+
+  /** Perangkat OLT berdasarkan host (IP) — untuk menautkan event syslog. */
+  async findDeviceByIp(ip: string): Promise<{ id: number; name: string } | null> {
+    const row = await this.db.queryOne<{ id: number; name: string }>(
+      'SELECT id, name FROM olt_devices WHERE host = ? LIMIT 1',
+      [ip],
+    );
+    return row ?? null;
+  }
+
+  async insertSyslogEvent(event: {
+    olt_id: number | null;
+    olt_name: string | null;
+    source_ip: string;
+    event_type: string;
+    port_id: string | null;
+    onu_id: string | null;
+    onu_mac: string | null;
+    onu_name: string | null;
+    raw_log: string;
+  }): Promise<void> {
+    await this.db.execute(
+      `INSERT INTO olt_syslog_events
+         (olt_id, olt_name, source_ip, event_type, port_id, onu_id, onu_mac, onu_name, raw_log)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        event.olt_id,
+        event.olt_name?.slice(0, 80) ?? null,
+        event.source_ip,
+        event.event_type,
+        event.port_id,
+        event.onu_id,
+        event.onu_mac,
+        event.onu_name?.slice(0, 120) ?? null,
+        event.raw_log,
+      ],
+    );
+  }
+
+  async listSyslogEvents(filter: {
+    oltId?: number;
+    type?: string;
+    page?: number;
+    size?: number;
+  }): Promise<{ rows: RowDataPacket[]; total: number }> {
+    const where: string[] = ['1 = 1'];
+    const params: unknown[] = [];
+    if (filter.oltId !== undefined) {
+      where.push('e.olt_id = ?');
+      params.push(filter.oltId);
+    }
+    if (filter.type) {
+      where.push('e.event_type = ?');
+      params.push(filter.type);
+    }
+    const size = Math.min(Math.max(Math.trunc(filter.size ?? 50), 1), 500);
+    const page = Math.max(Math.trunc(filter.page ?? 1), 1);
+    const offset = (page - 1) * size;
+    const clause = where.join(' AND ');
+
+    const counted = await this.db.queryOne<{ total: number }>(
+      `SELECT COUNT(*) AS total FROM olt_syslog_events e WHERE ${clause}`,
+      params,
+    );
+    const rows = await this.db.query<RowDataPacket>(
+      `SELECT e.*, d.name AS olt_name_display
+         FROM olt_syslog_events e
+         LEFT JOIN olt_devices d ON d.id = e.olt_id
+        WHERE ${clause}
+        ORDER BY e.id DESC
+        LIMIT ${size} OFFSET ${offset}`,
+      params,
+    );
+    return { rows, total: Number(counted?.total ?? 0) };
+  }
+
+  async insertSyslogAction(input: {
+    oltId: number;
+    action: 'apply' | 'rollback' | 'read';
+    before?: unknown;
+    after?: unknown;
+    message?: string;
+    userId: number;
+  }): Promise<void> {
+    await this.db.execute(
+      `INSERT INTO olt_syslog_actions (olt_id, action, before_state, after_state, message, user_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        input.oltId,
+        input.action,
+        input.before ? JSON.stringify(input.before) : null,
+        input.after ? JSON.stringify(input.after) : null,
+        input.message?.slice(0, 255) ?? null,
+        input.userId > 0 ? input.userId : null,
+      ],
+    );
+  }
+
+  /** Aksi terakhir sebuah perangkat — sumber nilai "diminta terakhir". */
+  async latestSyslogAction(
+    oltId: number,
+    action: 'apply' | 'rollback',
+  ): Promise<RowDataPacket | null> {
+    return this.db.queryOne<RowDataPacket>(
+      `SELECT * FROM olt_syslog_actions WHERE olt_id = ? AND action = ? ORDER BY id DESC LIMIT 1`,
+      [oltId, action],
+    );
+  }
+
+  async listSyslogActions(oltId: number, limit = 20): Promise<RowDataPacket[]> {
+    const safeLimit = Math.min(Math.max(limit, 1), 100);
+    return this.db.query<RowDataPacket>(
+      `SELECT a.id, a.action, a.before_state, a.after_state, a.message, a.created_at, u.name AS actor_name
+         FROM olt_syslog_actions a
+         LEFT JOIN users u ON u.id = a.user_id
+        WHERE a.olt_id = ?
+        ORDER BY a.id DESC
+        LIMIT ${safeLimit}`,
+      [oltId],
+    );
+  }
+
   private view(row: RowDataPacket): OltDeviceView {
     return {
       id: Number(row.id),

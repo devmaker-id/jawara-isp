@@ -19,7 +19,7 @@ import { JwtAuthGuard } from '../auth/auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { PermissionGuard, RequirePermission } from '../permissions/permission.guard';
-import { AssignOnuDto, CreateOltDeviceDto, ReleaseOnuDto, UpdateOltDeviceDto } from './dto/olt.dto';
+import { AssignOnuDto, CreateOltDeviceDto, ReleaseOnuDto, SetSyslogClientDto, UpdateOltDeviceDto } from './dto/olt.dto';
 import { OltService } from './olt.service';
 
 type Actor = { userId: number; ip: string };
@@ -174,5 +174,55 @@ export class OltController {
   @RequirePermission('olt.view')
   customerOnu(@Param('customerId', ParseIntPipe) customerId: number) {
     return this.service.customerOnu(customerId);
+  }
+
+  // ===== syslog client =====
+  @Get('devices/:id/syslog')
+  @Roles('admin', 'operator')
+  @RequirePermission('olt.syslog.read')
+  syslogRead(@Param('id', ParseIntPipe) id: number) {
+    return this.service.readSyslog(id);
+  }
+
+  @Post('devices/:id/syslog')
+  @Roles('admin')
+  @RequirePermission('olt.syslog.write')
+  syslogApply(
+    @Req() request: Request,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SetSyslogClientDto,
+  ) {
+    return this.service.applySyslog(id, dto, actorOf(request));
+  }
+
+  @Post('devices/:id/syslog/rollback')
+  @Roles('admin')
+  @RequirePermission('olt.syslog.write')
+  syslogRollback(@Req() request: Request, @Param('id', ParseIntPipe) id: number) {
+    return this.service.rollbackSyslog(id, actorOf(request));
+  }
+
+  @Get('devices/:id/syslog/events')
+  @Roles('admin', 'operator')
+  @RequirePermission('olt.syslog.read')
+  syslogEvents(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('type') type?: string,
+    @Query('page') page?: string,
+    @Query('size') size?: string,
+  ) {
+    return this.service.listSyslogEvents({
+      oltId: id,
+      type: type?.trim() || undefined,
+      page: page ? Number(page) : undefined,
+      size: size ? Number(size) : undefined,
+    });
+  }
+
+  @Get('devices/:id/syslog/actions')
+  @Roles('admin', 'operator')
+  @RequirePermission('olt.syslog.read')
+  syslogActions(@Param('id', ParseIntPipe) id: number) {
+    return this.service.listSyslogActions(id);
   }
 }

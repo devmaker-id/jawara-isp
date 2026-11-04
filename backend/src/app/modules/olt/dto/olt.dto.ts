@@ -1,5 +1,6 @@
 import { Transform, Type } from 'class-transformer';
 import {
+  IsArray,
   IsBoolean,
   IsIn,
   IsInt,
@@ -192,4 +193,26 @@ export class ReleaseOnuDto {
   @IsString()
   @MaxLength(255, { message: 'Catatan maksimal 255 karakter.' })
   note?: string;
+}
+
+/**
+ * Terapkan konfigurasi Syslog Client pada satu perangkat OLT.
+ *
+ * `collector_ip` wajib saat `enabled=true`; diabaikan saat menonaktifkan.
+ * `events` (khusus VSOL) berupa daftar "event <name>" / "alarm <name>";
+ * bila kosong, driver memakai daftar bawaan untuk monitoring ONU.
+ */
+export class SetSyslogClientDto {
+  @IsBoolean()
+  enabled!: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(45, { message: 'IP kolektor tidak valid.' })
+  collector_ip?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  events?: string[];
 }

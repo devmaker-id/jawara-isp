@@ -4,6 +4,7 @@ import { ConfigService } from '../../config/config.service';
 import { OltController } from './olt.controller';
 import { OltRepository } from './olt.repository';
 import { OltService } from './olt.service';
+import { SyslogCollectorService } from './syslog/syslog.collector';
 
 /**
  * Modul OLT.
@@ -14,7 +15,7 @@ import { OltService } from './olt.service';
 @Module({
   imports: [AuthModule],
   controllers: [OltController],
-  providers: [OltService, OltRepository, ConfigService],
+  providers: [OltService, OltRepository, ConfigService, SyslogCollectorService],
   exports: [OltService],
 })
 export class OltModule {}
