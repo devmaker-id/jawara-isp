@@ -101,28 +101,47 @@ h2{font-size:13px;margin:2px 0 4px}
 const card = (body: string): string => `${CARD_CSS}\n<div class="card">\n${body}\n</div>`;
 
 /** Nama template bawaan yang tidak boleh dihapus, bahkan oleh admin. */
-export const LOCKED_TEMPLATE_NAMES = ['Default', 'Klasik', 'Voucher panjang'] as const;
+export const LOCKED_TEMPLATE_NAMES = ['Default', 'Klasik', 'Voucher panjang', 'Ai Generation'] as const;
 
 const isLockedName = (name: string): boolean =>
   LOCKED_TEMPLATE_NAMES.some((locked) => locked.toLowerCase() === name.trim().toLowerCase());
 
 const PANJANG_HTML = `<style>
-.card{position:relative;display:flex;height:100%;border:2.5px solid #0f172a;background:#fff;color:#0f172a;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow:hidden}
-.price{width:24mm;flex:0 0 24mm;background:var(--tier-color,#16a34a);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;letter-spacing:.02em;writing-mode:vertical-rl;transform:rotate(180deg)}
-.body{flex:1;min-width:0;padding:6px 8px;display:flex;flex-direction:column;justify-content:space-between;gap:2px}
+.card{position:relative;display:flex;height:100%;border:2px solid #0f172a;background:#fff;color:#0f172a;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow:hidden}
+.price{width:20mm;flex:0 0 20mm;background:var(--tier-color,#16a34a);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px;letter-spacing:.04em;writing-mode:vertical-rl;transform:rotate(180deg)}
+.body{flex:1;min-width:0;padding:8px 10px;display:flex;flex-direction:column;justify-content:space-between;gap:4px}
 .head{font-size:9px;letter-spacing:.18em;text-transform:uppercase;font-weight:700}
-.code{font-size:22px;font-weight:800;text-align:center;word-break:break-all;line-height:1.1}
-.valid{font-size:9px;text-align:center;color:#334155}
-.foot{display:flex;justify-content:space-between;gap:6px;font-size:8px;color:#475569;border-top:1px dashed #cbd5e1;padding-top:3px}
+.code{font-size:20px;font-weight:800;text-align:center;word-break:break-all;line-height:1.15}
+.valid{font-size:9px;text-align:center;color:#334155;line-height:1.3}
+.foot{display:flex;justify-content:space-between;gap:6px;font-size:8px;color:#475569;border-top:1px dashed #cbd5e1;padding-top:4px}
 </style>
 <div class="card">
   <div class="price">{{price}}</div>
   <div class="body">
     <div class="head">Voucher WiFi</div>
     <div class="code">{{credential}}</div>
-    <div class="valid">{{profile}}</div>
-    <div class="foot"><span>Seller: {{owner}}</span><span>{{brand}}_{{created_at}}</span></div>
+    <div class="valid">{{profile}} · {{profile_type}}<br>{{created_at}}</div>
+    <div class="foot"><span>Seller: {{owner}}</span><span>{{brand}}</span></div>
   </div>
+</div>`;
+
+const AI_HTML = `<style>
+.aicard{position:relative;display:flex;flex-direction:column;height:100%;border:none;border-radius:10px;overflow:hidden;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:#0f172a;background:#fff;box-shadow:inset 0 0 0 1px #e2e8f0}
+.aibar{background:linear-gradient(135deg,var(--tier-color,#4f46e5),#0f172a);color:#fff;padding:10px 12px;display:flex;justify-content:space-between;align-items:center;gap:6px}
+.abrand{font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase}
+.aprice{font-size:12px;font-weight:800;font-variant-numeric:tabular-nums}
+.abody{flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:4px;padding:12px 10px}
+.acode{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:20px;font-weight:800;letter-spacing:.03em;word-break:break-all;text-align:center;line-height:1.1}
+.aprofile{font-size:10px;color:#475569;text-align:center}
+.afoot{display:flex;justify-content:space-between;gap:6px;padding:8px 12px;border-top:1px dashed #cbd5e1;font-size:8px;color:#64748b}
+</style>
+<div class="aicard">
+  <div class="aibar"><span class="abrand">{{brand}}</span><span class="aprice">{{price}}</span></div>
+  <div class="abody">
+    <div class="acode">{{credential}}</div>
+    <div class="aprofile">{{profile}} · {{profile_type}}</div>
+  </div>
+  <div class="afoot"><span>AI GENERATION</span><span>{{printed_at}}</span></div>
 </div>`;
 
 export const DEFAULT_TEMPLATES: VoucherTemplate[] = [
@@ -147,7 +166,15 @@ export const DEFAULT_TEMPLATES: VoucherTemplate[] = [
     locked: true,
     html: PANJANG_HTML,
     enabled: true,
-    layout: { ...DEFAULT_LAYOUT, columns: 2, rows: 5, orientation: 'portrait' },
+    layout: { columns: 2, rows: 5, marginMm: 10, gapMm: 4, orientation: 'portrait' },
+  },
+  {
+    id: 'ai-generation',
+    name: 'Ai Generation',
+    locked: true,
+    html: AI_HTML,
+    enabled: true,
+    layout: { columns: 3, rows: 6, marginMm: 8, gapMm: 4, orientation: 'portrait' },
   },
   {
     id: 'klasik',

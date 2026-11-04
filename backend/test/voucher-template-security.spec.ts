@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_LAYOUT,
   DEFAULT_TEMPLATES,
+  LOCKED_TEMPLATE_NAMES,
   MAX_TEMPLATES,
   parseTemplates,
   TemplateValidationError,
@@ -12,22 +13,32 @@ const html = '<div class="card"><h2>{{profile}}</h2><div>{{username}} / {{passwo
 
 const row = (extra: Record<string, unknown> = {}) => ({ name: 'Uji', html, ...extra });
 
-const validate = (rows: unknown[]) => validateTemplates(JSON.stringify(rows));
+// Proses validasi meminta semua template bawaan terkunci hadir (proteksi
+// "tidak boleh dihapus bahkan oleh admin"). Fixture menyertakan template
+// terkunci di belakang baris uji supaya baris uji tetap elemen pertama.
+const lockedRows = () =>
+  DEFAULT_TEMPLATES.filter((template) =>
+    (LOCKED_TEMPLATE_NAMES as readonly string[]).includes(template.name),
+  ).map((template) => ({ name: template.name, html: template.html, layout: template.layout }));
+
+const validate = (rows: unknown[]) => validateTemplates(JSON.stringify([...rows, ...lockedRows()]));
 
 describe('validasi template voucher HTML (input dari editor admin)', () => {
   it('menerima HTML sah dan melengkapi default', () => {
     const [template] = validate([row()]);
     expect(template.name).toBe('Uji');
     expect(template.enabled).toBe(true);
-    expect(template.layout).toEqual(DEFAULT_LAYOUT);
+    // cleanLayout selalu menormalkan rows (0 = mengalir) dan orientation.
+    expect(template.layout).toEqual({ ...DEFAULT_LAYOUT, rows: 0, orientation: 'portrait' });
     expect(template.html).toContain('{{profile}}');
   });
 
   it('id dibuat dari nama dan tetap unik', () => {
-    expect(validate([row({ name: 'Sama' }), row({ name: 'Sama' })]).map((t) => t.id)).toEqual([
-      'sama',
-      'sama-2',
-    ]);
+    expect(
+      validate([row({ name: 'Sama' }), row({ name: 'Sama' })])
+        .slice(0, 2)
+        .map((t) => t.id),
+    ).toEqual(['sama', 'sama-2']);
   });
 
   it('menolak script, iframe, form, svg, dan gambar', () => {
@@ -106,5 +117,17 @@ describe('validasi template voucher HTML (input dari editor admin)', () => {
     expect(validate([row({ enabled: false })])[0].enabled).toBe(false);
     expect(parseTemplates('{{{')).toEqual(DEFAULT_TEMPLATES);
     expect(parseTemplates(null)).toEqual(DEFAULT_TEMPLATES);
+  });
+
+  it('menolak daftar yang menghapus/mengganti nama template bawaan terkunci', () => {
+    // Semua template bawaan dikunci; hilang satu saja = ditolak.
+    for (const name of LOCKED_TEMPLATE_NAMES) {
+      const without = DEFAULT_TEMPLATES.filter(
+        (template) => template.name.toLowerCase() !== name.toLowerCase(),
+      );
+      expect(() => validateTemplates(JSON.stringify(without))).toThrow(/tidak boleh dihapus atau diganti namanya/);
+    }
+    // Template bawaan baru "Ai Generation" juga terkunci.
+    expect(DEFAULT_TEMPLATES.some((template) => template.name === 'Ai Generation' && template.locked)).toBe(true);
   });
 });
