@@ -225,3 +225,28 @@ export class DeleteSyslogEventsDto {
   @IsInt({ each: true })
   ids!: number[];
 }
+
+/**
+ * Atur kebijakan retensi log ONU (penghapusan terjadwal).
+ *
+ * `mode=age`   → `days` wajib (1–365).
+ * `mode=per_olt` → `count` wajib (1–100000, pertahankan N terbaru per OLT).
+ */
+export class SetSyslogRetentionDto {
+  @IsIn(['age', 'per_olt'], { message: 'mode harus age atau per_olt.' })
+  mode!: 'age' | 'per_olt';
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'days harus angka bulat.' })
+  @Min(1, { message: 'days minimal 1.' })
+  @Max(365, { message: 'days maksimal 365.' })
+  days?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'count harus angka bulat.' })
+  @Min(1, { message: 'count minimal 1.' })
+  @Max(100000, { message: 'count maksimal 100000.' })
+  count?: number;
+}

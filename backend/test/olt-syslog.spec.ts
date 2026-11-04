@@ -11,6 +11,7 @@ import {
   parseVsolEvents,
 } from '../src/app/modules/olt/syslog/vsol.syslog';
 import { parseSyslogEvent } from '../src/app/modules/olt/syslog/syslog.parser';
+import { normalizeRetentionPolicy } from '../src/app/modules/olt/syslog/syslog.retention';
 
 describe('driver syslog — HiFocus (EPON)', () => {
   it('enable → syslog server <ip> + write', () => {
@@ -127,5 +128,22 @@ describe('parser syslog → event kanonik', () => {
 
   it('tidak dikenal → UNKNOWN', () => {
     expect(parseSyslogEvent('something else entirely').eventType).toBe('UNKNOWN');
+  });
+});
+
+describe('retensi log ONU — normalisasi kebijakan', () => {
+  it('mode age membulatkan days ke rentang aman', () => {
+    expect(normalizeRetentionPolicy({ mode: 'age', days: 7 })).toEqual({ mode: 'age', days: 7 });
+    expect(normalizeRetentionPolicy({ mode: 'age', days: 0 })).toEqual({ mode: 'age', days: 1 });
+    expect(normalizeRetentionPolicy({ mode: 'age', days: 999 })).toEqual({ mode: 'age', days: 365 });
+  });
+
+  it('mode per_olt mempertahankan count sebagai batas', () => {
+    expect(normalizeRetentionPolicy({ mode: 'per_olt', count: 500 })).toEqual({ mode: 'per_olt', count: 500 });
+    expect(normalizeRetentionPolicy({ mode: 'per_olt', count: 0 })).toEqual({ mode: 'per_olt', count: 1 });
+  });
+
+  it('mode tidak dikenal jatuh ke age/day default', () => {
+    expect(normalizeRetentionPolicy({ mode: 'age' } as never)).toEqual({ mode: 'age', days: 30 });
   });
 });

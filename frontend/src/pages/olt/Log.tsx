@@ -11,6 +11,7 @@ import {
 } from '../../components/net/NetUI';
 import { RowActions } from '../../components/table/RowActions';
 import { TablePager } from '../../components/TablePager';
+import { useAuth } from '../../contexts/AuthContext';
 import api from '../../services/api';
 
 /**
@@ -72,6 +73,8 @@ const waktu = (value: string | null) =>
   value ? new Date(value).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'medium' }) : '—';
 
 const LogOnu: React.FC = () => {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const devices = useNet<DevicePayload>('/api/olt/devices');
   const [oltId, setOltId] = useState('');
   const [type, setType] = useState('');
@@ -84,6 +87,14 @@ const LogOnu: React.FC = () => {
   const [detail, setDetail] = useState<LogRow | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
+
+  // Retensi terjadwal (penghapusan otomatis log lama).
+  const [retentionOpen, setRetentionOpen] = useState(false);
+  const [retentionMode, setRetentionMode] = useState<'age' | 'per_olt'>('age');
+  const [retentionDays, setRetentionDays] = useState(30);
+  const [retentionCount, setRetentionCount] = useState(500);
+  const [retentionBusy, setRetentionBusy] = useState(false);
+  const [retentionNote, setRetentionNote] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
 
   // Perubahan filter kembali ke halaman pertama; hapus massal melintasi halaman,
   // jadi pilihan dibiarkan (bisa jadi menyangkut baris yang sudah tak tampil).
@@ -168,6 +179,41 @@ const LogOnu: React.FC = () => {
     }
   };
 
+  const openRetention = async () => {
+    setRetentionNote(null);
+    try {
+      const response = await api.get('/api/olt/syslog/retention');
+      const policy = (response.data as { policy: { mode: 'age' | 'per_olt'; days?: number; count?: number } }).policy;
+      setRetentionMode(policy.mode ?? 'age');
+      setRetentionDays(policy.days ?? 30);
+      setRetentionCount(policy.count ?? 500);
+    } catch {
+      // pakai nilai bawaan bila belum pernah diset
+    }
+    setRetentionOpen(true);
+  };
+
+  const saveRetention = async () => {
+    setRetentionBusy(true);
+    setRetentionNote(null);
+    try {
+      const body = retentionMode === 'per_olt' ? { mode: 'per_olt', count: retentionCount } : { mode: 'age', days: retentionDays };
+      const response = await api.post('/api/olt/syslog/retention', body);
+      const data = response.data as { policy: { mode: 'age' | 'per_olt'; days?: number; count?: number }; removed: number };
+      setRetentionNote({
+        tone: 'ok',
+        text:
+          `Kebijakan tersimpan — ${data.policy.mode === 'age' ? `hapus log > ${data.policy.days} hari` : `simpan ${data.policy.count} terbaru per OLT`}. ` +
+          `${data.removed} log lama dihapus sekarang.`,
+      });
+      logs.reload();
+    } catch (error) {
+      setRetentionNote({ tone: 'bad', text: readError(error, 'Gagal menyimpan kebijakan.') });
+    } finally {
+      setRetentionBusy(false);
+    }
+  };
+
   if (devices.loading && logs.loading) return <Loading label="Memuat log ONU…" />;
 
   return (
@@ -176,9 +222,12 @@ const LogOnu: React.FC = () => {
         title="Log ONU"
         subtitle="Alur kejadian ONU yang diterima dari OLT (linkup, linkdown, registrasi, dying gasp, login). Sumber: kolektor syslog internal."
         actions={
-          <Button onClick={logs.reload} disabled={logs.refreshing}>
-            {logs.refreshing ? 'Memuat…' : 'Muat ulang'}
-          </Button>
+          <>
+            {isAdmin && <Button onClick={openRetention}>Penghapusan Terjadwal</Button>}
+            <Button onClick={logs.reload} disabled={logs.refreshing}>
+              {logs.refreshing ? 'Memuat…' : 'Muat ulang'}
+            </Button>
+          </>
         }
       />
 
@@ -322,6 +371,87 @@ const LogOnu: React.FC = () => {
             onPage={setPage}
             onSize={setSize}
           />
+        </div>
+      )}
+
+      {retentionOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
+          <div className="w-full max-w-md space-y-4 rounded-xl border border-slate-700 bg-slate-800 p-5">
+            <div>
+              <h2 className="text-lg font-semibold text-white">Penghapusan Terjadwal</h2>
+              <p className="mt-1 text-xs text-slate-400">
+                Hapus otomatis log ONU lama. Kebijakan dijalankan berkala (tiap jam) dan juga langsung saat disimpan.
+              </p>
+            </div>
+
+            {retentionNote && (
+              <div
+                className={`rounded-lg border px-3 py-2 text-sm ${
+                  retentionNote.tone === 'ok'
+                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                    : 'border-red-500/40 bg-red-500/10 text-red-300'
+                }`}
+              >
+                {retentionNote.text}
+              </div>
+            )}
+
+            <label className="flex items-center gap-2 text-sm text-slate-200">
+              <input
+                type="radio"
+                name="retention-mode"
+                checked={retentionMode === 'age'}
+                onChange={() => setRetentionMode('age')}
+              />
+              Berdasarkan umur log
+            </label>
+            {retentionMode === 'age' && (
+              <select
+                value={retentionDays}
+                onChange={(event) => setRetentionDays(Number(event.target.value))}
+                className="w-full rounded-lg border border-slate-600 bg-slate-900/60 px-3 py-2 text-sm text-slate-100"
+              >
+                <option value={1}>1 hari</option>
+                <option value={7}>7 hari</option>
+                <option value={30}>30 hari</option>
+              </select>
+            )}
+
+            <label className="flex items-center gap-2 text-sm text-slate-200">
+              <input
+                type="radio"
+                name="retention-mode"
+                checked={retentionMode === 'per_olt'}
+                onChange={() => setRetentionMode('per_olt')}
+              />
+              Berdasarkan jumlah per OLT
+            </label>
+            {retentionMode === 'per_olt' && (
+              <input
+                type="number"
+                value={retentionCount}
+                onChange={(event) => setRetentionCount(Number(event.target.value))}
+                min={1}
+                max={100000}
+                placeholder="500"
+                className="w-full rounded-lg border border-slate-600 bg-slate-900/60 px-3 py-2 font-mono text-sm text-slate-100"
+              />
+            )}
+            <p className="text-[11px] text-slate-500">
+              {retentionMode === 'per_olt'
+                ? `Pertahankan ${retentionCount} log terbaru untuk setiap OLT; sisanya dihapus otomatis.`
+                : `Hapus log ONU yang lebih tua dari ${retentionDays} hari.`}
+            </p>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <Button onClick={() => setRetentionOpen(false)} disabled={retentionBusy}>
+                Batal
+              </Button>
+              <Button variant="primary" onClick={saveRetention} disabled={retentionBusy}>
+                {retentionBusy ? 'Menyimpan…' : 'Simpan & jalankan'}
+              </Button>
+            </div>
+          </div>
         </div>
       )}
 

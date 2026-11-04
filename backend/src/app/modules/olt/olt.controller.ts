@@ -19,7 +19,7 @@ import { JwtAuthGuard } from '../auth/auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { PermissionGuard, RequirePermission } from '../permissions/permission.guard';
-import { AssignOnuDto, CreateOltDeviceDto, DeleteSyslogEventsDto, ReleaseOnuDto, SetSyslogClientDto, UpdateOltDeviceDto } from './dto/olt.dto';
+import { AssignOnuDto, CreateOltDeviceDto, DeleteSyslogEventsDto, ReleaseOnuDto, SetSyslogClientDto, SetSyslogRetentionDto, UpdateOltDeviceDto } from './dto/olt.dto';
 import { OltService } from './olt.service';
 
 type Actor = { userId: number; ip: string };
@@ -251,5 +251,19 @@ export class OltController {
   @RequirePermission('olt.syslog.write')
   deleteSyslogEvents(@Req() request: Request, @Body() dto: DeleteSyslogEventsDto) {
     return this.service.deleteSyslogEvents(dto.ids, actorOf(request));
+  }
+
+  @Get('syslog/retention')
+  @Roles('admin', 'operator')
+  @RequirePermission('olt.syslog.read')
+  getSyslogRetention() {
+    return this.service.getSyslogRetention();
+  }
+
+  @Post('syslog/retention')
+  @Roles('admin')
+  @RequirePermission('olt.syslog.write')
+  setSyslogRetention(@Req() request: Request, @Body() dto: SetSyslogRetentionDto) {
+    return this.service.setSyslogRetention(dto, actorOf(request));
   }
 }

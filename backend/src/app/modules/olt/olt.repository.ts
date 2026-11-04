@@ -825,8 +825,41 @@ export class OltRepository {
       `DELETE FROM olt_syslog_events WHERE id IN (${clean.map(() => '?').join(',')})`,
       clean,
     );
-    const header = (result as unknown as Array<{ affectedRows?: number }>)[0];
-    return Number(header?.affectedRows ?? 0);
+    return Number(result.affectedRows ?? 0);
+  }
+
+  /**
+   * Terapkan kebijakan retensi log ONU; mengembalikan jumlah baris yang dihapus.
+   *
+   * `age`     hapus log lebih tua dari N hari.
+   * `per_olt` pertahankan N log terbaru per OLT, hapus sisanya.
+   */
+  async enforceSyslogRetention(policy: {
+    mode: 'age' | 'per_olt';
+    days?: number;
+    count?: number;
+  }): Promise<number> {
+    let result: { affectedRows?: number };
+    if (policy.mode === 'age') {
+      const days = Math.max(1, Math.trunc(policy.days ?? 30));
+      result = await this.db.execute(
+        'DELETE FROM olt_syslog_events WHERE created_at < (NOW() - INTERVAL ? DAY)',
+        [days],
+      );
+    } else {
+      const count = Math.max(1, Math.trunc(policy.count ?? 500));
+      result = await this.db.execute(
+        `DELETE e FROM olt_syslog_events e
+         JOIN (
+           SELECT id FROM (
+             SELECT id, ROW_NUMBER() OVER (PARTITION BY olt_id ORDER BY id DESC) AS rn
+             FROM olt_syslog_events
+           ) ranked WHERE ranked.rn > ?
+         ) d ON d.id = e.id`,
+        [count],
+      );
+    }
+    return Number(result.affectedRows ?? 0);
   }
 
   async insertSyslogAction(input: {

@@ -15,6 +15,7 @@ import { decryptOltSecret, encryptOltSecret } from './olt-crypto';
 import { OltDeviceRow, OltDeviceView, OltOnuFilter, OltRepository } from './olt.repository';
 import { createSyslogDriver } from './syslog/registry';
 import type { SyslogClientState } from './syslog/olt-syslog-driver';
+import { SyslogRetentionService } from './syslog/syslog.retention';
 
 /**
  * Layanan OLT — baca-saja.
@@ -68,6 +69,7 @@ export class OltService {
     private readonly db: DatabaseService,
     private readonly repository: OltRepository,
     private readonly config: ConfigService,
+    private readonly retention: SyslogRetentionService,
   ) {}
 
   supportedVendors(): string[] {
@@ -564,6 +566,20 @@ export class OltService {
     const removed = await this.repository.deleteSyslogEvents(ids);
     await this.audit(actor, 'OLT_SYSLOG_EVENTS_DELETED', { count: removed, ids: ids.slice(0, 200) });
     return { removed };
+  }
+
+  async getSyslogRetention() {
+    return { policy: await this.retention.getPolicy() };
+  }
+
+  async setSyslogRetention(
+    dto: { mode: 'age' | 'per_olt'; days?: number; count?: number },
+    actor: { userId: number; ip: string },
+  ) {
+    const policy = await this.retention.setPolicy(dto);
+    const removed = await this.retention.enforce();
+    await this.audit(actor, 'OLT_SYSLOG_RETENTION_SET', { policy, removed });
+    return { policy, removed };
   }
 
   async listSyslogActions(id: number) {
