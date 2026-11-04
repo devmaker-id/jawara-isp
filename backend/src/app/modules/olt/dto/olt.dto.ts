@@ -270,4 +270,11 @@ export class SetSyslogHandlerConfigDto {
   @IsArray()
   @IsString({ each: true })
   alert_events?: string[];
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'cooldown_minutes harus angka bulat.' })
+  @Min(1, { message: 'cooldown_minutes minimal 1 menit.' })
+  @Max(60, { message: 'cooldown_minutes maksimal 60 menit.' })
+  cooldown_minutes?: number;
 }

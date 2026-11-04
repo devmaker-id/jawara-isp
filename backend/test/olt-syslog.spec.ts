@@ -168,4 +168,11 @@ describe('handler event ONU — normalisasi konfigurasi', () => {
     expect(config.whatsapp_alert).toBe(false);
     expect(config.whatsapp_group).toBe('');
   });
+
+  it('membatasi cooldown_minutes pada rentang 1–60', () => {
+    expect(normalizeHandlerConfig({ cooldown_minutes: 0 }).cooldown_minutes).toBe(1);
+    expect(normalizeHandlerConfig({ cooldown_minutes: 99 }).cooldown_minutes).toBe(60);
+    expect(normalizeHandlerConfig({ cooldown_minutes: 15 }).cooldown_minutes).toBe(15);
+    expect(normalizeHandlerConfig({}).cooldown_minutes).toBe(10);
+  });
 });

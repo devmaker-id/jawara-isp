@@ -110,6 +110,7 @@ const LogOnu: React.FC = () => {
   const [handlerAlert, setHandlerAlert] = useState(false);
   const [handlerGroup, setHandlerGroup] = useState('');
   const [handlerEvents, setHandlerEvents] = useState<string[]>(['ONU_LINKDOWN', 'ONU_DYING_GASP']);
+  const [handlerCooldown, setHandlerCooldown] = useState(10);
   const [handlerBusy, setHandlerBusy] = useState(false);
   const [handlerNote, setHandlerNote] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
 
@@ -236,12 +237,19 @@ const LogOnu: React.FC = () => {
     try {
       const response = await api.get('/api/olt/syslog/handlers');
       const config = (response.data as {
-        config: { inventory_sync: boolean; whatsapp_alert: boolean; whatsapp_group: string; alert_events: string[] };
+        config: {
+          inventory_sync: boolean;
+          whatsapp_alert: boolean;
+          whatsapp_group: string;
+          alert_events: string[];
+          cooldown_minutes: number;
+        };
       }).config;
       setHandlerSync(config.inventory_sync);
       setHandlerAlert(config.whatsapp_alert);
       setHandlerGroup(config.whatsapp_group ?? '');
       setHandlerEvents(config.alert_events ?? []);
+      setHandlerCooldown(config.cooldown_minutes ?? 10);
     } catch {
       // pakai nilai bawaan bila belum pernah diset
     }
@@ -261,6 +269,7 @@ const LogOnu: React.FC = () => {
         whatsapp_alert: handlerAlert,
         whatsapp_group: handlerGroup,
         alert_events: handlerEvents,
+        cooldown_minutes: handlerCooldown,
       });
       setHandlerNote({ tone: 'ok', text: 'Konfigurasi event tersimpan.' });
     } catch (error) {
@@ -584,6 +593,23 @@ const LogOnu: React.FC = () => {
                     ))}
                   </div>
                 </div>
+
+                <label className="block text-xs text-slate-300">
+                  Jeda antar pesan (menit)
+                  <input
+                    type="number"
+                    min={1}
+                    max={60}
+                    value={handlerCooldown}
+                    onChange={(event) =>
+                      setHandlerCooldown(Math.max(1, Math.min(60, Number(event.target.value) || 10)))
+                    }
+                    className="mt-1 w-24 rounded-lg border border-slate-600 bg-slate-900/60 px-3 py-2 text-sm text-slate-100"
+                  />
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    ONU yang bolak-balik mati/hidup dalam jeda ini dirangkum jadi satu pesan (flap), bukan spam.
+                  </p>
+                </label>
               </>
             )}
 
