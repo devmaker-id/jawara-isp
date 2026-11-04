@@ -71,6 +71,7 @@ export const menuItems: MenuItemConfig[] = [
     children: [
       { path: '/olt', label: 'Perangkat OLT' },
       { path: '/olt/onu', label: 'Inventori ONU' },
+      { path: '/olt/log', label: 'Log ONU' },
     ],
   },
   {

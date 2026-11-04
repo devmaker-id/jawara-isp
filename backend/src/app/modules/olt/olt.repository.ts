@@ -775,6 +775,7 @@ export class OltRepository {
   async listSyslogEvents(filter: {
     oltId?: number;
     type?: string;
+    search?: string;
     page?: number;
     size?: number;
   }): Promise<{ rows: RowDataPacket[]; total: number }> {
@@ -788,7 +789,14 @@ export class OltRepository {
       where.push('e.event_type = ?');
       params.push(filter.type);
     }
-    const size = Math.min(Math.max(Math.trunc(filter.size ?? 50), 1), 500);
+    if (filter.search) {
+      where.push(
+        '(e.onu_name LIKE ? OR e.onu_mac LIKE ? OR e.port_id LIKE ? OR e.onu_id LIKE ? OR e.event_type LIKE ? OR e.raw_log LIKE ?)',
+      );
+      const needle = `%${filter.search}%`;
+      params.push(needle, needle, needle, needle, needle, needle);
+    }
+    const size = Math.min(Math.max(Math.trunc(filter.size ?? 50), 1), 1000);
     const page = Math.max(Math.trunc(filter.page ?? 1), 1);
     const offset = (page - 1) * size;
     const clause = where.join(' AND ');
@@ -807,6 +815,18 @@ export class OltRepository {
       params,
     );
     return { rows, total: Number(counted?.total ?? 0) };
+  }
+
+  /** Hapus banyak event syslog sekaligus. Mengembalikan jumlah baris terhapus. */
+  async deleteSyslogEvents(ids: number[]): Promise<number> {
+    const clean = ids.filter((id) => Number.isInteger(id) && id > 0);
+    if (clean.length === 0) return 0;
+    const result = await this.db.execute(
+      `DELETE FROM olt_syslog_events WHERE id IN (${clean.map(() => '?').join(',')})`,
+      clean,
+    );
+    const header = (result as unknown as Array<{ affectedRows?: number }>)[0];
+    return Number(header?.affectedRows ?? 0);
   }
 
   async insertSyslogAction(input: {

@@ -24,6 +24,7 @@ import MikrotikLog from './pages/mikrotik/Log';
 import OnlineSessions from './pages/sesi/OnlineSessions';
 import OltDevices from './pages/olt/Devices';
 import OltOnu from './pages/olt/Onu';
+import OltLog from './pages/olt/Log';
 import RadiusRingkasan from './pages/freeradius/Ringkasan';
 import RadiusNas from './pages/freeradius/Nas';
 import RadiusSesi from './pages/freeradius/Sesi';
@@ -258,6 +259,14 @@ const AppContent: React.FC = () => {
             element={
               <RoleRoute roles={['admin', 'operator']}>
                 <OltOnu />
+              </RoleRoute>
+            }
+          />
+          <Route
+            path="/olt/log"
+            element={
+              <RoleRoute roles={['admin', 'operator']}>
+                <OltLog />
               </RoleRoute>
             }
           />

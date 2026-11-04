@@ -556,8 +556,14 @@ export class OltService {
     }
   }
 
-  async listSyslogEvents(filter: { oltId?: number; type?: string; page?: number; size?: number }) {
+  async listSyslogEvents(filter: { oltId?: number; type?: string; search?: string; page?: number; size?: number }) {
     return this.repository.listSyslogEvents(filter);
+  }
+
+  async deleteSyslogEvents(ids: number[], actor: { userId: number; ip: string }) {
+    const removed = await this.repository.deleteSyslogEvents(ids);
+    await this.audit(actor, 'OLT_SYSLOG_EVENTS_DELETED', { count: removed, ids: ids.slice(0, 200) });
+    return { removed };
   }
 
   async listSyslogActions(id: number) {

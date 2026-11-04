@@ -1,5 +1,6 @@
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMinSize,
   IsArray,
   IsBoolean,
   IsIn,
@@ -215,4 +216,12 @@ export class SetSyslogClientDto {
   @IsArray()
   @IsString({ each: true })
   events?: string[];
+}
+
+/** Hapus banyak event log ONU sekaligus (id). */
+export class DeleteSyslogEventsDto {
+  @IsArray()
+  @ArrayMinSize(1, { message: 'Pilih minimal satu log untuk dihapus.' })
+  @IsInt({ each: true })
+  ids!: number[];
 }

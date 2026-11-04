@@ -19,7 +19,7 @@ import { JwtAuthGuard } from '../auth/auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { PermissionGuard, RequirePermission } from '../permissions/permission.guard';
-import { AssignOnuDto, CreateOltDeviceDto, ReleaseOnuDto, SetSyslogClientDto, UpdateOltDeviceDto } from './dto/olt.dto';
+import { AssignOnuDto, CreateOltDeviceDto, DeleteSyslogEventsDto, ReleaseOnuDto, SetSyslogClientDto, UpdateOltDeviceDto } from './dto/olt.dto';
 import { OltService } from './olt.service';
 
 type Actor = { userId: number; ip: string };
@@ -224,5 +224,32 @@ export class OltController {
   @RequirePermission('olt.syslog.read')
   syslogActions(@Param('id', ParseIntPipe) id: number) {
     return this.service.listSyslogActions(id);
+  }
+
+  // ===== log ONU (lintas perangkat) =====
+  @Get('syslog/events')
+  @Roles('admin', 'operator')
+  @RequirePermission('olt.syslog.read')
+  syslogAllEvents(
+    @Query('olt_id') oltId?: string,
+    @Query('type') type?: string,
+    @Query('search') search?: string,
+    @Query('page') page?: string,
+    @Query('size') size?: string,
+  ) {
+    return this.service.listSyslogEvents({
+      oltId: oltId ? Number(oltId) : undefined,
+      type: type?.trim() || undefined,
+      search: search?.trim() || undefined,
+      page: page ? Number(page) : undefined,
+      size: size ? Number(size) : undefined,
+    });
+  }
+
+  @Post('syslog/events/delete')
+  @Roles('admin')
+  @RequirePermission('olt.syslog.write')
+  deleteSyslogEvents(@Req() request: Request, @Body() dto: DeleteSyslogEventsDto) {
+    return this.service.deleteSyslogEvents(dto.ids, actorOf(request));
   }
 }
