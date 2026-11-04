@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Badge,
   Button,
@@ -11,6 +11,7 @@ import {
 } from '../../components/net/NetUI';
 import { RowActions } from '../../components/table/RowActions';
 import { TablePager } from '../../components/TablePager';
+import { Alert } from '../../components/Alert';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../services/api';
 
@@ -114,11 +115,26 @@ const LogOnu: React.FC = () => {
   const [handlerBusy, setHandlerBusy] = useState(false);
   const [handlerNote, setHandlerNote] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
 
+  // Menu manajemen header (dropdown).
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
   // Perubahan filter kembali ke halaman pertama; hapus massal melintasi halaman,
   // jadi pilihan dibiarkan (bisa jadi menyangkut baris yang sudah tak tampil).
   useEffect(() => {
     setPage(1);
   }, [oltId, type, search, size]);
+
+  // Klik di luar dropdown manajemen menutupnya.
+  useEffect(() => {
+    const onPointerDown = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, []);
 
   const query = useMemo(() => {
     const params = new URLSearchParams();
@@ -287,27 +303,87 @@ const LogOnu: React.FC = () => {
         title="Log ONU"
         subtitle="Alur kejadian ONU yang diterima dari OLT (linkup, linkdown, registrasi, dying gasp, login). Sumber: kolektor syslog internal."
         actions={
-          <>
-            {isAdmin && <Button onClick={openHandlers}>Konfigurasi Event</Button>}
-            {isAdmin && <Button onClick={openRetention}>Penghapusan Terjadwal</Button>}
-            <Button onClick={logs.reload} disabled={logs.refreshing}>
-              {logs.refreshing ? 'Memuat…' : 'Muat ulang'}
-            </Button>
-          </>
+          <div className="relative" ref={menuRef}>
+            <button
+              type="button"
+              onClick={() => setMenuOpen((value) => !value)}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              className="flex items-center gap-2 rounded-lg border border-slate-600 bg-slate-700/40 px-3 py-2 text-sm font-medium text-slate-200 transition hover:bg-slate-700"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              Menu Manajemen
+              <svg
+                className={`h-4 w-4 transition-transform ${menuOpen ? 'rotate-180' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                strokeWidth={2}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
+              </svg>
+            </button>
+
+            {menuOpen && (
+              <div
+                role="menu"
+                aria-label="Menu manajemen log"
+                className="absolute right-0 z-40 mt-2 w-56 overflow-hidden rounded-xl border border-slate-700 bg-slate-800 p-1.5 shadow-2xl"
+              >
+                {isAdmin && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      openHandlers();
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-200 transition hover:bg-slate-700/50"
+                  >
+                    Konfigurasi Event
+                  </button>
+                )}
+                {isAdmin && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      openRetention();
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-200 transition hover:bg-slate-700/50"
+                  >
+                    Penghapusan Terjadwal
+                  </button>
+                )}
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={logs.refreshing}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    logs.reload();
+                  }}
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-200 transition hover:bg-slate-700/50 disabled:opacity-50"
+                >
+                  {logs.refreshing ? 'Memuat…' : 'Muat ulang'}
+                </button>
+              </div>
+            )}
+          </div>
         }
       />
 
       {logs.error && <ErrorNote message={logs.error} onRetry={logs.reload} />}
 
       {notice && (
-        <div
-          className={`mb-3 rounded-lg border px-4 py-2 text-sm ${
-            notice.tone === 'ok'
-              ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-              : 'border-red-500/40 bg-red-500/10 text-red-300'
-          }`}
-        >
-          {notice.text}
+        <div className="mb-3">
+          <Alert tone={notice.tone === 'ok' ? 'success' : 'error'} onDismiss={() => setNotice(null)}>
+            {notice.text}
+          </Alert>
         </div>
       )}
 
@@ -418,7 +494,6 @@ const LogOnu: React.FC = () => {
                     <RowActions
                       label={`Aksi log ${row.id}`}
                       actions={[
-                        { key: 'detail', label: 'Lihat detail', onSelect: () => setDetail(row) },
                         { key: 'delete', label: 'Hapus', tone: 'danger', onSelect: () => void hapusSatu(row) },
                       ]}
                     />
@@ -451,15 +526,12 @@ const LogOnu: React.FC = () => {
             </div>
 
             {retentionNote && (
-              <div
-                className={`rounded-lg border px-3 py-2 text-sm ${
-                  retentionNote.tone === 'ok'
-                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-                    : 'border-red-500/40 bg-red-500/10 text-red-300'
-                }`}
+              <Alert
+                tone={retentionNote.tone === 'ok' ? 'success' : 'error'}
+                onDismiss={() => setRetentionNote(null)}
               >
                 {retentionNote.text}
-              </div>
+              </Alert>
             )}
 
             <label className="flex items-center gap-2 text-sm text-slate-200">
@@ -534,15 +606,12 @@ const LogOnu: React.FC = () => {
             </div>
 
             {handlerNote && (
-              <div
-                className={`rounded-lg border px-3 py-2 text-sm ${
-                  handlerNote.tone === 'ok'
-                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-                    : 'border-red-500/40 bg-red-500/10 text-red-300'
-                }`}
+              <Alert
+                tone={handlerNote.tone === 'ok' ? 'success' : 'error'}
+                onDismiss={() => setHandlerNote(null)}
               >
                 {handlerNote.text}
-              </div>
+              </Alert>
             )}
 
             <label className="flex items-center gap-2 text-sm text-slate-200">
