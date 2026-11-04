@@ -186,6 +186,7 @@ const MenuGroup: React.FC<{
     <div
       role="menu"
       aria-label={`Submenu ${item.label}`}
+      data-menu-flyout=""
       className="fixed z-50 w-56 overflow-hidden rounded-xl border border-slate-700 bg-slate-800 p-1.5 shadow-2xl"
       style={{ top: coords.top, left: coords.left }}
     >
@@ -333,9 +334,13 @@ const Layout: React.FC = () => {
   }, []);
 
   // Klik di luar sidebar menutup flyout dropdown (desktop) maupun accordion (mobile).
+  // Flyout di-portal ke <body> (di luar <aside>), jadi klik di dalamnya dikecualikan
+  // supaya item tetap bisa diklik dan navigasi berjalan normal, bukan tertutup duluan.
   useEffect(() => {
     const onPointerDown = (event: MouseEvent) => {
-      if (navRef.current && !navRef.current.contains(event.target as Node)) {
+      const target = event.target as Element | null;
+      const insideFlyout = !!target?.closest?.('[data-menu-flyout]');
+      if (navRef.current && !navRef.current.contains(event.target as Node) && !insideFlyout) {
         setOpenGroup(null);
       }
     };
