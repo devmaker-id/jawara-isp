@@ -8,8 +8,8 @@ export class SessionQueryDto {
   jenis?: SessionKind;
 
   @IsOptional()
-  @IsIn(['voucher', 'member'], { message: 'user_type harus voucher atau member' })
-  user_type?: 'voucher' | 'member';
+  @IsIn(['voucher', 'customer'], { message: 'user_type harus voucher atau customer' })
+  user_type?: 'voucher' | 'customer';
 
   @IsOptional()
   @IsString()

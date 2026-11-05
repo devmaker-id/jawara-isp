@@ -82,8 +82,8 @@ export interface OnlineCounts {
   ppp: number | null;
   /** Sesi hotspot yang memakai akun voucher (cetak). */
   hotspot_voucher: number | null;
-  /** Sesi hotspot yang memakai akun member (pelanggan berlangganan). */
-  hotspot_member: number | null;
+  /** Sesi hotspot yang memakai akun customer (pelanggan berlangganan). */
+  hotspot_customer: number | null;
   /** Sesi terbuka yang tidak bisa dipastikan hotspot atau PPP. */
   unclassified: number;
   device: string | null;
@@ -481,7 +481,7 @@ export class DashboardService {
       hotspot: null,
       ppp: null,
       hotspot_voucher: null,
-      hotspot_member: null,
+      hotspot_customer: null,
       unclassified: 0,
       device: 'RADIUS (radacct)',
       error:
@@ -509,7 +509,7 @@ export class DashboardService {
         hotspot: number;
         ppp: number;
         hotspot_voucher: number;
-        hotspot_member: number;
+        hotspot_customer: number;
         classified: number;
         last_seen: Date | null;
       }>(
@@ -517,7 +517,7 @@ export class DashboardService {
                 SUM(kind = 'hotspot') AS hotspot,
                 SUM(kind = 'ppp') AS ppp,
                 SUM(kind = 'hotspot' AND utype = 'voucher') AS hotspot_voucher,
-                SUM(kind = 'hotspot' AND utype = 'member') AS hotspot_member,
+                SUM(kind = 'hotspot' AND utype = 'customer') AS hotspot_customer,
                 SUM(kind IS NOT NULL) AS classified,
                 MAX(a.acctstarttime) AS last_seen
            FROM (
@@ -550,7 +550,7 @@ export class DashboardService {
         hotspot: Number(row.hotspot ?? 0),
         ppp: Number(row.ppp ?? 0),
         hotspot_voucher: Number(row.hotspot_voucher ?? 0),
-        hotspot_member: Number(row.hotspot_member ?? 0),
+        hotspot_customer: Number(row.hotspot_customer ?? 0),
         unclassified: Math.max(0, total - classified),
         device: 'RADIUS (radacct)',
         error: null,

@@ -194,10 +194,10 @@ const OnlineSessions: React.FC = () => {
   // di daftar yang benar: /sesi?jenis=ppp atau /sesi?jenis=hotspot&user_type=...
   const [searchParams, setSearchParams] = useSearchParams();
   const [kind, setKind] = useState<Kind>(searchParams.get('jenis') === 'ppp' ? 'ppp' : 'hotspot');
-  // Sesi hotspot dipisah: akun voucher (cetak) vs member (pelanggan). Voucher
+  // Sesi hotspot dipisah: akun voucher (cetak) vs customer (pelanggan). Voucher
   // jadi pilihan awal karena itu yang paling sering dipantau operator.
-  const [userType, setUserType] = useState<'voucher' | 'member'>(
-    searchParams.get('user_type') === 'member' ? 'member' : 'voucher',
+  const [userType, setUserType] = useState<'voucher' | 'customer'>(
+    searchParams.get('user_type') === 'customer' ? 'customer' : 'voucher',
   );
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
@@ -205,7 +205,7 @@ const OnlineSessions: React.FC = () => {
   const [size, setSize] = useState(50);
   const [selected, setSelected] = useState<string | null>(null);
 
-  const syncUrl = (nextKind: Kind, nextUserType: 'voucher' | 'member') => {
+  const syncUrl = (nextKind: Kind, nextUserType: 'voucher' | 'customer') => {
     const next = new URLSearchParams(searchParams);
     next.set('jenis', nextKind);
     if (nextKind === 'hotspot') next.set('user_type', nextUserType);
@@ -224,7 +224,7 @@ const OnlineSessions: React.FC = () => {
 
   const path = useMemo(() => {
     const params = new URLSearchParams({ jenis: kind, page: String(page), limit: String(size) });
-    // Filter jenis akun hanya bermakna untuk hotspot (voucher vs member).
+    // Filter jenis akun hanya bermakna untuk hotspot (voucher vs customer).
     if (kind === 'hotspot') params.set('user_type', userType);
     if (query) params.set('search', query);
     return `/api/sessions?${params.toString()}`;
@@ -268,11 +268,11 @@ const OnlineSessions: React.FC = () => {
           <Tabs
             tabs={[
               { key: 'voucher', label: 'Voucher' },
-              { key: 'member', label: 'Member' },
+              { key: 'customer', label: 'Customer' },
             ]}
             active={userType}
             onChange={(key) => {
-              const nextType = key as 'voucher' | 'member';
+              const nextType = key as 'voucher' | 'customer';
               setUserType(nextType);
               setPage(1);
               syncUrl(kind, nextType);
@@ -291,7 +291,7 @@ const OnlineSessions: React.FC = () => {
           {loading
             ? 'Memuat…'
             : `${data?.total ?? 0} sesi ${KIND_LABEL[kind]}${
-                kind === 'hotspot' ? ` · ${userType === 'voucher' ? 'voucher' : 'member'}` : ''
+                kind === 'hotspot' ? ` · ${userType === 'voucher' ? 'voucher' : 'customer'}` : ''
               }`}
         </span>
       </Toolbar>

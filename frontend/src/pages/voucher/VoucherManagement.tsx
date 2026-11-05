@@ -50,7 +50,7 @@ interface VoucherRow {
   profile_type: VoucherType;
   profile_id: number;
   profile_name: string;
-  user_type: 'voucher' | 'member';
+  user_type: 'voucher' | 'customer';
   username: string;
   password: string;
   customer_id: number | null;
@@ -170,7 +170,7 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
   const [busy, setBusy] = useState(false);
 
   // Filter
-  const [userFilter, setUserFilter] = useState<'all' | 'voucher' | 'member'>('voucher');
+  const [userFilter, setUserFilter] = useState<'all' | 'voucher' | 'customer'>('voucher');
   const [statusFilter, setStatusFilter] = useState<'' | Status>('');
   const [profileFilter, setProfileFilter] = useState('');
   const [ownerFilter, setOwnerFilter] = useState('');
@@ -796,7 +796,7 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
         {/* Toolbar manajemen: filter + aksi berkas */}
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <div className="flex flex-wrap gap-1 rounded-lg border border-slate-700/60 p-1">
-            {(['all', 'voucher', 'member'] as const).map((key) => (
+            {(['all', 'voucher', 'customer'] as const).map((key) => (
               <button
                 key={key}
                 type="button"
@@ -1620,7 +1620,7 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
             <h2 className="text-lg font-semibold text-white">Kirim voucher via WhatsApp</h2>
             <p className="text-xs text-slate-400">
               {targetIds.length} voucher akan dikirim sebagai PDF. Isi nomor tujuan, atau kosongkan
-              untuk memakai nomor pelanggan (khusus akun member).
+              untuk memakai nomor pelanggan (khusus akun customer).
             </p>
             <div>
               <label className="mb-1 block text-xs text-slate-400" htmlFor="wa-phone">

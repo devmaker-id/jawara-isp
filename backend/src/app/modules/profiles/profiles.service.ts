@@ -1094,10 +1094,10 @@ export class ProfilesService {
     const price = finalPrice(profile);
     const rows: Array<Record<string, unknown>> = [];
 
-    // Tipe member wajib menunjuk pelanggan nyata; tipe voucher tidak boleh.
-    if (dto.user_type === 'member') {
+    // Tipe customer wajib menunjuk pelanggan nyata; tipe voucher tidak boleh.
+    if (dto.user_type === 'customer') {
       if (!dto.customer_id) {
-        throw new BadRequestException('Tipe member wajib memilih pelanggan.');
+        throw new BadRequestException('Tipe customer wajib memilih pelanggan.');
       }
       const customer = await this.db.query<{ id: number }>(
         'SELECT id FROM customers WHERE id = ? AND is_active = 1',
@@ -1112,10 +1112,10 @@ export class ProfilesService {
 
     // Member dengan riwayat aktif tidak boleh punya dua akun di profil sama;
     // akun lama harus dinonaktifkan lebih dulu agar tidak dobel tagihan.
-    if (dto.user_type === 'member' && dto.customer_id) {
+    if (dto.user_type === 'customer' && dto.customer_id) {
       const existing = await this.db.query<{ id: number }>(
         `SELECT id FROM radius_vouchers
-          WHERE user_type = 'member' AND customer_id = ?
+          WHERE user_type = 'customer' AND customer_id = ?
             AND profile_type = ? AND status <> 'expired' LIMIT 1`,
         [dto.customer_id, dto.profile_type],
       );
@@ -1174,15 +1174,15 @@ export class ProfilesService {
         // Voucher: password mengikuti pilihan format akun (sama atau terpisah).
         // Member: password terpisah, boleh ditentukan operator.
         password:
-          dto.user_type === 'member'
+          dto.user_type === 'customer'
             ? (dto.password ?? randomCode(charset, length))
             : separatePassword
               ? randomPassword()
               : username,
-        customer_id: dto.user_type === 'member' ? dto.customer_id : null,
+        customer_id: dto.user_type === 'customer' ? dto.customer_id : null,
         // Member adalah akun langganan yang langsung diserahkan; voucher
         // masih berstatus baru sampai diserahkan ke pembeli.
-        status: dto.user_type === 'member' || dto.ready ? 'ready-to-use' : 'new-created',
+        status: dto.user_type === 'customer' || dto.ready ? 'ready-to-use' : 'new-created',
         price: price.base,
         tax_amount: price.tax,
         created_by: actor.userId,
@@ -1493,7 +1493,7 @@ export class ProfilesService {
         tagline: brand.tagline,
         profile: row.profile_name,
         profile_type: row.profile_type ?? '',
-        user_type: row.user_type === 'member' ? 'member' : 'voucher',
+        user_type: row.user_type === 'customer' ? 'customer' : 'voucher',
         username: row.username,
         password: row.password,
         price: `Rp ${(Number(row.price ?? 0) + Number(row.tax_amount ?? 0)).toLocaleString('id-ID')}`,
@@ -1526,7 +1526,7 @@ export class ProfilesService {
    * Kirim voucher terpilih ke WhatsApp.
    *
    * Nomor diambil dari: parameter `phone` bila diisi, kalau tidak dari nomor
-   * pelanggan akun member. Voucher lepas tanpa nomor akan dilewati dan
+   * pelanggan akun customer. Voucher lepas tanpa nomor akan dilewati dan
    * dilaporkan — tidak dikirim ke nomor tebakan.
    */
   async sendVouchersWhatsApp(actor: Actor, ids: number[], phone?: string) {
@@ -1537,7 +1537,7 @@ export class ProfilesService {
       );
     }
 
-    // Nomor pelanggan untuk akun member, supaya satu pelanggan satu pesan.
+    // Nomor pelanggan untuk akun customer, supaya satu pelanggan satu pesan.
     const customers = await this.db.query<{ id: number; phone: string | null; name: string }>(
       'SELECT id, phone, name FROM customers WHERE id IN (?)',
       [picked.map((row) => row.customer_id).filter((id): id is number => Boolean(id)).concat([0])],

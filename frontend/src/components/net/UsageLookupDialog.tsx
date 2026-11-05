@@ -16,7 +16,7 @@ interface SessionRow {
 interface UsageResult {
   account: {
     username: string;
-    user_type: 'voucher' | 'customer' | 'member';
+    user_type: 'voucher' | 'customer';
     profile_type: string | null;
     profile_name: string | null;
     status: string;
@@ -180,7 +180,7 @@ const UsageLookupDialog: React.FC<{ open: boolean; onClose: () => void }> = ({ o
 
           <div className="mt-3 rounded-lg border border-slate-700/60 bg-slate-900/40 px-3 py-2 text-xs leading-relaxed text-slate-400">
             <p className="font-medium text-slate-300">Cara pakai</p>
-            <p>1. Pilih jenis akun: Pelanggan (PPPoE/member) atau Voucher (hotspot/PPP).</p>
+            <p>1. Pilih jenis akun: Pelanggan (PPPoE/customer) atau Voucher (hotspot/PPP).</p>
             <p>2. Isi username, MAC address, atau keduanya — cukup salah satu.</p>
             <p>3. Tekan Cari data. Hasil menampilkan profil, status, sesi aktif, dan total pemakaian.</p>
             <p>MAC boleh ditulis sebagian (mis. 78:98:E8) untuk mencari semua akun dari perangkat itu.</p>

@@ -38,7 +38,7 @@ interface OnlineCounts {
   hotspot: number | null;
   ppp: number | null;
   hotspot_voucher: number | null;
-  hotspot_member: number | null;
+  hotspot_customer: number | null;
   unclassified: number;
   device: string | null;
   error: string | null;
@@ -387,10 +387,10 @@ const Dashboard: React.FC = () => {
                 <div className="mt-2 space-y-0.5 text-[11px] text-slate-400">
                   <p>
                     Voucher {sesi(online.hotspot_voucher)} · Member{' '}
-                    {sesi(online.hotspot_member)}
+                    {sesi(online.hotspot_customer)}
                   </p>
                   <p className="pt-1 text-cyan-300/80 group-hover:text-cyan-200">
-                    Lihat voucher (default) atau member →
+                    Lihat voucher (default) atau customer →
                   </p>
                 </div>
               </Card>

@@ -559,7 +559,7 @@ export class RadiusRepository {
     username?: string;
     mac?: string;
   }): Promise<UsageLookupResult> {
-    const userTypes = input.userType === 'customer' ? ['customer', 'member'] : ['voucher'];
+    const userTypes = input.userType === 'customer' ? ['customer'] : ['voucher'];
     const where: string[] = ['v.user_type IN (?)'];
     const params: unknown[] = [userTypes];
 
@@ -610,7 +610,7 @@ export class RadiusRepository {
     // Jangan campur bucket: di mode voucher jangan tampilkan akun pelanggan
     // (dan sebaliknya) hanya karena punya jejak radacct.
     if (usernames.length > 0) {
-      const opposite = input.userType === 'customer' ? ['voucher'] : ['customer', 'member'];
+      const opposite = input.userType === 'customer' ? ['voucher'] : ['customer'];
       const foreign = await this.db.query<{ username: string }>(
         `SELECT username FROM radius_vouchers WHERE username IN (?) AND user_type IN (?)`,
         [usernames, opposite],
@@ -656,7 +656,7 @@ export class RadiusRepository {
 
 export interface UsageAccountRow {
   username: string;
-  user_type: 'voucher' | 'customer' | 'member';
+  user_type: 'voucher' | 'customer';
   profile_type: string | null;
   profile_name: string | null;
   status: string;

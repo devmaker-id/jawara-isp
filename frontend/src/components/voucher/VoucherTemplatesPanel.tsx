@@ -83,10 +83,10 @@ const SAMPLE_VOUCHER: VoucherPrintCard = {
   price_tier: '5k',
 };
 
-const SAMPLE_MEMBER: VoucherPrintCard = {
+const SAMPLE_CUSTOMER: VoucherPrintCard = {
   profile: 'Hunian 10 Mbps',
   profile_type: 'ppp',
-  user_type: 'member',
+  user_type: 'customer',
   username: 'soleh@bibitnet',
   password: '••••••',
   price: 'Rp 150.000',
@@ -126,7 +126,7 @@ export const VoucherTemplatesPanel: React.FC<{
   // Di layar kecil modal dibagi jadi 3 tab supaya tidak perlu scroll jauh.
   const [pane, setPane] = useState<'kode' | 'pratinjau' | 'variabel'>('kode');
   const [height, setHeight] = useState<string>(() => (window.innerWidth < 1024 ? '320px' : '460px'));
-  const [previewKind, setPreviewKind] = useState<'voucher' | 'member'>('voucher');
+  const [previewKind, setPreviewKind] = useState<'voucher' | 'customer'>('voucher');
   const [previewCount, setPreviewCount] = useState<1 | 4 | 8>(4);
   const editorRef = useRef<CodeEditorHandle | null>(null);
 
@@ -137,7 +137,7 @@ export const VoucherTemplatesPanel: React.FC<{
   const preview = useMemo(() => {
     if (!draft) return '';
     const printedAt = new Date().toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' });
-    const sample = previewKind === 'member' ? SAMPLE_MEMBER : SAMPLE_VOUCHER;
+    const sample = previewKind === 'customer' ? SAMPLE_CUSTOMER : SAMPLE_VOUCHER;
     // Jalur render sama dengan cetak: sanitasi + grid + variabel.
     return buildPrintDocument(
       draft.html,
@@ -582,7 +582,7 @@ export const VoucherTemplatesPanel: React.FC<{
                     <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                       <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">Pratinjau</p>
                       <div className="flex gap-1">
-                        {(['voucher', 'member'] as const).map((kind) => (
+                        {(['voucher', 'customer'] as const).map((kind) => (
                           <button
                             key={kind}
                             type="button"
@@ -593,7 +593,7 @@ export const VoucherTemplatesPanel: React.FC<{
                                 : 'border-slate-700 text-slate-300'
                             }`}
                           >
-                            {kind === 'voucher' ? 'Voucher' : 'Member'}
+                            {kind === 'voucher' ? 'Voucher' : 'Customer'}
                           </button>
                         ))}
                         <select

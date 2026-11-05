@@ -677,7 +677,7 @@ export class PaymentsRepository {
    *
    * Tagihan yang menunjuk `username` mengendalikan status akun itu:
    *   lunas            → 'new-created' menjadi 'ready-to-use' (voucher) atau
-   *                      'active' (customer/member)
+   *                      'active' (customer)
    *   tidak lagi lunas → kembali 'new-created' HANYA bila akun belum pernah
    *                      login; akun yang sudah dipakai tidak dicabut mundur.
    *

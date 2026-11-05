@@ -394,7 +394,7 @@ export class VoucherRepository {
   }): Promise<VoucherRow[]> {
     const where: string[] = [];
     const params: unknown[] = [];
-    if (filters.userType === 'voucher' || filters.userType === 'member') {
+    if (filters.userType === 'voucher' || filters.userType === 'customer') {
       where.push('v.user_type = ?');
       params.push(filters.userType);
     }
@@ -526,7 +526,7 @@ export class VoucherRepository {
 
   async counts(ownerId?: number): Promise<Record<string, number>> {
     const rows = await this.db.query<{ status: string; total: number }>(
-      // Halaman voucher menghitung voucher saja; akun pelanggan (member)
+      // Halaman voucher menghitung voucher saja; akun pelanggan (customer)
       // dihitung di halaman Pelanggan, bukan di sini.
       `SELECT status, COUNT(*) AS total FROM radius_vouchers
         WHERE user_type = 'voucher' ${ownerId ? 'AND owner_id = ?' : ''}

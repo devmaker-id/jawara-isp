@@ -7,7 +7,7 @@ import { RequestScope, SYSTEM_SCOPE } from '../auth/request-scope';
  * Akses data penjualan voucher + rekap pendapatan.
  *
  * Rekap pendapatan menggabungkan DUA sumber uang:
- *   1. `payments`       → pembayaran tagihan member/pelanggan
+ *   1. `payments`       → pembayaran tagihan customer/pelanggan
  *   2. `voucher_sales`  → penjualan voucher (modal + harga jual)
  *
  * Keduanya disatukan di satu query (UNION ALL) supaya angka dashboard dan
@@ -41,7 +41,7 @@ export interface VoucherSale {
 export interface RevenueSummary {
   from: string | null;
   to: string | null;
-  /** Uang dari tagihan member/pelanggan. */
+  /** Uang dari tagihan customer/pelanggan. */
   payments_income: number;
   /** Uang dari penjualan voucher. */
   voucher_income: number;
@@ -295,7 +295,7 @@ export class VoucherSalesRepository {
 
   /** Voucher yang belum pernah dicatat penjualannya (untuk pilihan di form). */
   async unsoldVouchers(ownerId?: number, limit = 100): Promise<RowDataPacket[]> {
-    // Hanya voucher sungguhan. Akun pelanggan (user_type='member') tinggal di
+    // Hanya voucher sungguhan. Akun pelanggan (user_type='customer') tinggal di
     // tabel yang sama tetapi bukan barang dagangan: menjualnya berarti menjual
     // akun pelanggan, bukan voucher.
     const where = [

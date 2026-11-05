@@ -301,7 +301,7 @@ export class RadiusEnforcementService implements OnModuleInit, OnModuleDestroy {
     const expiresAt = seconds > 0 ? new Date(Date.now() + seconds * 1000) : null;
 
     // Voucher: pendapatan diakui saat login pertama (konsumsi). Akun customer
-    // (user_type = 'member' → nantinya 'customer') TIDAK — pendapatannya lewat
+    // (user_type = 'customer' → nantinya 'customer') TIDAK — pendapatannya lewat
     // tagihan (prepaid) / accrual (postpaid), bukan di sini.
     const isVoucher = account.user_type === 'voucher';
 

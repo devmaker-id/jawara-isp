@@ -704,7 +704,7 @@ export class CustomersRepository {
           `INSERT INTO radius_vouchers
              (profile_type, profile_id, group_profile_id, profile_name, user_type, username,
               password, customer_id, status, price, tax_amount, expires_at, created_by, owner_id)
-           VALUES (?, ?, ?, ?, 'member', ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+           VALUES (?, ?, ?, ?, 'customer', ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
           [
             account.type,
             account.profile.id,

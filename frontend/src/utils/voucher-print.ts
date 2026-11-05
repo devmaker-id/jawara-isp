@@ -400,7 +400,7 @@ export function cardFromRow(
   return {
     profile: row.profile_name,
     profile_type: row.profile_type ?? '',
-    user_type: row.user_type === 'member' ? 'member' : 'voucher',
+    user_type: row.user_type === 'customer' ? 'customer' : 'voucher',
     username: row.username,
     password: row.password === row.username ? '' : row.password,
     price: `Rp ${priceValue.toLocaleString('id-ID')}`,

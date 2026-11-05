@@ -36,8 +36,8 @@ export const POOL_MODES = ['mikrotik-pool', 'sql-ippool', 'group-pool', 'router-
 const IPV4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
 export const VOUCHER_STATUS = ['new-created', 'ready-to-use', 'active', 'expired'] as const;
 // voucher = username sama dengan password (dibagikan di kertas).
-// member  = akun langganan ber-username DAN password, terikat pelanggan.
-export const USER_TYPES = ['voucher', 'member'] as const;
+// customer  = akun langganan ber-username DAN password, terikat pelanggan.
+export const USER_TYPES = ['voucher', 'customer'] as const;
 
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 ._@-]{0,63}$/;
 
@@ -450,11 +450,11 @@ export class GenerateVoucherDto {
   profile_type!: 'hotspot' | 'ppp';
 
   // voucher  = akun lepas, tanpa pelanggan
-  // member = akun langganan milik satu pelanggan (customer_id wajib)
+  // customer = akun langganan milik satu pelanggan (customer_id wajib)
   @IsIn(USER_TYPES as unknown as string[], {
-    message: 'Tipe user harus voucher atau member.',
+    message: 'Tipe user harus voucher atau customer.',
   })
-  user_type!: 'voucher' | 'member';
+  user_type!: 'voucher' | 'customer';
 
   @Type(() => Number)
   @IsInt({ message: 'Profil wajib dipilih.' })
@@ -501,14 +501,14 @@ export class GenerateVoucherDto {
   @Matches(/^[A-Za-z0-9]{4,12}$/, { message: 'Panjang password 4-12 huruf/angka.' })
   password?: string;
 
-  // Wajib untuk tipe member; harus kosong untuk tipe voucher.
-  @ValidateIf((dto: GenerateVoucherDto) => dto.user_type === 'member')
+  // Wajib untuk tipe customer; harus kosong untuk tipe voucher.
+  @ValidateIf((dto: GenerateVoucherDto) => dto.user_type === 'customer')
   @Type(() => Number)
   @IsInt({ message: 'Pelanggan wajib dipilih untuk tipe customer.' })
   @Min(1, { message: 'Pelanggan wajib dipilih untuk tipe customer.' })
   customer_id?: number;
 
-  // Tipe member: akun langsung diserahkan (siap pakai) tanpa lewat voucher.
+  // Tipe customer: akun langsung diserahkan (siap pakai) tanpa lewat voucher.
   @IsOptional()
   @IsBoolean()
   ready?: boolean;
@@ -614,7 +614,7 @@ export class SendVoucherWhatsAppDto {
   @IsInt({ each: true })
   ids!: number[];
 
-  // Kosong = pakai nomor pelanggan pemilik akun (khusus akun member).
+  // Kosong = pakai nomor pelanggan pemilik akun (khusus akun customer).
   @IsOptional()
   @IsString()
   @Matches(/^[0-9+\-\s]{8,20}$/, { message: 'Nomor WhatsApp tidak valid (contoh 08123456789).' })

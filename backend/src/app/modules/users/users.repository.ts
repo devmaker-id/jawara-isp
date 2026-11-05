@@ -170,7 +170,7 @@ export class UsersRepository {
       },
       {
         label: 'akun pelanggan',
-        sql: "SELECT COUNT(*) AS total FROM radius_vouchers WHERE owner_id = ? AND user_type = 'member'",
+        sql: "SELECT COUNT(*) AS total FROM radius_vouchers WHERE owner_id = ? AND user_type = 'customer'",
         params: [id],
       },
       {

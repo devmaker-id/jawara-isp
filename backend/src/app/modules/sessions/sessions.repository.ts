@@ -12,7 +12,7 @@ import { RequestScope, SYSTEM_SCOPE } from '../auth/request-scope';
  * walau pengguna sudah tidak tersambung. Karena itu ada penanda `stale`
  * berdasarkan `acctupdatetime`, bukan penghapusan baris.
  *
- * Jenis sesi ditentukan dari profil voucher/member (`radius_vouchers.profile_type`)
+ * Jenis sesi ditentukan dari profil voucher/customer (`radius_vouchers.profile_type`)
  * karena `radacct` tidak membedakan hotspot dan PPPoE; bila username tidak
  * dikenal, dipakai `nasporttype` (Wireless-802.11 → hotspot).
  */
@@ -54,11 +54,11 @@ export interface OnlineSession {
 export interface SessionFilter {
   jenis?: SessionKind;
   /**
-   * Jenis akun yang sedang online: 'voucher' (akun cetak) atau 'member'
+   * Jenis akun yang sedang online: 'voucher' (akun cetak) atau 'customer'
    * (pelanggan berlangganan). Dipakai dashboard untuk memisahkan daftar sesi
-   * hotspot — voucher dan member tidak dikelola dengan cara yang sama.
+   * hotspot — voucher dan customer tidak dikelola dengan cara yang sama.
    */
-  userType?: 'voucher' | 'member';
+  userType?: 'voucher' | 'customer';
   search?: string;
   page?: number;
   limit?: number;
@@ -78,7 +78,7 @@ export class SessionsRepository {
 
   /**
    * Cakupan baris di SQL: admin/operator melihat semua sesi, reseller hanya
-   * sesi milik voucher/member dengan owner_id miliknya. Identitas tanpa id
+   * sesi milik voucher/customer dengan owner_id miliknya. Identitas tanpa id
    * sah → `1 = 0` (gagal-tertutup).
    */
   private scopeFilter(scope: RequestScope): { sql: string; params: number[] } {

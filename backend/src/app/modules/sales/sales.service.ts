@@ -14,7 +14,7 @@ import { SaleFilter, VoucherSalesRepository } from './voucher-sales.repository';
 /**
  * Penjualan voucher + rekap pendapatan.
  *
- * Pendapatan = uang masuk dari dua sumber: tagihan member/pelanggan (`payments`)
+ * Pendapatan = uang masuk dari dua sumber: tagihan customer/pelanggan (`payments`)
  * dan penjualan voucher (`voucher_sales`). Angka ini TIDAK diambil dari
  * aktivitas jaringan seperti login pertama voucher — itu hanya penanda mulai
  * masa aktif.
@@ -89,7 +89,7 @@ export class SalesService {
       if (!voucher) throw new NotFoundException(`Voucher #${dto.voucher_id} tidak ditemukan.`);
       if (String(voucher.user_type) !== 'voucher') {
         throw new BadRequestException(
-          `Akun #${dto.voucher_id} adalah akun pelanggan (member), bukan voucher. ` +
+          `Akun #${dto.voucher_id} adalah akun pelanggan (customer), bukan voucher. ` +
             'Penjualan voucher tidak boleh mencatat akun pelanggan.',
         );
       }
