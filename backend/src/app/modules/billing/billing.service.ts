@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { randomBytes } from 'node:crypto';
 import type { RowDataPacket } from 'mysql2/promise';
 import { DatabaseService } from '../../database/database.service';
+import { nextInvoiceNumber } from '../invoices/invoice-number';
 
 // Pembuat tagihan otomatis (siklus bulanan) + pengakuan pendapatan postpaid.
 // Berjalan sebagai penjadwal interval; tiap run idempoten sehingga aman dijalankan
@@ -116,38 +116,41 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       // Hanya terbit dalam jendela "N hari sebelum jatuh tempo".
       if (diffDays < 0 || diffDays > leadDays) continue;
 
-      // Siklus baru dimulai → promosikan perubahan tanggal & bersihkan penanda.
-      if (hasPending) {
-        await this.db.execute(
-          'UPDATE customers SET billing_day = next_billing_day, next_billing_day = NULL WHERE id = ?',
-          [row.id],
-        );
-      }
-
       const amount = Number(row.price ?? 0) + Number(row.tax_amount ?? 0);
       if (amount <= 0) continue;
 
       const periodStart = toDate(due);
       const periodEnd = toDate(addMonths(due, 1));
-      const invoiceNumber = `INV-${periodStart.replace(/-/g, '')}-${randomBytes(2).toString('hex').toUpperCase()}`;
 
       try {
-        await this.db.execute(
-          `INSERT INTO invoices
-             (invoice_number, customer_id, username, customer_name, amount, status, due_date, period_start, period_end, description)
-           VALUES (?, ?, ?, ?, ?, 'unpaid', ?, ?, ?, ?)`,
-          [
-            invoiceNumber,
-            row.id,
-            row.username,
-            row.name,
-            amount,
-            periodStart,
-            periodStart,
-            periodEnd,
-            `Tagihan ${row.billing_type}`,
-          ],
-        );
+        // Nomor tagihan diambil dalam transaksi (SELECT ... FOR UPDATE) supaya
+        // urutannya tidak beradu dengan penulisan tagihan lain.
+        await this.db.withTransaction(async (conn) => {
+          // Siklus baru dimulai → promosikan perubahan tanggal & bersihkan penanda.
+          if (hasPending) {
+            await conn.query(
+              'UPDATE customers SET billing_day = next_billing_day, next_billing_day = NULL WHERE id = ?',
+              [row.id],
+            );
+          }
+          const invoiceNumber = await nextInvoiceNumber(conn);
+          await conn.query(
+            `INSERT INTO invoices
+               (invoice_number, customer_id, username, customer_name, amount, status, due_date, period_start, period_end, description)
+             VALUES (?, ?, ?, ?, ?, 'unpaid', ?, ?, ?, ?)`,
+            [
+              invoiceNumber,
+              row.id,
+              row.username,
+              row.name,
+              amount,
+              periodStart,
+              periodStart,
+              periodEnd,
+              `Tagihan ${row.billing_type}`,
+            ],
+          );
+        });
         created += 1;
       } catch (error) {
         // UNIQUE (customer_id, username, period_key): periode sudah ditagih → lewati.

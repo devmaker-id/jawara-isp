@@ -1,10 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { randomBytes } from 'node:crypto';
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { DatabaseService } from '../../database/database.service';
 import { ownerFilter, RequestScope, SYSTEM_SCOPE } from '../auth/request-scope';
 import { STALE_SQL } from '../sessions/sessions.repository';
 import { CreateCustomerDto, UpdateCustomerDto } from './dto/customer.dto';
+import { nextInvoiceNumber } from '../invoices/invoice-number';
 import {
   CUSTOMER_STATUSES,
   CustomerStatus,
@@ -739,7 +739,7 @@ export class CustomersRepository {
             `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
           const start = new Date();
           const end = new Date(start.getFullYear(), start.getMonth() + 1, start.getDate());
-          const number = `INV-${fmt(start).replace(/-/g, '')}-${randomBytes(2).toString('hex').toUpperCase()}`;
+          const number = await nextInvoiceNumber(conn);
           await conn.query(
             `INSERT INTO invoices
                (invoice_number, customer_id, username, customer_name, amount, status, due_date, period_start, period_end, paid_date, revenue_recognized_at, description)

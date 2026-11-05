@@ -5,6 +5,7 @@ import { ownerFilter, RequestScope, SYSTEM_SCOPE } from '../auth/request-scope';
 import { writeFinanceEvent } from '../finance/finance-events.repository';
 import { CreateInvoiceDto, InvoiceStatus, UpdateInvoiceDto } from './dto/invoice.dto';
 import { invoiceSnapshot, validateInvoicePeriod } from './invoices.domain';
+import { nextInvoiceNumber } from './invoice-number';
 
 export type InvoiceErrorCode =
   | 'NOT_FOUND'
@@ -325,7 +326,7 @@ export class InvoicesRepository {
   ): Promise<Invoice> {
     {
       const customerName = await this.customerName(conn, dto.customer_id);
-      const invoiceNumber = await this.nextInvoiceNumber(conn);
+      const invoiceNumber = await nextInvoiceNumber(conn);
 
       const [result] = await conn.query<ResultSetHeader>(
         `INSERT INTO invoices (invoice_number, customer_id, username, customer_name, amount, status, due_date,
@@ -570,20 +571,5 @@ export class InvoicesRepository {
       throw new InvoiceError('CUSTOMER_NOT_FOUND', `Pelanggan dengan ID ${customerId} tidak ditemukan`);
     }
     return rows[0].name as string;
-  }
-
-  // Nomor tagihan: INV-<tahun>-<urut 4 digit>. SELECT ... FOR UPDATE menahan
-  // baris terakhir pada rentang tahun berjalan; UNIQUE(invoice_number) menjadi
-  // jaring pengaman terakhir bila dua permintaan benar-benar bersamaan.
-  private async nextInvoiceNumber(conn: PoolConnection): Promise<string> {
-    const year = new Date().getFullYear();
-    const [rows] = await conn.query<RowDataPacket[]>(
-      `SELECT invoice_number FROM invoices WHERE invoice_number LIKE ? ORDER BY invoice_number DESC LIMIT 1 FOR UPDATE`,
-      [`INV-${year}-%`],
-    );
-    const last = rows.length > 0 ? String(rows[0].invoice_number) : null;
-    const lastSeq = last ? Number(last.split('-')[2]) : 0;
-    const seq = (Number.isFinite(lastSeq) ? lastSeq : 0) + 1;
-    return `INV-${year}-${String(seq).padStart(4, '0')}`;
   }
 }
