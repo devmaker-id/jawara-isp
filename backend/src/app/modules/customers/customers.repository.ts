@@ -879,10 +879,10 @@ export class CustomersRepository {
           expiresAt: (row.expires_at as Date | null) ?? null,
         });
 
-        await conn.query('UPDATE radius_vouchers SET status = ? WHERE username = ?', [
-          voucherStatusFor(status),
-          username,
-        ]);
+        await conn.query(
+          'UPDATE radius_vouchers SET status = ?, block_reason = NULL, isolir_at = NULL WHERE username = ?',
+          [voucherStatusFor(status), username],
+        );
       }
     });
   }

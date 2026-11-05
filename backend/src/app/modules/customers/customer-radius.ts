@@ -35,7 +35,18 @@ export function statusCheckAttributes(
   status: CustomerStatus,
   expiresAt?: Date | string | null,
 ): RadiusRow[] {
-  if (status === 'active') return [];
+  if (status === 'active') {
+    // Masa aktif berjalan: tulis Expiration (masa depan) agar FreeRADIUS menolak
+    // sendiri setelah lewat. Tanpa ini, Expiration yang ditulis saat login pertama
+    // hilang begitu akun di-sync ulang (edit pelanggan/profil).
+    if (expiresAt) {
+      const when = new Date(expiresAt);
+      if (!Number.isNaN(when.getTime()) && when.getTime() > Date.now()) {
+        return [{ attribute: 'Expiration', op: ':=', value: freeRadiusDate(when) }];
+      }
+    }
+    return [];
+  }
 
   if (status === 'expired') {
     const when = expiresAt ? new Date(expiresAt) : new Date();

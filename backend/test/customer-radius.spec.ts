@@ -48,6 +48,23 @@ describe('statusCheckAttributes', () => {
     expect(statusCheckAttributes('active')).toEqual([]);
   });
 
+  it('aktif dengan masa aktif ke depan menulis Expiration', () => {
+    // +1 jam dari sekarang — pasti masa depan, jadi hasilnya deterministik.
+    const rows = statusCheckAttributes('active', new Date(Date.now() + 3_600_000));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].attribute).toBe('Expiration');
+    expect(rows[0].value).toMatch(/^\d{2} \w{3} \d{4} \d{2}:\d{2}:\d{2}$/);
+  });
+
+  it('aktif tanpa tanggal tetap kosong (masa aktif tak terbatas)', () => {
+    expect(statusCheckAttributes('active', null)).toEqual([]);
+    expect(statusCheckAttributes('active', undefined)).toEqual([]);
+  });
+
+  it('aktif dengan tanggal sudah lewat tidak menulis Expiration (ditangani penegak)', () => {
+    expect(statusCheckAttributes('active', new Date(Date.now() - 3_600_000))).toEqual([]);
+  });
+
   it('suspend dan disable ditolak lewat Auth-Type := Reject', () => {
     for (const status of ['suspend', 'disable'] as const) {
       expect(statusCheckAttributes(status)).toEqual([
