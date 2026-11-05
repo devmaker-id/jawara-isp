@@ -48,6 +48,8 @@ interface Customer {
   address: string;
   is_active: boolean;
   status: CustomerStatus;
+  billing_type: 'prepaid' | 'postpaid';
+  billing_day?: number | null;
   created_at: string;
   /** Pemilik data. null = data internal (tanpa pemilik). */
   owner_id?: number | null;
@@ -139,6 +141,8 @@ interface CustomerForm {
   phone: string;
   address: string;
   status: CustomerStatus;
+  billing_type: 'prepaid' | 'postpaid';
+  billing_day: string;
   owner_id: string;
   profile_type: ProfileType;
   profile_id: string;
@@ -152,6 +156,8 @@ const EMPTY_FORM: CustomerForm = {
   phone: '',
   address: '',
   status: 'active',
+  billing_type: 'prepaid',
+  billing_day: '',
   owner_id: '',
   profile_type: 'hotspot',
   profile_id: '',
@@ -421,6 +427,8 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
       phone: customer.phone,
       address: customer.address ?? '',
       status: customer.status ?? 'active',
+      billing_type: customer.billing_type ?? 'prepaid',
+      billing_day: customer.billing_day ? String(customer.billing_day) : '',
       owner_id: customer.owner_id ? String(customer.owner_id) : '',
       profile_type: account?.profile_type ?? 'hotspot',
       profile_id: account ? String(account.profile_id) : '',
@@ -495,6 +503,8 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
       phone: form.phone.trim(),
       address: form.address.trim(),
       status: form.status,
+      billing_type: form.billing_type,
+      billing_day: form.billing_day ? Number(form.billing_day) : undefined,
     };
     if (canAssignOwner && ownerAvailable && !editing) {
       // Kepemilikan saat UBAH punya endpoint sendiri (PATCH /:id/owner) yang
@@ -1178,6 +1188,38 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
                     <option value="suspend">Suspend — ditolak sementara</option>
                     <option value="disable">Disable — ditolak permanen</option>
                   </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-1" htmlFor="c-billing-type">
+                    Tipe pembayaran *
+                  </label>
+                  <select
+                    id="c-billing-type"
+                    value={form.billing_type}
+                    onChange={(e) => setForm((f) => ({ ...f, billing_type: e.target.value as 'prepaid' | 'postpaid' }))}
+                    className={inputClass}
+                  >
+                    <option value="prepaid">Prepaid — bayar dulu baru pakai</option>
+                    <option value="postpaid">Postpaid — pakai dulu baru bayar</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-1" htmlFor="c-billing-day">
+                    Tanggal tagihan (1-31)
+                  </label>
+                  <input
+                    id="c-billing-day"
+                    type="number"
+                    min="1"
+                    max="31"
+                    value={form.billing_day}
+                    onChange={(e) => setForm((f) => ({ ...f, billing_day: e.target.value }))}
+                    className={inputClass}
+                    placeholder="Ikut tanggal registrasi"
+                  />
+                  <p className="text-[11px] text-slate-500 mt-1">Kosong = ikut tanggal registrasi.</p>
                 </div>
 
                 {!editing && (

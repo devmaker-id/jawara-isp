@@ -300,9 +300,15 @@ export class RadiusEnforcementService implements OnModuleInit, OnModuleDestroy {
     const seconds = value > 0 && UNIT_SECONDS[unit] ? value * UNIT_SECONDS[unit] : 0;
     const expiresAt = seconds > 0 ? new Date(Date.now() + seconds * 1000) : null;
 
+    // Voucher: pendapatan diakui saat login pertama (konsumsi). Akun customer
+    // (user_type = 'member' → nantinya 'customer') TIDAK — pendapatannya lewat
+    // tagihan (prepaid) / accrual (postpaid), bukan di sini.
+    const isVoucher = account.user_type === 'voucher';
+
     await this.db.execute(
       `UPDATE radius_vouchers
           SET status = 'active', first_login_at = NOW(), expires_at = ?
+              ${isVoucher ? ', revenue_recognized_at = NOW()' : ''}
         WHERE id = ?`,
       [expiresAt, account.id],
     );
