@@ -3,6 +3,7 @@ import {
   parseOnuTable,
   parseOptical,
   parseSystem,
+  parseOnuInfoCtc,
 } from '../src/app/modules/olt/vendors/hisfocus/hisfocus.parser';
 
 /**
@@ -57,6 +58,7 @@ describe('parser HiFocus — show onu info epon all', () => {
       adminState: 'enable',
       omccState: 'enable',
       phaseState: 'up',
+      connectionState: 'ONLINE',
       online: true,
       name: 'Noval - NUNGGUL',
     });
@@ -74,6 +76,21 @@ describe('parser HiFocus — show onu info epon all', () => {
     expect(down?.online).toBe(false);
     // CtcNegFail hanya berarti negosiasi CTC belum selesai.
     expect(down?.omccState).toBe('disable');
+  });
+
+  it('ctcStatus menjelaskan sebab offline (power off / LOS / auth gagal)', () => {
+    const raw = [
+      '0/1:5  aa:bb:cc:dd:ee:01 Up   101 9127 1 3 1 CtcNegDone    30 Yes 1H0M0S Nama_Online',
+      '0/1:6  aa:bb:cc:dd:ee:02 Down 101 9127 1 3 1 MpcpDiscovery 30 Yes 0H0M0S Nama_PowerOff',
+      '0/1:7  aa:bb:cc:dd:ee:03 Down 101 9127 1 3 1 --            30 Yes 0H0M0S Nama_FiberLos',
+      '0/1:8  aa:bb:cc:dd:ee:04 Down 101 9127 1 3 1 CtcInfo       30 Yes 0H0M0S Nama_AuthFailed',
+    ].join('\n');
+    const rows = parseOnuTable(raw);
+    const byId = new Map(rows.map((row) => [row.onuId, row.connectionState]));
+    expect(byId.get('5')).toBe('ONLINE');
+    expect(byId.get('6')).toBe('ONU_POWER_OFF');
+    expect(byId.get('7')).toBe('FIBER_LOS');
+    expect(byId.get('8')).toBe('ONU_AUTH_FAILED');
   });
 
   it('header, garis pemisah, dan prompt tidak dianggap ONU', () => {
@@ -112,5 +129,22 @@ describe('parser HiFocus — show onu optical-ddm', () => {
 describe('parser HiFocus — show system', () => {
   it('mengambil nama dan versi perangkat', () => {
     expect(parseSystem(SYSTEM)).toEqual({ identity: 'OLT_BIBITNET', version: 'V2.2.67' });
+  });
+});
+
+describe('parser HiFocus — show onu info (detail) ctc_autoneg', () => {
+  it('memetakan ctc_autoneg ke penyebab offline (format asli memakai spasi)', () => {
+    expect(parseOnuInfoCtc('Ctc autoneg      : CtcNegDone')).toBe('ONLINE');
+    expect(parseOnuInfoCtc('Ctc autoneg      : MpcpDiscovery')).toBe('ONU_POWER_OFF');
+    expect(parseOnuInfoCtc('Ctc autoneg      : --')).toBe('FIBER_LOS');
+    expect(parseOnuInfoCtc('Ctc autoneg      : CtcInfo')).toBe('ONU_AUTH_FAILED');
+  });
+
+  it('tetap membaca bentuk underscore (firmware lain)', () => {
+    expect(parseOnuInfoCtc('ctc_autoneg : MpcpDiscovery')).toBe('ONU_POWER_OFF');
+  });
+
+  it('tanpa baris ctc autoneg -> null', () => {
+    expect(parseOnuInfoCtc('Onu Id : 0/3:12\nOnline status : Down')).toBeNull();
   });
 });

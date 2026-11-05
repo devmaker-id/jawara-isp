@@ -594,6 +594,53 @@ export class PaymentsRepository {
     });
   }
 
+  /**
+   * Hapus permanen pembayaran (opsi B "hapus penuh", khusus admin). Berbeda dari
+   * void yang menyisakan baris, di sini nominal benar-benar hilang dari ledger.
+   * Jejak & snapshot disimpan ke audit_logs (bertahan, FK ke users), sedangkan
+   * finance_events milik pembayaran ini ikut dihapus agar tidak menggantung.
+   */
+  async remove(id: number, actor: PaymentActor): Promise<{ ok: true; invoice: InvoiceBrief }> {
+    return this.db.withTransaction(async (conn) => {
+      const [rows] = await conn.query<PaymentRow[]>(
+        'SELECT id, invoice_id, amount, method, reference, paid_at, note, voided_at FROM payments WHERE id = ? FOR UPDATE',
+        [id],
+      );
+      const payment = rows[0];
+      if (!payment) {
+        throw new PaymentError('PAYMENT_NOT_FOUND', `Pembayaran dengan ID ${id} tidak ditemukan`);
+      }
+      const invoiceId = payment.invoice_id;
+
+      await conn.query(
+        'INSERT INTO audit_logs (user_id, action, details, ip_address) VALUES (?, ?, ?, ?)',
+        [
+          actor.id,
+          'PAYMENT_HARD_DELETE',
+          JSON.stringify({
+            payment_id: id,
+            invoice_id: invoiceId,
+            amount: Number(payment.amount),
+            method: payment.method,
+            reference: payment.reference,
+            paid_at: payment.paid_at ? toDateTime(payment.paid_at) : null,
+            note: payment.note,
+            voided_at: payment.voided_at,
+            actor: { id: actor.id, email: actor.email, name: actor.name },
+            at: new Date().toISOString(),
+          }),
+          actor.ip.slice(0, 45),
+        ],
+      );
+
+      await conn.query("DELETE FROM finance_events WHERE entity_type = 'payment' AND entity_id = ?", [id]);
+      await conn.query('DELETE FROM payments WHERE id = ?', [id]);
+      await this.applyInvoiceState(conn, invoiceId);
+
+      return { ok: true, invoice: await this.invoiceBrief(conn, invoiceId) };
+    });
+  }
+
   private rejectVoided(payment: Payment): void {
     if (payment.voided_at !== null) {
       throw new PaymentError(

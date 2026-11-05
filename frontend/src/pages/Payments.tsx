@@ -312,6 +312,27 @@ const Payments: React.FC = () => {
     }
   };
 
+  // Hapus permanen (admin): baris pembayaran lenyap dari ledger, bukan void.
+  const removePayment = async (row: PaymentItem) => {
+    if (
+      !window.confirm(
+        `Hapus permanen transaksi ${formatRupiah(row.amount)} (${row.invoice_number})?\n\n` +
+          'Ini menghapus baris dari ledger — bukan void. Jejak pelaku tetap tersimpan di audit log.',
+      )
+    ) {
+      return;
+    }
+    try {
+      await api.delete(`/api/payments/${row.id}`);
+      setToast({ type: 'success', text: 'Transaksi dihapus permanen.' });
+      setDetail(null);
+      await loadRows();
+      await loadSummary();
+    } catch (error) {
+      setToast({ type: 'error', text: readError(error, 'Gagal menghapus transaksi.') });
+    }
+  };
+
   const exportCsv = async () => {
     try {
       const collected: PaymentItem[] = [];
@@ -613,6 +634,13 @@ const Payments: React.FC = () => {
                                 setVoidReason('');
                                 setVoidError(null);
                               },
+                            },
+                            {
+                              key: 'delete',
+                              label: 'Hapus permanen',
+                              tone: 'danger',
+                              hidden: !canVoid,
+                              onSelect: () => removePayment(row),
                             },
                           ]}
                         />

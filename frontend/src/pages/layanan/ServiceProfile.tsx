@@ -28,7 +28,7 @@ interface ProfileRow {
   owner_name?: string | null;
   created_by?: number | null;
   created_by_name?: string | null;
-  group_profile_id: number;
+  group_profile_id: number | null;
   bandwidth_id: number;
   cost_price: number;
   sell_price: number;
@@ -88,7 +88,7 @@ interface Preview {
     parent_queue: string | null;
     dns: string;
     local_profile: string | null;
-  };
+  } | null;
   price: { base: number; tax: number; total: number };
   validity_seconds: number | null;
 }
@@ -236,7 +236,7 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
       ...EMPTY,
       name: row.name,
       owner_id: row.owner_id ? String(row.owner_id) : '',
-      group_profile_id: String(row.group_profile_id),
+      group_profile_id: row.group_profile_id ? String(row.group_profile_id) : '',
       bandwidth_id: String(row.bandwidth_id),
       cost_price: String(row.cost_price),
       sell_price: String(row.sell_price),
@@ -271,7 +271,7 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
   const invalid =
     !form ||
     form.name.trim() === '' ||
-    form.group_profile_id === '' ||
+    (!isHotspot && form.group_profile_id === '') ||
     form.bandwidth_id === '' ||
     Number(form.sell_price) < 0 ||
     Number(form.cost_price) < 0 ||
@@ -290,7 +290,7 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
     setError(null);
     const payload: Record<string, unknown> = {
       name: form.name.trim(),
-      group_profile_id: Number(form.group_profile_id),
+      group_profile_id: form.group_profile_id ? Number(form.group_profile_id) : null,
       bandwidth_id: Number(form.bandwidth_id),
       cost_price: Number(form.cost_price),
       sell_price: Number(form.sell_price),
@@ -371,7 +371,8 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
     }
   };
 
-  const groupName = (id: number) => groups.find((g) => g.id === id)?.name ?? `#${id}`;
+  const groupName = (id: number | null) =>
+    id == null ? 'DEFAULT (bawaan router)' : groups.find((g) => g.id === id)?.name ?? `#${id}`;
   const bwName = (id: number) => bandwidths.find((b) => b.id === id)?.name ?? `#${id}`;
   // Angka limitasi yang benar-benar dikirim sebagai Mikrotik-Rate-Limit.
   const bwRate = (id: number) => {
@@ -510,7 +511,7 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
                 <select value={form.group_profile_id}
                   onChange={(e) => setForm({ ...form, group_profile_id: e.target.value })}
                   className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100">
-                  <option value="">Pilih grup…</option>
+                  <option value="">{isHotspot ? 'DEFAULT — profil hotspot bawaan router' : 'Pilih grup…'}</option>
                   {groups.map((group) => (
                     <option key={group.id} value={group.id}>
                       {group.name} · {group.pool_mode}
@@ -519,7 +520,9 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
                 </select>
                 {groups.length === 0 && (
                   <p className="mt-1 text-[11px] text-amber-400">
-                    Belum ada Group Profile tipe {type}. Buat dulu di Profile Group → Group Profile.
+                    {isHotspot
+                      ? 'Belum ada Group Profile tipe hotspot. Kosongkan saja untuk memakai profil hotspot bawaan router.'
+                      : 'Belum ada Group Profile tipe ppp. Buat dulu di Profile Group → Group Profile.'}
                   </p>
                 )}
                 {selectedGroup && (
@@ -784,28 +787,35 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
             </div>
 
             <p className="mt-3 text-xs uppercase tracking-wide text-slate-400">Dari Group Profile</p>
-            <div className="mt-1 grid gap-1 rounded-lg border border-slate-700 bg-black/70 p-3 font-mono text-[11px] text-slate-300">
-              <div>
-                pool      :{' '}
-                {preview.group.pool_mode === 'sql-ippool'
-                  ? 'sql-ippool (RADIUS)'
-                  : preview.group.pool_mode === 'group-pool'
-                    ? 'profil hotspot bawaan router'
-                    : `${preview.group.pool_name ?? '-'}${preview.group.pool_range ? ` ${preview.group.pool_range}` : ''}`}
+            {preview.group ? (
+              <>
+                <div className="mt-1 grid gap-1 rounded-lg border border-slate-700 bg-black/70 p-3 font-mono text-[11px] text-slate-300">
+                  <div>
+                    pool      :{' '}
+                    {preview.group.pool_mode === 'sql-ippool'
+                      ? 'sql-ippool (RADIUS)'
+                      : preview.group.pool_mode === 'group-pool'
+                        ? 'profil hotspot bawaan router'
+                        : `${preview.group.pool_name ?? '-'}${preview.group.pool_range ? ` ${preview.group.pool_range}` : ''}`}
+                  </div>
+                  <div>parent    : {preview.group.parent_queue ?? 'DEFAULT'}</div>
+                  <div>dns       : {preview.group.dns || '-'}</div>
+                  <div>profil    : {preview.group.local_profile ?? 'bawaan router (tanpa Mikrotik-Group)'}</div>
+                </div>
+                <div className="mt-3 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-200">
+                  Profil ini tidak menulis apa pun ke MikroTik. Yang disimpan hanya penetapan grup,
+                  bandwidth, dan limitasi; semuanya dikirim sebagai atribut RADIUS di atas.
+                  {preview.group.local_profile && (
+                    <> Profil lokal <span className="font-mono">{preview.group.local_profile}</span> sudah dibuat
+                    sekali oleh Group Profile.</>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="mt-1 rounded-lg border border-slate-700 bg-black/70 p-3 text-[11px] text-slate-300">
+                DEFAULT — memakai profil hotspot bawaan router (tanpa pool, tanpa DNS, tanpa Mikrotik-Group).
               </div>
-              <div>parent    : {preview.group.parent_queue ?? 'DEFAULT'}</div>
-              <div>dns       : {preview.group.dns || '-'}</div>
-              <div>profil    : {preview.group.local_profile ?? 'bawaan router (tanpa Mikrotik-Group)'}</div>
-            </div>
-
-            <div className="mt-3 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-200">
-              Profil ini tidak menulis apa pun ke MikroTik. Yang disimpan hanya penetapan grup,
-              bandwidth, dan limitasi; semuanya dikirim sebagai atribut RADIUS di atas.
-              {preview.group.local_profile && (
-                <> Profil lokal <span className="font-mono">{preview.group.local_profile}</span> sudah dibuat
-                sekali oleh Group Profile.</>
-              )}
-            </div>
+            )}
 
             <div className="mt-4 flex justify-end">
               <Button onClick={() => setPreview(null)}>Tutup</Button>

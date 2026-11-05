@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { TablePager, useTablePager } from '../../components/TablePager';
+import api from '../../services/api';
+import { useAuth } from '../../contexts/AuthContext';
 import {
   Badge,
   Button,
@@ -10,6 +12,7 @@ import {
   StatCard,
   Table,
   Tabs,
+  errorMessage,
   formatBytes,
   formatNumber,
   formatUptime,
@@ -19,6 +22,7 @@ import {
 interface SessionRow {
   radacctid: number;
   username: string;
+  acctuniqueid: string;
   nasipaddress: string | null;
   framedipaddress: string | null;
   acctstarttime: string | null;
@@ -38,8 +42,27 @@ const formatTime = (value: string | null): string => {
 
 const Sesi: React.FC = () => {
   const [tab, setTab] = useState('active');
+  const { user } = useAuth();
+  const canKick = user?.role === 'admin' || user?.role === 'operator';
+  const [kicking, setKicking] = useState<string | null>(null);
   const sessions = useNet<SessionRow[]>('/api/freeradius/sessions');
   const accounting = useNet<SessionRow[]>('/api/freeradius/accounting');
+
+  const tendang = async (row: SessionRow) => {
+    if (!window.confirm(`Putus sesi ${row.username} sekarang? Pelanggan akan terputus dan harus menyambung ulang.`)) {
+      return;
+    }
+    setKicking(row.acctuniqueid);
+    try {
+      await api.post(`/api/sessions/${encodeURIComponent(row.acctuniqueid)}/disconnect`);
+      sessions.reload();
+      accounting.reload();
+    } catch (error) {
+      window.alert(errorMessage(error));
+    } finally {
+      setKicking(null);
+    }
+  };
 
   // radacct bisa memuat ribuan baris; keduanya dipotong per halaman.
   const activePager = useTablePager(sessions.data ?? [], 25);
@@ -90,7 +113,17 @@ const Sesi: React.FC = () => {
           {sessions.error && <ErrorNote message={sessions.error} onRetry={sessions.reload} />}
           {!sessions.loading && !sessions.error && (
             <Table
-              columns={['User', 'NAS', 'IP sesi', 'Mulai', 'Durasi', 'Masuk', 'Keluar', 'Caller ID']}
+              columns={[
+                'User',
+                'NAS',
+                'IP sesi',
+                'Mulai',
+                'Durasi',
+                'Masuk',
+                'Keluar',
+                'Caller ID',
+                ...(canKick ? ['Aksi'] : []),
+              ]}
               isEmpty={(sessions.data?.length ?? 0) === 0}
               empty="Tidak ada sesi RADIUS aktif."
             >
@@ -104,6 +137,17 @@ const Sesi: React.FC = () => {
                   <td className="px-3 py-2 text-slate-400 text-xs">{formatBytes(row.acctinputoctets)}</td>
                   <td className="px-3 py-2 text-slate-400 text-xs">{formatBytes(row.acctoutputoctets)}</td>
                   <td className="px-3 py-2 font-mono text-xs text-slate-400">{row.callingstationid ?? '-'}</td>
+                  {canKick && (
+                    <td className="px-3 py-2">
+                      <Button
+                        variant="danger"
+                        onClick={() => void tendang(row)}
+                        disabled={kicking === row.acctuniqueid}
+                      >
+                        {kicking === row.acctuniqueid ? '…' : 'Tendang'}
+                      </Button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </Table>

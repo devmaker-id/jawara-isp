@@ -91,12 +91,12 @@ describe('CustomersService', () => {
     await expect(service.remove(99)).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it('menolak hapus pelanggan yang masih punya tagihan/sesi layanan', async () => {
+  it('menghapus pelanggan beserta warisannya (opsi B full delete)', async () => {
     vi.mocked(repo.findById).mockResolvedValue(makeCustomer({ id: 5 }));
-    vi.mocked(repo.countRelations).mockResolvedValue({ invoices: 3, services: 1 });
+    vi.mocked(repo.remove).mockResolvedValue(true);
 
-    await expect(service.remove(5)).rejects.toBeInstanceOf(ConflictException);
-    expect(repo.remove).not.toHaveBeenCalled();
+    await expect(service.remove(5)).resolves.toEqual({ ok: true });
+    expect(repo.remove).toHaveBeenCalledWith(5, undefined);
   });
 
   it('mengizinkan update dengan email milik pelanggan itu sendiri', async () => {

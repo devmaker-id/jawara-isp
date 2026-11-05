@@ -1,4 +1,4 @@
-import { toNumber } from '../../driver/olt-driver';
+import { toNumber, ConnectionState } from '../../driver/olt-driver';
 
 /**
  * Parser keluaran CLI HiFocus / Hioso (EPON, software V2.2.67).
@@ -17,6 +17,7 @@ export interface HisfocusOnuRow {
   adminState: string | null;
   omccState: string | null;
   phaseState: string | null;
+  connectionState: ConnectionState | null;
   online: boolean;
   name: string | null;
 }
@@ -38,6 +39,23 @@ const isNoise = (line: string): boolean => {
 };
 
 const isMac = (value: string): boolean => /^[0-9a-f]{2}([:-][0-9a-f]{2}){5}$/i.test(value);
+
+/**
+ * `ctcStatus` (kolom 10) menjelaskan SEBAB offline, bukan status link.
+ *   CtcNegDone  = online
+ *   MpcpDiscovery = ONU mati listrik (power off)
+ *   --          = fiber putus / LOS
+ *   CtcInfo     = autentikasi gagal
+ * Status link diambil dari kolom `status` (Up/Down), bukan dari sini.
+ */
+const mapCtcState = (ctcStatus: string): ConnectionState | null => {
+  const s = (ctcStatus ?? '').trim().toLowerCase();
+  if (s.startsWith('ctcnegdone')) return 'ONLINE';
+  if (s.includes('mpcp') || s.includes('discovery')) return 'ONU_POWER_OFF';
+  if (s === '--') return 'FIBER_LOS';
+  if (s.startsWith('ctcinfo')) return 'ONU_AUTH_FAILED';
+  return 'UNKNOWN';
+};
 
 /**
  * `show onu info epon 0/1 all` → daftar ONU.
@@ -67,6 +85,7 @@ export const parseOnuTable = (raw: string): HisfocusOnuRow[] => {
       adminState: activate.toLowerCase() === 'yes' ? 'enable' : 'disable',
       omccState: ctcStatus.toLowerCase().startsWith('ctcnegdone') ? 'enable' : 'disable',
       phaseState: statusLower,
+      connectionState: mapCtcState(ctcStatus),
       online: statusLower === 'up',
       name: (name ?? '').trim() || null,
     });
@@ -129,4 +148,18 @@ export const parseSystem = (raw: string): { identity: string | null; version: st
     identity: pick(/^\s*Name\s*:\s*(.+)$/m),
     version: pick(/^\s*Software\s*:\s*(.+)$/m),
   };
+};
+
+/**
+ * `show onu info epon <port> <id>` (detail satu ONU) → nilai `ctc_autoneg`.
+ *
+ * Perangkat menulis field ini sebagai `Ctc autoneg` (spasi) — bukan underscore.
+ * Regex dibuat toleran spasi/underscore/hubung supaya tahan beda firmware.
+ * Nilai sama dengan kolom `CtcStatus` pada `... all`:
+ *   CtcNegDone (online), MpcpDiscovery (listrik), -- (fiber), CtcInfo (auth).
+ */
+export const parseOnuInfoCtc = (raw: string): ConnectionState | null => {
+  const match = /^\s*ctc[\s_-]*autoneg\s*:\s*(.+?)\s*$/im.exec(raw);
+  if (!match) return null;
+  return mapCtcState(match[1]);
 };

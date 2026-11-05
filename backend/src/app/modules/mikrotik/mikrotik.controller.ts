@@ -1,5 +1,6 @@
 import {
   Body,
+  BadRequestException,
   Controller,
   Delete,
   Get,
@@ -21,11 +22,20 @@ import { PermissionGuard, RequirePermission } from '../permissions/permission.gu
 import { RolesGuard } from '../auth/roles.guard';
 import { CreateDeviceDto, UpdateDeviceDto } from './dto/device.dto';
 import {
+  FirewallAddressListDto,
+  FirewallRuleDto,
+  FirewallTable,
   HotspotUserDto,
   InterfaceUpdateDto,
   PppSecretDto,
+  RouteDto,
+  RouteRuleDto,
+  UpdateFirewallAddressListDto,
+  UpdateFirewallRuleDto,
   UpdateHotspotUserDto,
   UpdatePppSecretDto,
+  UpdateRouteDto,
+  UpdateRouteRuleDto,
 } from './dto/mikrotik.dto';
 import { MikrotikService } from './mikrotik.service';
 
@@ -66,6 +76,14 @@ export class MikrotikController {
     if (raw === undefined || raw === null || raw === '') return undefined;
     const parsed = Number(raw);
     return Number.isFinite(parsed) ? parsed : undefined;
+  }
+
+  private firewallTable(raw: string): FirewallTable {
+    const table = (raw ?? '').toLowerCase();
+    if (table !== 'filter' && table !== 'nat' && table !== 'mangle') {
+      throw new BadRequestException(`Menu firewall tidak dikenal: "${raw}". Pakai filter/nat/mangle.`);
+    }
+    return table;
   }
 
   // ===== daftar perangkat =====
@@ -333,5 +351,176 @@ export class MikrotikController {
   @Roles('admin', 'operator')
   routingArp(@Query('device') device?: string) {
     return this.mikrotik.runWithDevice(this.deviceId(device), () => this.mikrotik.routingArp());
+  }
+
+  // ===== firewall: address-list (dideklarasikan sebelum :table agar tidak tertangkap param) =====
+  @Get('firewall/address-list')
+  @Roles('admin', 'operator')
+  firewallAddressLists(@Query('device') device?: string) {
+    return this.mikrotik.runWithDevice(this.deviceId(device), () => this.mikrotik.firewallAddressLists());
+  }
+
+  @Post('firewall/address-list')
+  @Roles('admin')
+  @HttpCode(HttpStatus.CREATED)
+  createFirewallAddressList(
+    @Body() dto: FirewallAddressListDto,
+    @Req() request: Request,
+    @Query('device') device?: string,
+  ) {
+    return this.mikrotik.runWithDevice(this.deviceId(device), () =>
+      this.mikrotik.createFirewallAddressList(dto, actorOf(request)),
+    );
+  }
+
+  @Patch('firewall/address-list/:id')
+  @Roles('admin')
+  updateFirewallAddressList(
+    @Param('id') id: string,
+    @Body() dto: UpdateFirewallAddressListDto,
+    @Req() request: Request,
+    @Query('device') device?: string,
+  ) {
+    return this.mikrotik.runWithDevice(this.deviceId(device), () =>
+      this.mikrotik.updateFirewallAddressList(id, dto, actorOf(request)),
+    );
+  }
+
+  @Delete('firewall/address-list/:id')
+  @Roles('admin')
+  deleteFirewallAddressList(
+    @Param('id') id: string,
+    @Req() request: Request,
+    @Query('device') device?: string,
+  ) {
+    return this.mikrotik.runWithDevice(this.deviceId(device), () =>
+      this.mikrotik.deleteFirewallAddressList(id, actorOf(request)),
+    );
+  }
+
+  // ===== firewall: filter / nat / mangle =====
+  @Get('firewall/:table')
+  @Roles('admin', 'operator')
+  firewallRules(@Param('table') table: string, @Query('device') device?: string) {
+    const menu = this.firewallTable(table);
+    return this.mikrotik.runWithDevice(this.deviceId(device), () => this.mikrotik.firewallRules(menu));
+  }
+
+  @Post('firewall/:table')
+  @Roles('admin')
+  @HttpCode(HttpStatus.CREATED)
+  createFirewallRule(
+    @Param('table') table: string,
+    @Body() dto: FirewallRuleDto,
+    @Req() request: Request,
+    @Query('device') device?: string,
+  ) {
+    const menu = this.firewallTable(table);
+    return this.mikrotik.runWithDevice(this.deviceId(device), () =>
+      this.mikrotik.createFirewallRule(menu, dto, actorOf(request)),
+    );
+  }
+
+  @Patch('firewall/:table/:id')
+  @Roles('admin')
+  updateFirewallRule(
+    @Param('table') table: string,
+    @Param('id') id: string,
+    @Body() dto: UpdateFirewallRuleDto,
+    @Req() request: Request,
+    @Query('device') device?: string,
+  ) {
+    const menu = this.firewallTable(table);
+    return this.mikrotik.runWithDevice(this.deviceId(device), () =>
+      this.mikrotik.updateFirewallRule(menu, id, dto, actorOf(request)),
+    );
+  }
+
+  @Delete('firewall/:table/:id')
+  @Roles('admin')
+  deleteFirewallRule(
+    @Param('table') table: string,
+    @Param('id') id: string,
+    @Req() request: Request,
+    @Query('device') device?: string,
+  ) {
+    const menu = this.firewallTable(table);
+    return this.mikrotik.runWithDevice(this.deviceId(device), () =>
+      this.mikrotik.deleteFirewallRule(menu, id, actorOf(request)),
+    );
+  }
+
+  // ===== route (/ip route) =====
+  @Get('routes')
+  @Roles('admin', 'operator')
+  routes(@Query('device') device?: string) {
+    return this.mikrotik.runWithDevice(this.deviceId(device), () => this.mikrotik.listRoutes());
+  }
+
+  @Post('routes')
+  @Roles('admin')
+  @HttpCode(HttpStatus.CREATED)
+  createRoute(@Body() dto: RouteDto, @Req() request: Request, @Query('device') device?: string) {
+    return this.mikrotik.runWithDevice(this.deviceId(device), () =>
+      this.mikrotik.createRoute(dto, actorOf(request)),
+    );
+  }
+
+  @Patch('routes/:id')
+  @Roles('admin')
+  updateRoute(
+    @Param('id') id: string,
+    @Body() dto: UpdateRouteDto,
+    @Req() request: Request,
+    @Query('device') device?: string,
+  ) {
+    return this.mikrotik.runWithDevice(this.deviceId(device), () =>
+      this.mikrotik.updateRoute(id, dto, actorOf(request)),
+    );
+  }
+
+  @Delete('routes/:id')
+  @Roles('admin')
+  deleteRoute(@Param('id') id: string, @Req() request: Request, @Query('device') device?: string) {
+    return this.mikrotik.runWithDevice(this.deviceId(device), () =>
+      this.mikrotik.deleteRoute(id, actorOf(request)),
+    );
+  }
+
+  // ===== route rule (policy routing; ROS6 /ip route rule, ROS7 /routing rule) =====
+  @Get('route-rules')
+  @Roles('admin', 'operator')
+  routeRules(@Query('device') device?: string) {
+    return this.mikrotik.runWithDevice(this.deviceId(device), () => this.mikrotik.listRouteRules());
+  }
+
+  @Post('route-rules')
+  @Roles('admin')
+  @HttpCode(HttpStatus.CREATED)
+  createRouteRule(@Body() dto: RouteRuleDto, @Req() request: Request, @Query('device') device?: string) {
+    return this.mikrotik.runWithDevice(this.deviceId(device), () =>
+      this.mikrotik.createRouteRule(dto, actorOf(request)),
+    );
+  }
+
+  @Patch('route-rules/:id')
+  @Roles('admin')
+  updateRouteRule(
+    @Param('id') id: string,
+    @Body() dto: UpdateRouteRuleDto,
+    @Req() request: Request,
+    @Query('device') device?: string,
+  ) {
+    return this.mikrotik.runWithDevice(this.deviceId(device), () =>
+      this.mikrotik.updateRouteRule(id, dto, actorOf(request)),
+    );
+  }
+
+  @Delete('route-rules/:id')
+  @Roles('admin')
+  deleteRouteRule(@Param('id') id: string, @Req() request: Request, @Query('device') device?: string) {
+    return this.mikrotik.runWithDevice(this.deviceId(device), () =>
+      this.mikrotik.deleteRouteRule(id, actorOf(request)),
+    );
   }
 }

@@ -220,8 +220,6 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
   const [printOpen, setPrintOpen] = useState(false);
   const [printUseSelection, setPrintUseSelection] = useState(true);
   const [printTemplate, setPrintTemplate] = useState('');
-  // Preset halaman cetak: 'template' = ikuti layout template, selain itu override.
-  const [printPreset, setPrintPreset] = useState<'template' | 'p30' | 'l60'>('template');
   const [templates, setTemplates] = useState<PrintTemplate[]>([]);
   const [printBrand, setPrintBrand] = useState<VoucherPrintBrand>({ brand: '', tagline: '' });
   const [printStatus, setPrintStatus] = useState<'' | Status>('new-created');
@@ -235,13 +233,10 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
   const [printPaperWidth, setPrintPaperWidth] = useState(100);
   const [printPaperHeight, setPrintPaperHeight] = useState(150);
   const [printOrientation, setPrintOrientation] = useState<'portrait' | 'landscape'>('portrait');
-  const [printColumns, setPrintColumns] = useState(3);
-  const [printRows, setPrintRows] = useState(5);
   const [printMargin, setPrintMargin] = useState(8);
-  const [printGapX, setPrintGapX] = useState(3);
-  const [printGapY, setPrintGapY] = useState(3);
+  const [printGap, setPrintGap] = useState(3);
   const [printCardWidth, setPrintCardWidth] = useState('');
-  const [printCardHeight, setPrintCardHeight] = useState('');
+  const [printScale, setPrintScale] = useState(100);
   const [printCutLines, setPrintCutLines] = useState(false);
   // Hasil "siap cetak" yang sedang dipratinjau (null = preview tertutup).
   const [preview, setPreview] = useState<{
@@ -479,14 +474,10 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
 
   /** Layout cetak aktif — dibangun dari kontrol dialog, dipakai preview & cetak. */
   const printLayout = (): VoucherPrintLayout => ({
-    columns: printColumns,
-    rows: printRows,
     marginMm: printMargin,
-    gapMm: printGapY,
-    gapXMm: printGapX,
-    gapYMm: printGapY,
+    gapMm: printGap,
     cardWidthMm: Number(printCardWidth) > 0 ? Number(printCardWidth) : undefined,
-    cardHeightMm: Number(printCardHeight) > 0 ? Number(printCardHeight) : undefined,
+    scale: printScale / 100,
     cutLines: printCutLines,
     orientation: printOrientation,
     paper:
@@ -498,24 +489,19 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
   /** Samakan kontrol dialog dengan layout template yang dipilih. */
   const applyTemplateLayout = (template?: PrintTemplate) => {
     const layout = template?.layout;
-    setPrintColumns(layout?.columns ?? 3);
-    setPrintRows(layout?.rows ?? 5);
     setPrintMargin(layout?.marginMm ?? 8);
-    setPrintGapX(layout?.gapMm ?? 3);
-    setPrintGapY(layout?.gapMm ?? 3);
+    setPrintGap(layout?.gapMm ?? 3);
+    setPrintCardWidth(layout?.cardWidthMm ? String(layout.cardWidthMm) : '');
+    setPrintScale(layout?.scale ? Math.round(layout.scale * 100) : 100);
     setPrintPaper(layout?.paper?.kind ?? 'a4');
     setPrintOrientation(layout?.orientation ?? 'portrait');
-    setPrintCardWidth('');
-    setPrintCardHeight('');
     setPrintCutLines(false);
-    setPrintPreset('template');
   };
 
-  /** Buka dialog cetak; sasaran default = voucher yang ditandai. */
+  /** Buka dialog cetak; tanpa centang = cetak seluruh hasil filter. */
   const openPrint = () => {
-    if (!hasSelection) return;
     const first = templates.find((row) => row.enabled !== false) ?? templates[0];
-    setPrintUseSelection(true);
+    setPrintUseSelection(hasSelection);
     setPrintTemplate(first?.id ?? '');
     setPrintStatus('new-created');
     setPrintProfile(profileFilter);
@@ -524,24 +510,6 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
     setPrintTo('');
     applyTemplateLayout(first);
     setPrintOpen(true);
-  };
-
-  /** Preset cepat: susunan halaman yang biasa dipakai. */
-  const applyPreset = (preset: 'template' | 'p30' | 'l60') => {
-    setPrintPreset(preset);
-    if (preset === 'p30') {
-      setPrintPaper('a4');
-      setPrintOrientation('portrait');
-      setPrintColumns(6);
-      setPrintRows(5);
-    } else if (preset === 'l60') {
-      setPrintPaper('a4');
-      setPrintOrientation('landscape');
-      setPrintColumns(10);
-      setPrintRows(6);
-    } else {
-      applyTemplateLayout(templates.find((row) => row.id === printTemplate));
-    }
   };
 
   /**
@@ -737,7 +705,7 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
                   <MenuLabel>Cetak &amp; berkas</MenuLabel>
                   <MenuItem
                     onClick={() => { setMenuOpen(false); openPrint(); }}
-                    disabled={busy || !hasSelection}
+                    disabled={busy}
                   >
                     Cetak voucher…
                   </MenuItem>
@@ -1055,205 +1023,10 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
               </label>
             )}
 
-            <div>
-              <label className="mb-1 block text-xs text-slate-400" htmlFor="print-template">
-                Template cetak
-              </label>
-              <select
-                id="print-template"
-                value={printTemplate}
-                onChange={(event) => {
-                  setPrintTemplate(event.target.value);
-                  applyTemplateLayout(templates.find((row) => row.id === event.target.value));
-                }}
-                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
-              >
-                {templates.length === 0 && <option value="">Template bawaan</option>}
-                {templates
-                  .filter((template) => template.enabled !== false)
-                  .map((template) => (
-                    <option key={template.id} value={template.id}>
-                      {template.name}
-                    </option>
-                  ))}
-              </select>
-              <label className="mt-3 block text-xs font-medium text-slate-300">
-                Susunan halaman
-                <select
-                  value={printPreset}
-                  onChange={(event) => applyPreset(event.target.value as 'template' | 'p30' | 'l60')}
-                  className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
-                >
-                  <option value="template">Ikuti template</option>
-                  <option value="p30">A4 potret 6×5 — 30 kartu/halaman</option>
-                  <option value="l60">A4 lanskap 10×6 — 60 kartu/halaman</option>
-                </select>
-              </label>
-
-              <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-                <label className="text-xs text-slate-400">
-                  Kertas
-                  <select
-                    value={printPaper}
-                    onChange={(event) => {
-                      const kind = event.target.value as PaperKind;
-                      setPrintPaper(kind);
-                      if (kind === 'thermal58' || kind === 'thermal80') {
-                        // Gulungan: tanpa pemenggalan halaman.
-                        setPrintOrientation('portrait');
-                        setPrintRows(0);
-                        setPrintColumns(1);
-                      } else if (printRows === 0) {
-                        setPrintRows(5);
-                      }
-                    }}
-                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-                  >
-                    <option value="a4">A4</option>
-                    <option value="a5">A5</option>
-                    <option value="thermal58">Thermal 58 mm</option>
-                    <option value="thermal80">Thermal 80 mm</option>
-                    <option value="custom">Custom</option>
-                  </select>
-                </label>
-                <label className="text-xs text-slate-400">
-                  Orientasi
-                  <select
-                    value={printOrientation}
-                    onChange={(event) => setPrintOrientation(event.target.value as 'portrait' | 'landscape')}
-                    disabled={printPaper === 'thermal58' || printPaper === 'thermal80'}
-                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 disabled:opacity-50"
-                  >
-                    <option value="portrait">Portrait</option>
-                    <option value="landscape">Landscape</option>
-                  </select>
-                </label>
-                <label className="text-xs text-slate-400">
-                  Kolom
-                  <input
-                    type="number"
-                    min={1}
-                    max={12}
-                    value={printColumns}
-                    onChange={(event) => setPrintColumns(Math.max(1, Math.min(12, Number(event.target.value) || 1)))}
-                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-                  />
-                </label>
-                <label className="text-xs text-slate-400">
-                  Baris (0 = otomatis)
-                  <input
-                    type="number"
-                    min={0}
-                    max={20}
-                    value={printRows}
-                    onChange={(event) => setPrintRows(Math.max(0, Math.min(20, Number(event.target.value) || 0)))}
-                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-                  />
-                </label>
-                <label className="text-xs text-slate-400">
-                  Margin (mm)
-                  <input
-                    type="number"
-                    min={0}
-                    max={40}
-                    value={printMargin}
-                    onChange={(event) => setPrintMargin(Math.max(0, Math.min(40, Number(event.target.value) || 0)))}
-                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-                  />
-                </label>
-                <label className="text-xs text-slate-400">
-                  Jarak X (mm)
-                  <input
-                    type="number"
-                    min={0}
-                    max={20}
-                    value={printGapX}
-                    onChange={(event) => setPrintGapX(Math.max(0, Math.min(20, Number(event.target.value) || 0)))}
-                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-                  />
-                </label>
-                <label className="text-xs text-slate-400">
-                  Jarak Y (mm)
-                  <input
-                    type="number"
-                    min={0}
-                    max={20}
-                    value={printGapY}
-                    onChange={(event) => setPrintGapY(Math.max(0, Math.min(20, Number(event.target.value) || 0)))}
-                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-                  />
-                </label>
-                <label className="text-xs text-slate-400">
-                  Lebar kartu (mm)
-                  <input
-                    type="number"
-                    min={0}
-                    placeholder="otomatis"
-                    value={printCardWidth}
-                    onChange={(event) => setPrintCardWidth(event.target.value)}
-                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-                  />
-                </label>
-                <label className="text-xs text-slate-400">
-                  Tinggi kartu (mm)
-                  <input
-                    type="number"
-                    min={0}
-                    placeholder="otomatis"
-                    value={printCardHeight}
-                    onChange={(event) => setPrintCardHeight(event.target.value)}
-                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-                  />
-                </label>
-              </div>
-
-              {printPaper === 'custom' && (
-                <div className="mt-2 grid grid-cols-2 gap-2">
-                  <label className="text-xs text-slate-400">
-                    Lebar kertas (mm)
-                    <input
-                      type="number"
-                      min={20}
-                      max={1000}
-                      value={printPaperWidth}
-                      onChange={(event) => setPrintPaperWidth(Math.max(20, Number(event.target.value) || 20))}
-                      className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-                    />
-                  </label>
-                  <label className="text-xs text-slate-400">
-                    Tinggi kertas (mm)
-                    <input
-                      type="number"
-                      min={20}
-                      max={1000}
-                      value={printPaperHeight}
-                      onChange={(event) => setPrintPaperHeight(Math.max(20, Number(event.target.value) || 20))}
-                      className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-                    />
-                  </label>
-                </div>
-              )}
-
-              <label className="mt-2 flex items-center gap-2 text-xs text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={printCutLines}
-                  onChange={(event) => setPrintCutLines(event.target.checked)}
-                  className="h-4 w-4 rounded border-slate-500 bg-slate-700 text-cyan-500"
-                />
-                Tampilkan garis potong
-              </label>
-              <p className="mt-1 text-[11px] text-slate-500">
-                Template diatur di Pengaturan → Template Voucher (HTML/CSS). Setelah menekan Cetak, Anda masuk
-                ke Print Preview dulu — dialog cetak browser baru terbuka dari sana.
-              </p>
-            </div>
-
-            <div
-              className={`grid gap-3 sm:grid-cols-2 ${
-                printUseSelection && selected.size > 0 ? 'opacity-50' : ''
-              }`}
-            >
+            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">
+              Cetak berdasarkan filter
+            </p>
+            <div className={`grid gap-3 sm:grid-cols-2 ${printUseSelection && selected.size > 0 ? 'opacity-50' : ''}`}>
               <div>
                 <label className="mb-1 block text-xs text-slate-400" htmlFor="print-status">
                   Status voucher
@@ -1339,10 +1112,160 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
                 />
               </div>
             </div>
-
             <p className="text-[11px] text-slate-500">
               Maksimal 500 voucher sekali cetak. Kosongkan tanggal bila tidak dibatasi.
             </p>
+
+            <p className="mt-3 mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">
+              Template &amp; tata letak
+            </p>
+            <div>
+              <label className="mb-1 block text-xs text-slate-400" htmlFor="print-template">
+                Template cetak
+              </label>
+              <select
+                id="print-template"
+                value={printTemplate}
+                onChange={(event) => {
+                  setPrintTemplate(event.target.value);
+                  applyTemplateLayout(templates.find((row) => row.id === event.target.value));
+                }}
+                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+              >
+                {templates.length === 0 && <option value="">Template bawaan</option>}
+                {templates
+                  .filter((template) => template.enabled !== false)
+                  .map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.name}
+                    </option>
+                  ))}
+              </select>
+              <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                <label className="text-xs text-slate-400">
+                  Kertas
+                  <select
+                    value={printPaper}
+                    onChange={(event) => {
+                      const kind = event.target.value as PaperKind;
+                      setPrintPaper(kind);
+                      if (kind === 'thermal58' || kind === 'thermal80') {
+                        // Gulungan: kartu mengisi lebar rol (satu kolom).
+                        setPrintOrientation('portrait');
+                      }
+                    }}
+                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+                  >
+                    <option value="a4">A4</option>
+                    <option value="a5">A5</option>
+                    <option value="thermal58">Thermal 58 mm</option>
+                    <option value="thermal80">Thermal 80 mm</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </label>
+                <label className="text-xs text-slate-400">
+                  Orientasi
+                  <select
+                    value={printOrientation}
+                    onChange={(event) => setPrintOrientation(event.target.value as 'portrait' | 'landscape')}
+                    disabled={printPaper === 'thermal58' || printPaper === 'thermal80'}
+                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 disabled:opacity-50"
+                  >
+                    <option value="portrait">Portrait</option>
+                    <option value="landscape">Landscape</option>
+                  </select>
+                </label>
+                <label className="text-xs text-slate-400">
+                  Skala kartu (%)
+                  <input
+                    type="number"
+                    min={50}
+                    max={200}
+                    step={5}
+                    value={printScale}
+                    onChange={(event) => setPrintScale(Math.max(50, Math.min(200, Number(event.target.value) || 100)))}
+                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+                  />
+                </label>
+                <label className="text-xs text-slate-400">
+                  Margin (mm)
+                  <input
+                    type="number"
+                    min={5}
+                    max={24}
+                    value={printMargin}
+                    onChange={(event) => setPrintMargin(Math.max(5, Math.min(24, Number(event.target.value) || 8)))}
+                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+                  />
+                </label>
+                <label className="text-xs text-slate-400">
+                  Jarak antar kartu (mm)
+                  <input
+                    type="number"
+                    min={0}
+                    max={15}
+                    value={printGap}
+                    onChange={(event) => setPrintGap(Math.max(0, Math.min(15, Number(event.target.value) || 0)))}
+                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+                  />
+                </label>
+                <label className="text-xs text-slate-400">
+                  Lebar kartu (mm)
+                  <input
+                    type="number"
+                    min={15}
+                    max={300}
+                    placeholder="64"
+                    value={printCardWidth}
+                    onChange={(event) => setPrintCardWidth(event.target.value)}
+                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+                  />
+                </label>
+              </div>
+
+              {printPaper === 'custom' && (
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <label className="text-xs text-slate-400">
+                    Lebar kertas (mm)
+                    <input
+                      type="number"
+                      min={20}
+                      max={1000}
+                      value={printPaperWidth}
+                      onChange={(event) => setPrintPaperWidth(Math.max(20, Number(event.target.value) || 20))}
+                      className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+                    />
+                  </label>
+                  <label className="text-xs text-slate-400">
+                    Tinggi kertas (mm)
+                    <input
+                      type="number"
+                      min={20}
+                      max={1000}
+                      value={printPaperHeight}
+                      onChange={(event) => setPrintPaperHeight(Math.max(20, Number(event.target.value) || 20))}
+                      className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+                    />
+                  </label>
+                </div>
+              )}
+
+              <label className="mt-2 flex items-center gap-2 text-xs text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={printCutLines}
+                  onChange={(event) => setPrintCutLines(event.target.checked)}
+                  className="h-4 w-4 rounded border-slate-500 bg-slate-700 text-cyan-500"
+                />
+                Tampilkan garis potong
+              </label>
+              <p className="mt-1 text-[11px] text-slate-500">
+                Template diatur di Pengaturan → Template Voucher (HTML/CSS). Setelah menekan Cetak, Anda masuk
+                ke Print Preview dulu — dialog cetak browser baru terbuka dari sana.
+              </p>
+            </div>
+
+            
 
             <div className="flex justify-end gap-2">
               <Button onClick={() => setPrintOpen(false)} disabled={busy}>

@@ -9,5 +9,6 @@ import { SessionsService } from './sessions.service';
   imports: [AuthModule, DatabaseModule],
   controllers: [SessionsController],
   providers: [SessionsRepository, SessionsService],
+  exports: [SessionsService],
 })
 export class SessionsModule {}

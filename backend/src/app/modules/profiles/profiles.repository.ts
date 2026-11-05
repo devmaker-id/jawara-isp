@@ -49,7 +49,7 @@ export interface GroupProfileRow {
 export interface ServiceProfileRow {
   id: number;
   owner_id: number;
-  group_profile_id: number;
+  group_profile_id: number | null;
   bandwidth_id: number;
   name: string;
   /** Nama grup RADIUS final; bisa "nama#id" bila nama profil bentrok. */
@@ -83,7 +83,7 @@ export interface VoucherRow {
   id: number;
   profile_type: 'hotspot' | 'ppp';
   profile_id: number;
-  group_profile_id: number;
+  group_profile_id: number | null;
   profile_name: string;
   user_type: 'voucher' | 'customer';
   username: string;

@@ -20,11 +20,20 @@ import {
 } from './mikrotik-devices.repository';
 import { MikrotikDevice, toMikrotikDevice } from './models/mikrotik-device.model';
 import {
+  FirewallAddressListDto,
+  FirewallRuleDto,
+  FirewallTable,
   HotspotUserDto,
   InterfaceUpdateDto,
   PppSecretDto,
+  RouteDto,
+  RouteRuleDto,
+  UpdateFirewallAddressListDto,
+  UpdateFirewallRuleDto,
   UpdateHotspotUserDto,
   UpdatePppSecretDto,
+  UpdateRouteDto,
+  UpdateRouteRuleDto,
 } from './dto/mikrotik.dto';
 import { filterLogs } from './log-filter';
 import { RouterOsClient, RouterOsError, RouterOsRecord } from './routeros.client';
@@ -98,6 +107,9 @@ export class MikrotikService {
     string,
     { at: number; value: MikrotikTarget & { password: string } }
   >();
+
+  // Versi RouterOS per perangkat (6 vs 7): menentukan path menu policy routing.
+  private readonly rosVersionCache = new Map<string, { at: number; value: '6' | '7' }>();
 
   constructor(
     private readonly config: ConfigService,
@@ -773,9 +785,20 @@ export class MikrotikService {
   }
 
   async deleteHotspotUser(id: string, actor: { userId: number; ip: string }) {
+    const name = await this.findHotspotUserName(id);
     await this.write('/ip/hotspot/user/remove', { numbers: id }, 'hotspot user remove');
+    if (name) {
+      await this.removeActiveSessions('/ip/hotspot/active', 'user', name);
+    }
     await this.audit(actor, 'MIKROTIK_HOTSPOT_USER_DELETED', { id });
     return { ok: true, id };
+  }
+
+  // Nama user hotspot dari `.id` sebelum barisnya dihapus (untuk putus sesi aktif).
+  private async findHotspotUserName(id: string): Promise<string | null> {
+    const rows = await this.read('/ip/hotspot/user/print');
+    const row = rows.find((entry) => entry['.id'] === id);
+    return row?.name ? String(row.name) : null;
   }
 
   async pppActive() {
@@ -798,6 +821,7 @@ export class MikrotikService {
       .map((row) => ({
         id: row['.id'] ?? '',
         name: row.name ?? '',
+        password: row.password ?? '',
         service: row.service ?? 'any',
         profile: row.profile ?? 'default',
         remote_address: row['remote-address'] ?? '',
@@ -862,9 +886,34 @@ export class MikrotikService {
   }
 
   async deletePppSecret(id: string, actor: { userId: number; ip: string }) {
+    const name = await this.findPppSecretName(id);
     await this.write('/ppp/secret/remove', { numbers: id }, 'ppp secret remove');
+    if (name) {
+      await this.removeActiveSessions('/ppp/active', 'name', name);
+    }
     await this.audit(actor, 'MIKROTIK_PPP_SECRET_DELETED', { id });
     return { ok: true, id };
+  }
+
+  // Nama PPP secret dari `.id` sebelum barisnya dihapus (untuk putus sesi aktif).
+  private async findPppSecretName(id: string): Promise<string | null> {
+    const rows = await this.read('/ppp/secret/print');
+    const row = rows.find((entry) => entry['.id'] === id);
+    return row?.name ? String(row.name) : null;
+  }
+
+  // Putus semua sesi aktif yang cocok di menu aktif (print → remove by .id).
+  private async removeActiveSessions(
+    menu: '/ppp/active' | '/ip/hotspot/active',
+    nameField: 'name' | 'user',
+    value: string,
+  ): Promise<void> {
+    const rows = await this.read(`${menu}/print`);
+    for (const row of rows) {
+      if (row[nameField] === value && row['.id']) {
+        await this.write(`${menu}/remove`, { numbers: row['.id'] }, `${menu} remove ${value}`);
+      }
+    }
   }
 
   async routingRoutes() {
@@ -944,6 +993,263 @@ export class MikrotikService {
     return true;
   }
 
+  // ===== firewall =====
+
+  // Versi RouterOS perangkat target; dipakai untuk memilih path menu yang beda
+  // antara RouterOS 6 dan 7 (mis. policy routing /ip route rule vs /routing rule).
+  private async rosVersion(): Promise<'6' | '7'> {
+    const target = await this.target();
+    const key = `${target.host}:${target.port}`;
+    const cached = this.rosVersionCache.get(key);
+    if (cached && Date.now() - cached.at < 60_000) return cached.value;
+    const rows = await this.read('/system/resource/print');
+    const value: '6' | '7' = String(rows[0]?.version ?? '').startsWith('7') ? '7' : '6';
+    this.rosVersionCache.set(key, { at: Date.now(), value });
+    return value;
+  }
+
+  private firewallView(row: RouterOsRecord) {
+    return {
+      id: row['.id'] ?? '',
+      chain: row.chain ?? '',
+      action: row.action ?? '',
+      protocol: row.protocol ?? '',
+      src_address: row['src-address'] ?? '',
+      dst_address: row['dst-address'] ?? '',
+      src_port: row['src-port'] ?? '',
+      dst_port: row['dst-port'] ?? '',
+      in_interface: row['in-interface'] ?? '',
+      out_interface: row['out-interface'] ?? '',
+      connection_state: row['connection-state'] ?? '',
+      to_addresses: row['to-addresses'] ?? '',
+      to_ports: row['to-ports'] ?? '',
+      new_connection_mark: row['new-connection-mark'] ?? '',
+      new_routing_mark: row['new-routing-mark'] ?? '',
+      new_packet_mark: row['new-packet-mark'] ?? '',
+      comment: row.comment ?? '',
+      disabled: bool(row.disabled),
+      bytes: num(row.bytes),
+      packets: num(row.packets),
+    };
+  }
+
+  // DTO (snake_case, boleh sebagian) → atribut RouterOS (kebab-case). `write`
+  // melewati nilai kosong, jadi kolom yang tidak diisi tidak ikut dikirim.
+  // `disabled` diurus terpisah (string yes/no), jadi dikeluarkan dari mapping
+  // agar tipe nilainya tetap string, bukan string | boolean.
+  private firewallAttributes(dto: FirewallRuleDto | UpdateFirewallRuleDto): Record<string, string | undefined> {
+    const mapping: Array<[string, Exclude<keyof FirewallRuleDto, 'disabled'>]> = [
+      ['chain', 'chain'],
+      ['action', 'action'],
+      ['protocol', 'protocol'],
+      ['src-address', 'src_address'],
+      ['dst-address', 'dst_address'],
+      ['src-port', 'src_port'],
+      ['dst-port', 'dst_port'],
+      ['in-interface', 'in_interface'],
+      ['out-interface', 'out_interface'],
+      ['connection-state', 'connection_state'],
+      ['src-mac-address', 'src_mac'],
+      ['to-addresses', 'to_addresses'],
+      ['to-ports', 'to_ports'],
+      ['new-connection-mark', 'new_connection_mark'],
+      ['new-routing-mark', 'new_routing_mark'],
+      ['new-packet-mark', 'new_packet_mark'],
+      ['comment', 'comment'],
+      ['place-before', 'place_before'],
+    ];
+    const attrs: Record<string, string | undefined> = {};
+    for (const [rosKey, dtoKey] of mapping) {
+      const value = dto[dtoKey];
+      if (value !== undefined && value !== null) attrs[rosKey] = value;
+    }
+    if (dto.disabled !== undefined) attrs.disabled = dto.disabled ? 'yes' : 'no';
+    return attrs;
+  }
+
+  async firewallRules(table: FirewallTable) {
+    const rows = await this.read(`/ip/firewall/${table}/print`);
+    return rows.map((row) => this.firewallView(row));
+  }
+
+  async createFirewallRule(table: FirewallTable, dto: FirewallRuleDto, actor: { userId: number; ip: string }) {
+    await this.write(`/ip/firewall/${table}/add`, this.firewallAttributes(dto), `firewall ${table} add`);
+    await this.audit(actor, 'MIKROTIK_FIREWALL_RULE_CREATED', { table, chain: dto.chain, action: dto.action });
+    return { ok: true, table, chain: dto.chain };
+  }
+
+  async updateFirewallRule(table: FirewallTable, id: string, dto: UpdateFirewallRuleDto, actor: { userId: number; ip: string }) {
+    await this.write(`/ip/firewall/${table}/set`, { numbers: id, ...this.firewallAttributes(dto) }, `firewall ${table} set`);
+    await this.audit(actor, 'MIKROTIK_FIREWALL_RULE_UPDATED', { table, id, fields: Object.keys(dto) });
+    return { ok: true, table, id };
+  }
+
+  async deleteFirewallRule(table: FirewallTable, id: string, actor: { userId: number; ip: string }) {
+    await this.write(`/ip/firewall/${table}/remove`, { numbers: id }, `firewall ${table} remove`);
+    await this.audit(actor, 'MIKROTIK_FIREWALL_RULE_DELETED', { table, id });
+    return { ok: true, table, id };
+  }
+
+  async firewallAddressLists() {
+    const rows = await this.read('/ip/firewall/address-list/print');
+    return rows.map((row) => ({
+      id: row['.id'] ?? '',
+      list: row.list ?? '',
+      address: row.address ?? '',
+      comment: row.comment ?? '',
+      dynamic: bool(row.dynamic),
+      disabled: bool(row.disabled),
+    }));
+  }
+
+  async createFirewallAddressList(dto: FirewallAddressListDto, actor: { userId: number; ip: string }) {
+    await this.write(
+      '/ip/firewall/address-list/add',
+      {
+        list: dto.list,
+        address: dto.address,
+        comment: dto.comment,
+        disabled: dto.disabled ? 'yes' : 'no',
+      },
+      'firewall address-list add',
+    );
+    await this.audit(actor, 'MIKROTIK_FIREWALL_ADDRLIST_CREATED', { list: dto.list, address: dto.address });
+    return { ok: true, list: dto.list, address: dto.address };
+  }
+
+  async updateFirewallAddressList(id: string, dto: UpdateFirewallAddressListDto, actor: { userId: number; ip: string }) {
+    await this.write(
+      '/ip/firewall/address-list/set',
+      {
+        numbers: id,
+        list: dto.list,
+        address: dto.address,
+        comment: dto.comment,
+        disabled: dto.disabled === undefined ? undefined : dto.disabled ? 'yes' : 'no',
+      },
+      'firewall address-list set',
+    );
+    await this.audit(actor, 'MIKROTIK_FIREWALL_ADDRLIST_UPDATED', { id, fields: Object.keys(dto) });
+    return { ok: true, id };
+  }
+
+  async deleteFirewallAddressList(id: string, actor: { userId: number; ip: string }) {
+    await this.write('/ip/firewall/address-list/remove', { numbers: id }, 'firewall address-list remove');
+    await this.audit(actor, 'MIKROTIK_FIREWALL_ADDRLIST_DELETED', { id });
+    return { ok: true, id };
+  }
+
+  // ===== route (/ip route) =====
+
+  async listRoutes() {
+    const rows = await this.read('/ip/route/print');
+    return rows.map((row) => ({
+      id: row['.id'] ?? '',
+      dst_address: row['dst-address'] ?? '',
+      gateway: row.gateway ?? '',
+      distance: num(row.distance, 1),
+      scope: num(row.scope),
+      target_scope: num(row['target-scope']),
+      routing_table: row['routing-table'] ?? '',
+      routing_mark: row['routing-mark'] ?? '',
+      pref_src: row['pref-src'] ?? '',
+      comment: row.comment ?? '',
+      active: bool(row.active),
+      static: bool(row.static),
+      dynamic: bool(row.dynamic),
+      connect: bool(row.connect),
+      disabled: bool(row.disabled),
+    }));
+  }
+
+  private routeAttributes(dto: RouteDto | UpdateRouteDto): Record<string, string | undefined> {
+    return {
+      'dst-address': dto.dst_address,
+      gateway: dto.gateway,
+      distance: dto.distance,
+      scope: dto.scope,
+      'target-scope': dto.target_scope,
+      'routing-table': dto.routing_table,
+      'routing-mark': dto.routing_mark,
+      comment: dto.comment,
+      disabled: dto.disabled === undefined ? undefined : dto.disabled ? 'yes' : 'no',
+    };
+  }
+
+  async createRoute(dto: RouteDto, actor: { userId: number; ip: string }) {
+    await this.write('/ip/route/add', this.routeAttributes(dto), 'route add');
+    await this.audit(actor, 'MIKROTIK_ROUTE_CREATED', { dst_address: dto.dst_address, gateway: dto.gateway });
+    return { ok: true, dst_address: dto.dst_address };
+  }
+
+  async updateRoute(id: string, dto: UpdateRouteDto, actor: { userId: number; ip: string }) {
+    await this.write('/ip/route/set', { numbers: id, ...this.routeAttributes(dto) }, 'route set');
+    await this.audit(actor, 'MIKROTIK_ROUTE_UPDATED', { id, fields: Object.keys(dto) });
+    return { ok: true, id };
+  }
+
+  async deleteRoute(id: string, actor: { userId: number; ip: string }) {
+    await this.write('/ip/route/remove', { numbers: id }, 'route remove');
+    await this.audit(actor, 'MIKROTIK_ROUTE_DELETED', { id });
+    return { ok: true, id };
+  }
+
+  // ===== route rule (policy routing) =====
+  // RouterOS 6 memakai /ip/route/rule, RouterOS 7 memakai /routing/rule.
+
+  private routeRuleMenu(version: '6' | '7'): string {
+    return version === '7' ? '/routing/rule' : '/ip/route/rule';
+  }
+
+  private routeRuleAttributes(dto: RouteRuleDto | UpdateRouteRuleDto, version: '6' | '7'): Record<string, string | undefined> {
+    return {
+      'src-address': dto.src_address,
+      'dst-address': dto.dst_address,
+      table: dto.table,
+      // routing-mark hanya ada di /ip route rule (ROS6); di ROS7 ditolak.
+      'routing-mark': version === '6' ? dto.routing_mark : undefined,
+      action: dto.action,
+      comment: dto.comment,
+      disabled: dto.disabled === undefined ? undefined : dto.disabled ? 'yes' : 'no',
+    };
+  }
+
+  async listRouteRules() {
+    const version = await this.rosVersion();
+    const rows = await this.read(`${this.routeRuleMenu(version)}/print`);
+    return rows.map((row) => ({
+      id: row['.id'] ?? '',
+      src_address: row['src-address'] ?? '',
+      dst_address: row['dst-address'] ?? '',
+      table: row.table ?? '',
+      routing_mark: row['routing-mark'] ?? '',
+      action: row.action ?? '',
+      comment: row.comment ?? '',
+      disabled: bool(row.disabled),
+    }));
+  }
+
+  async createRouteRule(dto: RouteRuleDto, actor: { userId: number; ip: string }) {
+    const version = await this.rosVersion();
+    await this.write(`${this.routeRuleMenu(version)}/add`, this.routeRuleAttributes(dto, version), 'route rule add');
+    await this.audit(actor, 'MIKROTIK_ROUTE_RULE_CREATED', { table: dto.table });
+    return { ok: true, table: dto.table };
+  }
+
+  async updateRouteRule(id: string, dto: UpdateRouteRuleDto, actor: { userId: number; ip: string }) {
+    const version = await this.rosVersion();
+    await this.write(`${this.routeRuleMenu(version)}/set`, { numbers: id, ...this.routeRuleAttributes(dto, version) }, 'route rule set');
+    await this.audit(actor, 'MIKROTIK_ROUTE_RULE_UPDATED', { id, fields: Object.keys(dto) });
+    return { ok: true, id };
+  }
+
+  async deleteRouteRule(id: string, actor: { userId: number; ip: string }) {
+    const version = await this.rosVersion();
+    await this.write(`${this.routeRuleMenu(version)}/remove`, { numbers: id }, 'route rule remove');
+    await this.audit(actor, 'MIKROTIK_ROUTE_RULE_DELETED', { id });
+    return { ok: true, id };
+  }
+
   /**
    * Menyiapkan profil lokal di perangkat untuk sebuah Group Profile panel.
    *
@@ -961,6 +1267,10 @@ export class MikrotikService {
     deviceId: number;
     type: 'hotspot' | 'ppp';
     name: string;
+    /** Nama lama bila profil di-rename (rename di tempat, bukan diduplikasi). */
+    oldName?: string | null;
+    /** Nama pool lama untuk mode router-pool saat rename. */
+    oldPoolName?: string | null;
     parentQueue?: string | null;
     poolName?: string | null;
     /** Bila diisi, panel membuat IP pool ini di router sebelum profilnya. */
@@ -1017,32 +1327,71 @@ export class MikrotikService {
       let poolNote = '';
       if (input.createPool) {
         const ranges = `${input.createPool.rangeStart}-${input.createPool.rangeEnd}`;
-        const found = (await client.execute([['/ip/pool/print', `?name=${input.createPool.name}`]])).records ?? [];
-        const poolId = found[0]?.['.id'];
-        if (poolId) {
-          // Pool yang sudah ada diubah rentangnya, bukan dibuat ulang — supaya
-          // sesi yang sedang berjalan tidak kehilangan acuan pool.
-          await client.execute([[
-            '/ip/pool/set',
-            `=.id=${poolId}`,
-            `=ranges=${ranges}`,
-            `=comment=${OWNER_COMMENT}`,
-          ]]);
-          poolNote = ` Pool "${input.createPool.name}" (${ranges}) diperbarui.`;
-        } else {
-          await client.execute([[
-            '/ip/pool/add',
-            `=name=${input.createPool.name}`,
-            `=ranges=${ranges}`,
-            `=comment=${OWNER_COMMENT}`,
-          ]]);
-          poolNote = ` Pool "${input.createPool.name}" (${ranges}) dibuat.`;
+        const poolName = input.createPool.name;
+        const renamePoolFrom =
+          input.oldPoolName && input.oldPoolName !== poolName ? input.oldPoolName : null;
+
+        let poolId: string | undefined;
+        if (renamePoolFrom) {
+          // Rename pool lama buatan panel ke nama baru — jangan buat pool kedua.
+          const oldPool = (await client.execute([['/ip/pool/print', `?name=${renamePoolFrom}`]])).records ?? [];
+          poolId = oldPool[0]?.['.id'];
+          if (poolId) {
+            await client.execute([[
+              '/ip/pool/set',
+              `=.id=${poolId}`,
+              `=name=${poolName}`,
+              `=ranges=${ranges}`,
+              `=comment=${OWNER_COMMENT}`,
+            ]]);
+            poolNote = ` Pool "${renamePoolFrom}" diubah nama menjadi "${poolName}".`;
+          }
+        }
+        if (!poolId) {
+          const found = (await client.execute([['/ip/pool/print', `?name=${poolName}`]])).records ?? [];
+          poolId = found[0]?.['.id'];
+          if (poolId) {
+            // Pool yang sudah ada diubah rentangnya, bukan dibuat ulang — supaya
+            // sesi yang sedang berjalan tidak kehilangan acuan pool.
+            await client.execute([[
+              '/ip/pool/set',
+              `=.id=${poolId}`,
+              `=ranges=${ranges}`,
+              `=comment=${OWNER_COMMENT}`,
+            ]]);
+            poolNote = ` Pool "${poolName}" (${ranges}) diperbarui.`;
+          } else {
+            await client.execute([[
+              '/ip/pool/add',
+              `=name=${poolName}`,
+              `=ranges=${ranges}`,
+              `=comment=${OWNER_COMMENT}`,
+            ]]);
+            poolNote = ` Pool "${poolName}" (${ranges}) dibuat.`;
+          }
         }
         this.logger.log(`MikroTik ${row.name}: ${poolNote.trim()}`);
       }
 
+      const renameFrom = input.oldName && input.oldName !== input.name ? input.oldName : null;
+      let id: string | undefined;
+
+      if (renameFrom) {
+        const old = (await client.execute([[`${path}/print`, `?name=${renameFrom}`]])).records ?? [];
+        id = old[0]?.['.id'];
+        if (id) {
+          // Rename di tempat: objek yang sama ganti nama, referensi yang menunjuk
+          // profil lama tetap utuh dan tidak meninggalkan profil duplikat.
+          const words = [`${path}/set`, `=.id=${id}`, `=name=${input.name}`];
+          for (const [key, value] of Object.entries(attributes)) words.push(`=${key}=${value}`);
+          await client.execute([words]);
+          this.logger.log(`MikroTik ${row.name}: profil ${input.type} "${renameFrom}" diubah nama menjadi "${input.name}"`);
+          return { ok: true, action: 'renamed', device: row.name, message: `Profil "${renameFrom}" diubah nama menjadi "${input.name}" di ${row.name}.${poolNote}`, command };
+        }
+      }
+
       const existing = (await client.execute([[`${path}/print`, `?name=${input.name}`]])).records ?? [];
-      const id = existing[0]?.['.id'];
+      id = existing[0]?.['.id'];
 
       if (id) {
         const words = [`${path}/set`, `=.id=${id}`];
@@ -1479,7 +1828,7 @@ export function subnetContains(dst: string, ip: string): boolean {
 export interface GroupProvisionResult {
   ok: boolean;
   /** created = dibuat, updated = disetel ulang, skipped = tidak bisa ditulis, failed = perangkat menolak. */
-  action: 'created' | 'updated' | 'skipped' | 'failed';
+  action: 'created' | 'updated' | 'renamed' | 'skipped' | 'failed';
   device: string;
   message: string;
   /** Perintah setara untuk dijalankan manual bila API tidak bisa menulis. */

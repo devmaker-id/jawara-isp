@@ -9,6 +9,7 @@ import { randomInt } from 'node:crypto';
 import { DatabaseService } from '../../database/database.service';
 import { MikrotikService } from '../mikrotik/mikrotik.service';
 import { isResellerRole } from '../auth/request-scope';
+import { SessionsService } from '../sessions/sessions.service';
 import {
   BandwidthRepository,
   GroupProfileRepository,
@@ -145,6 +146,7 @@ export class ProfilesService {
     private readonly mikrotik: MikrotikService,
     private readonly whatsapp: WhatsAppService,
     private readonly settings: SettingsService,
+    private readonly sessions: SessionsService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -481,6 +483,8 @@ export class ProfilesService {
     deviceId: number;
     type: ProfileType;
     name: string;
+    /** Nama lama bila di-rename, diteruskan agar MikroTik di-rename bukan diduplikasi. */
+    oldName?: string | null;
     parentQueue: string | null;
     poolName: string | null;
     poolMode: string;
@@ -517,6 +521,8 @@ export class ProfilesService {
       deviceId: input.deviceId,
       type: input.type,
       name: input.name,
+      oldName: input.oldName ?? null,
+      oldPoolName: input.oldName && input.poolMode === 'router-pool' ? poolNameFor(input.oldName) : null,
       parentQueue: input.parentQueue,
       poolName: input.poolName,
       // Pool hanya dibuat panel pada mode router-pool (PPP); mode lain memakai
@@ -608,6 +614,7 @@ export class ProfilesService {
       deviceId: Number(data.router_id),
       type: type,
       name: name,
+      oldName: name !== current.name ? current.name : null,
       parentQueue: (data.parent_queue as string | null) ?? null,
       poolName: (data.mikrotik_pool_name as string | null) ?? null,
       poolMode: String(data.pool_mode),
@@ -688,14 +695,21 @@ export class ProfilesService {
   async createProfile(actor: Actor, type: ProfileType, dto: CreateServiceProfileDto) {
     const ownerId = await this.resolveOwner(actor, dto.owner_id);
     await this.assertProfileNameFree(ownerId, type, dto.name);
-    const group = await this.resolveGroup(actor, type, dto.group_profile_id);
+    const group = dto.group_profile_id
+      ? await this.resolveGroup(actor, type, dto.group_profile_id)
+      : null;
+    if (!group && type === 'ppp') {
+      throw new BadRequestException(
+        'Profil PPP wajib memakai Group Profile (pool & gateway berasal dari grup).',
+      );
+    }
     await this.getBandwidth(actor, dto.bandwidth_id);
     const normalized = this.normalizeProfile(type, dto, group);
 
     const id = await this.profiles.create(type, {
       owner_id: ownerId,
       created_by: actor.userId,
-      group_profile_id: dto.group_profile_id,
+      group_profile_id: group?.id ?? null,
       bandwidth_id: dto.bandwidth_id,
       name: dto.name.trim(),
       ...normalized,
@@ -714,18 +728,18 @@ export class ProfilesService {
     const current = await this.getProfile(actor, type, id);
     if (dto.name) await this.assertProfileNameFree(actor.userId, type, dto.name, id);
 
-    const group = await this.resolveGroup(
-      actor,
-      type,
-      dto.group_profile_id ?? Number(current.group_profile_id),
-    );
+    const groupId = dto.group_profile_id ?? (current.group_profile_id ?? null);
+    const group = groupId ? await this.resolveGroup(actor, type, groupId) : null;
+    if (!group && type === 'ppp') {
+      throw new BadRequestException('Profil PPP wajib memakai Group Profile.');
+    }
     if (dto.bandwidth_id !== undefined) await this.getBandwidth(actor, dto.bandwidth_id);
 
     // Gabungkan nilai lama dengan perubahan sebelum divalidasi, supaya aturan
     // (mis. limited wajib punya batas) tidak bisa dilewati dengan patch parsial.
     const merged: CreateServiceProfileDto = {
       name: dto.name?.trim() ?? current.name,
-      group_profile_id: dto.group_profile_id ?? Number(current.group_profile_id),
+      group_profile_id: groupId ?? null,
       bandwidth_id: dto.bandwidth_id ?? Number(current.bandwidth_id),
       cost_price: dto.cost_price ?? Number(current.cost_price),
       sell_price: dto.sell_price ?? Number(current.sell_price),
@@ -818,7 +832,7 @@ export class ProfilesService {
   private normalizeProfile(
     type: ProfileType,
     dto: CreateServiceProfileDto,
-    group: GroupProfileRow,
+    group: GroupProfileRow | null,
   ): Record<string, unknown> {
     // Harga kosong = gratis (0). Profil gratisan harus bisa disimpan tanpa
     // memaksa operator mengetik angka apa pun.
@@ -858,7 +872,7 @@ export class ProfilesService {
     if (type === 'ppp') {
       // PPP tidak punya quota base. shared > 1 hanya boleh bila pool bukan sql-ippool,
       // karena satu IP dari pool tidak bisa dipakai beberapa sesi sekaligus.
-      if (shared > 1 && group.pool_mode === 'sql-ippool') {
+      if (shared > 1 && group?.pool_mode === 'sql-ippool') {
         throw new BadRequestException(
           'Shared user lebih dari 1 tidak diizinkan saat Group Profile memakai SQL-IP-POOL.',
         );
@@ -931,9 +945,12 @@ export class ProfilesService {
   async syncRadius(type: ProfileType, id: number) {
     const profile = await this.profiles.findById(type, id);
     if (!profile) throw new NotFoundException('Profil tidak ditemukan.');
-    const group = await this.groups.findById(Number(profile.group_profile_id));
+    const group = profile.group_profile_id
+      ? await this.groups.findById(profile.group_profile_id)
+      : null;
     const bandwidth = await this.bandwidths.findById(Number(profile.bandwidth_id));
-    if (!group || !bandwidth) throw new NotFoundException('Group/Bandwidth profil hilang.');
+    if (!bandwidth) throw new NotFoundException('Bandwidth profil hilang.');
+    if (type === 'ppp' && !group) throw new NotFoundException('Group profil PPP hilang.');
 
     const groupName = await this.resolveRadiusGroup(type, profile);
     const mapping = toRadiusMapping(profile, group, bandwidth);
@@ -1002,33 +1019,38 @@ export class ProfilesService {
    */
   async preview(actor: Actor, type: ProfileType, id: number) {
     const profile = await this.getProfile(actor, type, id);
-    const group = await this.groups.findById(Number(profile.group_profile_id));
+    const group = profile.group_profile_id
+      ? await this.groups.findById(profile.group_profile_id)
+      : null;
     const bandwidth = await this.bandwidths.findById(Number(profile.bandwidth_id));
-    if (!group || !bandwidth) throw new NotFoundException('Group/Bandwidth profil hilang.');
+    if (!bandwidth) throw new NotFoundException('Bandwidth profil hilang.');
+    if (type === 'ppp' && !group) throw new NotFoundException('Group profil PPP hilang.');
 
     return {
       profile: { id: profile.id, name: profile.name, type },
       groupname: profile.name,
       radius: toRadiusMapping(profile, group, bandwidth),
       writes_to_router: false,
-      group: {
-        id: group.id,
-        name: group.name,
-        type: group.type,
-        router_id: group.router_id,
-        pool_mode: group.pool_mode,
-        pool_name: group.mikrotik_pool_name,
-        pool_range:
-          group.pool_range_start && group.pool_range_end
-            ? `${group.pool_range_start}-${group.pool_range_end}`
-            : null,
-        parent_queue: group.parent_queue,
-        dns: [group.dns_primary, group.dns_secondary].filter(Boolean).join(','),
-        // GROUP ONLY tidak membuat profil lokal, jadi tidak ada nama profil
-        // yang bisa ditunjuk Mikrotik-Group.
-        local_profile:
-          group.use_router_default === 1 || group.pool_mode === 'group-pool' ? null : group.name,
-      },
+      group: group
+        ? {
+            id: group.id,
+            name: group.name,
+            type: group.type,
+            router_id: group.router_id,
+            pool_mode: group.pool_mode,
+            pool_name: group.mikrotik_pool_name,
+            pool_range:
+              group.pool_range_start && group.pool_range_end
+                ? `${group.pool_range_start}-${group.pool_range_end}`
+                : null,
+            parent_queue: group.parent_queue,
+            dns: [group.dns_primary, group.dns_secondary].filter(Boolean).join(','),
+            // GROUP ONLY tidak membuat profil lokal, jadi tidak ada nama profil
+            // yang bisa ditunjuk Mikrotik-Group.
+            local_profile:
+              group.use_router_default === 1 || group.pool_mode === 'group-pool' ? null : group.name,
+          }
+        : null,
       price: finalPrice(profile),
       validity_seconds:
         Number(profile.validity_value) > 0
@@ -1145,7 +1167,7 @@ export class ProfilesService {
       rows.push({
         profile_type: dto.profile_type,
         profile_id: profile.id,
-        group_profile_id: Number(profile.group_profile_id),
+        group_profile_id: profile.group_profile_id ?? null,
         profile_name: profile.name,
         user_type: dto.user_type,
         username,
@@ -1367,6 +1389,11 @@ export class ProfilesService {
     }
     const removed = await this.vouchers.removeByIds(picked.map((row) => row.id));
     await this.audit(actor, 'voucher.delete', { ids: picked.map((row) => row.id), removed });
+    // Tendang sesi aktif voucher yang dihapus — akun RADIUS-nya sudah dicabut,
+    // jadi pelanggan tidak bisa login ulang.
+    await Promise.allSettled(
+      picked.map((row) => this.sessions.disconnectByUsername(row.username)),
+    );
     return { removed };
   }
 

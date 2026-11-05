@@ -76,16 +76,18 @@ export function effectiveParentQueue(value: string | null | undefined): string |
  * batas waktu, dan batas kuota dikirim sebagai atribut balasan — router tidak
  * perlu menyetelnya sendiri.
  *
- * `Mikrotik-Group` hanya dikirim bila grup memang memakai parent queue DAN
- * profil lokalnya benar-benar ada. Satu-satunya cara queue dinamis masuk ke
- * induk tertentu adalah lewat profil lokal router. Bila parent queue = DEFAULT,
- * atau grup memakai mode GROUP ONLY (tidak membuat profil lokal), atribut ini
- * dihilangkan supaya router memakai profil bawaannya — persis "IS DEFAULT"
- * yang diinginkan.
+ * `Mikrotik-Group` memilih PROFIL LOKAL di router. Untuk PPP profil lokal itu
+ * membawa `local-address` (gateway sesi) yang TIDAK bisa dikirim lewat atribut
+ * RADIUS lain — tanpa `Mikrotik-Group` sesi PPP tidak punya gateway yang benar
+ * (gejalanya: alamat lokal acak / "could not determine remote IP address").
+ * Untuk HotSpot profil lokal membawa rate-limit/shared-users/parent-queue, jadi
+ * dipilih juga agar setelan grup benar-benar dipakai router. Karena itu cukup
+ * syarat "profil lokal ada" — bukan "punya parent queue"; parent-queue hanyalah
+ * salah satu isi profil lokal, bukan penanda perlu-tidaknya memilih profil.
  */
 export function toRadiusMapping(
   profile: ServiceProfileRow,
-  group: GroupProfileRow,
+  group: GroupProfileRow | null,
   bandwidth: BandwidthRow,
 ): RadiusMapping {
   const reply: RadiusAttribute[] = [];
@@ -99,20 +101,26 @@ export function toRadiusMapping(
   // GROUP ONLY tidak membuat profil lokal di router (RADIUS memakai profil
   // bawaan), jadi menunjuk nama profil di sini akan menunjuk objek yang tidak
   // ada. `use_router_default` sama: tidak ada profil milik grup.
-  const hasLocalProfile = group.pool_mode !== 'group-pool' && group.use_router_default !== 1;
-  if (hasLocalProfile && effectiveParentQueue(group.parent_queue)) {
+  const hasLocalProfile =
+    group != null && group.pool_mode !== 'group-pool' && group.use_router_default !== 1;
+  // Selama profil lokal ada, pilih lewat Mikrotik-Group — untuk PPP membawa
+  // local-address (gateway) dan untuk HotSpot membawa profil user (rate-limit/
+  // shared-users/parent-queue). Parent-queue bukan syarat; itu isi profil,
+  // bukan penanda perlu memilih profil. GROUP ONLY dan use_router_default tidak
+  // punya profil lokal, jadi tidak dikirim.
+  if (group != null && hasLocalProfile) {
     push(reply, 'Mikrotik-Group', group.name);
   }
 
   // Pool dari router berlaku untuk pool yang sudah ada (mikrotik-pool) maupun
   // pool yang dibuat panel (router-pool): keduanya objek nyata di perangkat.
   // GROUP ONLY tidak punya pool — alamat datang dari profil hotspot bawaan.
-  if (group.pool_mode === 'mikrotik-pool' || group.pool_mode === 'router-pool') {
+  if (group != null && (group.pool_mode === 'mikrotik-pool' || group.pool_mode === 'router-pool')) {
     push(reply, 'Framed-Pool', group.mikrotik_pool_name);
   }
 
-  push(reply, 'MS-Primary-DNS-Server', group.dns_primary);
-  push(reply, 'MS-Secondary-DNS-Server', group.dns_secondary);
+  push(reply, 'MS-Primary-DNS-Server', group?.dns_primary);
+  push(reply, 'MS-Secondary-DNS-Server', group?.dns_secondary);
 
   // Batas lama online. Hotspot memakai timebase (nilai + satuan); PPP memakai
   // detik langsung karena tidak punya kolom timebase.
@@ -121,7 +129,7 @@ export function toRadiusMapping(
   }
   // Limitasi GRUP untuk PPP. Ditulis ke radgroupreply, jadi berlaku untuk semua
   // user di grup ini — bukan per pelanggan.
-  if (group.type === 'ppp') {
+  if (group?.type === 'ppp') {
     for (const row of limitReplyAttributes({
       timeLimitSeconds: profile.time_limit_seconds,
       quotaLimitBytes: profile.quota_limit_bytes,

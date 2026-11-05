@@ -9,13 +9,20 @@ const calls: Array<Record<string, string>> = [];
 const sent: string[][] = [];
 /** Perintah yang menyentuh /ip/pool (dibuat/diubah panel). */
 const poolCalls: Array<{ command: string; attrs: Record<string, string> }> = [];
+/** Nama objek yang dianggap sudah ada di perangkat (dikembalikan .id oleh /print). */
+const existing = new Set<string>();
 
 vi.mock('../src/app/modules/mikrotik/routeros.client', () => ({
   RouterOsClient: class {
     async execute(words: string[][]) {
       sent.push(words[0]);
       const command = words[0][0];
-      if (command.endsWith('/print')) return { records: [] as Record<string, string>[] };
+      if (command.endsWith('/print')) {
+        const query = words[0][1] ?? '';
+        const name = query.startsWith('?name=') ? query.slice(6) : '';
+        if (name && existing.has(name)) return { records: [{ '.id': `*id-${name}` }] };
+        return { records: [] as Record<string, string>[] };
+      }
       const attrs: Record<string, string> = {};
       for (const word of words[0].slice(1)) {
         const match = /^=([^=]+)=(.*)$/.exec(word);
@@ -234,5 +241,38 @@ describe('router-pool: pool dibuat panel di router', () => {
     const [poolPart, profilePart] = result.command.split(' ; ');
     expect(poolPart.startsWith('/ip/pool/add ')).toBe(true);
     expect(profilePart.startsWith('/ppp/profile/add ')).toBe(true);
+  });
+});
+
+describe('rename grup: profil & pool di-rename di tempat', () => {
+  it('rename mengubah profil & pool yang sama, tanpa menambah duplikat', async () => {
+    calls.length = 0;
+    poolCalls.length = 0;
+    existing.clear();
+    existing.add('LAMA');
+    existing.add('jw-LAMA');
+
+    const service = makeService();
+    const result = await service.provisionGroupProfile({
+      deviceId: 3,
+      type: 'ppp',
+      name: 'BARU',
+      oldName: 'LAMA',
+      oldPoolName: 'jw-LAMA',
+      parentQueue: 'A.CLIENT-PPP',
+      poolName: 'jw-BARU',
+      createPool: { name: 'jw-BARU', rangeStart: '172.10.0.2', rangeEnd: '172.10.0.254' },
+      localAddress: '172.10.0.1',
+      dnsPrimary: '8.8.8.8',
+      dnsSecondary: '1.1.1.1',
+    });
+
+    expect(result.action).toBe('renamed');
+    // Profil: /set ke .id LAMA dengan name BARU — BUKAN /ppp/profile/add.
+    expect(calls[0]['.id']).toBe('*id-LAMA');
+    expect(calls[0].name).toBe('BARU');
+    // Pool: /ip/pool/set name lama → baru — BUKAN /ip/pool/add.
+    expect(poolCalls[0].command).toBe('/ip/pool/set');
+    expect(poolCalls[0].attrs.name).toBe('jw-BARU');
   });
 });

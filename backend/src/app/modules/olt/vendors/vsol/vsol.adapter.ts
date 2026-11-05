@@ -130,6 +130,10 @@ export class VsolAdapter implements OltAdapter {
         adminState: row.adminState,
         omccState: row.omccState,
         phaseState: row.phaseState,
+        // VSOL `show onu state` tidak membedakan sebab offline; sebab akurat
+        // (listrik/LOS) datang dari event syslog. Saat offline kirim NULL supaya
+        // nilai dari syslog tidak tertimpa oleh sinkronisasi (COALESCE di repo).
+        connectionState: row.online ? 'ONLINE' : null,
         online: row.online,
         rxPowerOnu: optic?.rxPowerOnu ?? null,
         rxPowerOlt: optic?.rxPowerOlt ?? null,

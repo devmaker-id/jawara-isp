@@ -11,8 +11,10 @@ import type {
 } from '../src/app/modules/profiles/profiles.repository';
 
 // Model A: RADIUS menyiapkan sendiri atribut AAA. `Mikrotik-Group` adalah NAMA
-// PROFIL LOKAL (bukan nama queue) dan hanya dikirim bila grup memakai parent
-// queue; nilai DEFAULT berarti "tanpa parent queue" untuk sebagian besar lokasi.
+// PROFIL LOKAL (bukan nama queue) dan dikirim selama profil lokalnya ada
+// (pool_mode bukan group-pool dan use_router_default tidak menyala) — parent
+// queue bukan penandanya lagi karena profil lokal juga membawa local-address
+// (PPP) dan rate-limit/shared-users (HotSpot).
 const bandwidth: BandwidthRow = {
   id: 1,
   owner_id: null,
@@ -103,9 +105,9 @@ describe('toRadiusMapping (Model A)', () => {
     );
   });
 
-  it('TIDAK mengirim Mikrotik-Group saat parent queue DEFAULT', () => {
+  it('mengirim Mikrotik-Group walau parent queue DEFAULT (profil lokal tetap dipilih)', () => {
     const { reply } = toRadiusMapping(profile(), group(), bandwidth);
-    expect(valueOf(reply, 'Mikrotik-Group')).toBeUndefined();
+    expect(valueOf(reply, 'Mikrotik-Group')).toBe('hs-10m');
   });
 
   it('mengirim Mikrotik-Group = nama profil lokal saat parent queue diisi', () => {

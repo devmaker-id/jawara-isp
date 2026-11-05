@@ -291,7 +291,7 @@ export class CustomersRepository {
     if (list.length > 0) {
       const ids = list.map((row) => row.id);
       const accounts = await this.db.query<RowDataPacket>(
-        `SELECT v.customer_id, ${ACCOUNT_COLUMNS}
+        `SELECT v.customer_id, ${ACCOUNT_COLUMNS}, v.password
            FROM radius_vouchers v
           WHERE v.customer_id IN (${ids.map(() => '?').join(',')})
           ORDER BY v.username`,
@@ -300,7 +300,7 @@ export class CustomersRepository {
       const byCustomer = new Map<number, CustomerAccount[]>();
       for (const row of accounts) {
         const key = Number(row.customer_id);
-        const entry = toAccount(row);
+        const entry = toAccount(row, true);
         byCustomer.set(key, [...(byCustomer.get(key) ?? []), entry]);
       }
       for (const row of list) row.accounts = byCustomer.get(row.id) ?? [];
@@ -451,7 +451,7 @@ export class CustomersRepository {
   ): Promise<{
     id: number;
     name: string;
-    group_profile_id: number;
+    group_profile_id: number | null;
     radius_group: string | null;
     is_active: number;
     owner_id: number | null;
@@ -470,7 +470,7 @@ export class CustomersRepository {
     return {
       id: Number(row.id),
       name: String(row.name),
-      group_profile_id: Number(row.group_profile_id),
+      group_profile_id: row.group_profile_id == null ? null : Number(row.group_profile_id),
       radius_group: (row.radius_group as string | null) ?? null,
       is_active: Number(row.is_active ?? 1),
       owner_id: row.owner_id === null || row.owner_id === undefined ? null : Number(row.owner_id),
@@ -597,7 +597,7 @@ export class CustomersRepository {
     options: {
       status: CustomerStatus;
       account?: {
-        profile: { id: number; name: string; group_profile_id: number; radius_group: string | null };
+        profile: { id: number; name: string; group_profile_id: number | null; radius_group: string | null };
         type: 'hotspot' | 'ppp';
         username: string;
         password: string;
@@ -744,7 +744,7 @@ export class CustomersRepository {
   async updateAccount(
     customerId: number,
     input: {
-      profile?: { id: number; name: string; group_profile_id: number; radius_group: string | null };
+      profile?: { id: number; name: string; group_profile_id: number | null; radius_group: string | null };
       type?: 'hotspot' | 'ppp';
       username?: string;
       password?: string;
@@ -847,10 +847,38 @@ export class CustomersRepository {
     });
   }
 
-  async remove(id: number): Promise<boolean> {
+  async remove(id: number, actor?: { userId: number; ip: string }): Promise<boolean> {
     return this.db.withTransaction(async (conn) => {
-      // Akun RADIUS dicabut lebih dulu: kalau pelanggan hilang tanpa ini,
-      // username-nya tetap bisa login walau tidak ada pemiliknya.
+      // Jejak permanen sebelum baris dihapus (opsi B "hapus penuh"). Ringkas:
+      // jumlah tagihan & pembayaran yang ikut lenyap, cukup untuk rekonsiliasi.
+      if (actor) {
+        const inv = await conn.query<(RowDataPacket & { n: number | string })[]>(
+          'SELECT COUNT(*) AS n FROM invoices WHERE customer_id = ?',
+          [id],
+        );
+        const pay = await conn.query<(RowDataPacket & { n: number | string })[]>(
+          `SELECT COUNT(*) AS n FROM payments p JOIN invoices i ON i.id = p.invoice_id WHERE i.customer_id = ?`,
+          [id],
+        );
+        await conn.query(
+          'INSERT INTO audit_logs (user_id, action, details, ip_address) VALUES (?, ?, ?, ?)',
+          [
+            actor.userId,
+            'CUSTOMER_HARD_DELETE',
+            JSON.stringify({
+              customer_id: id,
+              invoices: Number(inv[0]?.[0]?.n ?? 0),
+              payments: Number(pay[0]?.[0]?.n ?? 0),
+              actor_id: actor.userId,
+              at: new Date().toISOString(),
+            }),
+            actor.ip.slice(0, 45),
+          ],
+        );
+      }
+
+      // Akun RADIUS dicabut lebih dulu: tanpa ini username-nya tetap bisa login
+      // walau pelanggannya sudah hilang.
       const accounts = await conn.query<RowDataPacket[]>(
         'SELECT username FROM radius_vouchers WHERE customer_id = ?',
         [id],
@@ -859,6 +887,39 @@ export class CustomersRepository {
         await this.removeAccountRadius(conn, String(row.username));
       }
       await conn.query('DELETE FROM radius_vouchers WHERE customer_id = ?', [id]);
+
+      // Tagihan + pembayaran + finance_events ikut dihapus permanen (warisan
+      // pelanggan). Urutan anak→induk karena payments.invoice_id ON DELETE
+      // RESTRICT; invoice sendiri FK CASCADE ke customers.
+      const invRows = await conn.query<(RowDataPacket & { id: number })[]>(
+        'SELECT id FROM invoices WHERE customer_id = ?',
+        [id],
+      );
+      const invoiceIds = (invRows[0] ?? []).map((row) => Number(row.id));
+      if (invoiceIds.length > 0) {
+        const inPlaceholders = invoiceIds.map(() => '?').join(',');
+        const payRows = await conn.query<(RowDataPacket & { id: number })[]>(
+          `SELECT id FROM payments WHERE invoice_id IN (${inPlaceholders})`,
+          invoiceIds,
+        );
+        const paymentIds = (payRows[0] ?? []).map((row) => Number(row.id));
+        if (paymentIds.length > 0) {
+          await conn.query(
+            `DELETE FROM finance_events WHERE entity_type = 'payment' AND entity_id IN (${paymentIds.map(() => '?').join(',')})`,
+            paymentIds,
+          );
+          await conn.query(
+            `DELETE FROM payments WHERE invoice_id IN (${inPlaceholders})`,
+            invoiceIds,
+          );
+        }
+        await conn.query(
+          `DELETE FROM finance_events WHERE entity_type = 'invoice' AND entity_id IN (${inPlaceholders})`,
+          invoiceIds,
+        );
+        await conn.query('DELETE FROM invoices WHERE customer_id = ?', [id]);
+      }
+
       const [result] = await conn.query<ResultSetHeader>('DELETE FROM customers WHERE id = ?', [id]);
       return result.affectedRows > 0;
     });

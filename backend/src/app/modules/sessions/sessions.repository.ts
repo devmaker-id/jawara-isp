@@ -254,6 +254,42 @@ export class SessionsRepository {
     return secret.length > 0 ? secret : null;
   }
 
+  /**
+   * Sesi aktif milik satu username (dipakai untuk putus massal saat menghapus
+   * akun, dan tombol tendang di halaman Sesi & Akuntansi). Mencakup semua NAS;
+   * baris ditutup nanti oleh Accounting-Stop, atau oleh closeGhost bila NAS
+   * menjawab NAK (sesi hantu).
+   */
+  async activeByUsername(username: string): Promise<
+    Array<{
+      acctuniqueid: string;
+      acctsessionid: string;
+      nasipaddress: string;
+      framedipaddress: string;
+    }>
+  > {
+    const rows = await this.db.query<RowDataPacket>(
+      `SELECT acctuniqueid, acctsessionid, nasipaddress, framedipaddress
+         FROM radacct WHERE username = ? AND acctstoptime IS NULL`,
+      [username],
+    );
+    return rows.map((row) => ({
+      acctuniqueid: String(row.acctuniqueid),
+      acctsessionid: String(row.acctsessionid ?? ''),
+      nasipaddress: String(row.nasipaddress),
+      framedipaddress: String(row.framedipaddress ?? ''),
+    }));
+  }
+
+  /** Tutup baris radacct "hantu" yang NAS-nya sudah tidak punya sesi itu. */
+  async closeGhost(acctuniqueid: string): Promise<void> {
+    await this.db.execute(
+      `UPDATE radacct SET acctstoptime = NOW(), acctterminatecause = 'CoA-Disconnect-NAK'
+        WHERE acctuniqueid = ? AND acctstoptime IS NULL`,
+      [acctuniqueid],
+    );
+  }
+
   /** Port CoA/Disconnect: `radius.coa_port` di tabel config, bawaan 3799. */
   async coaPort(): Promise<number> {
     const row = await this.db.queryOne<{ config_value: string }>(

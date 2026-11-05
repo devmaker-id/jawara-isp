@@ -160,9 +160,9 @@ export class InvoicesService {
     return this.repository.void(id, reason, actor).catch((error) => this.rethrow(error));
   }
 
-  // DELETE fisik tidak lagi tersedia; selalu ditolak dengan alasan yang jelas.
-  async remove(): Promise<{ ok: true }> {
-    return this.repository.remove().catch((error) => this.rethrow(error));
+  // DELETE permanen (opsi B "hapus penuh"): tagihan + seluruh pembayarannya.
+  async remove(id: number, actor: InvoiceActor): Promise<{ ok: true }> {
+    return this.repository.remove(id, actor).catch((error) => this.rethrow(error));
   }
 
   // Riwayat keuangan satu tagihan. Cakupan reseller diperiksa lewat findOne

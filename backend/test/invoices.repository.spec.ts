@@ -462,12 +462,22 @@ describe('InvoicesRepository', () => {
     });
   });
 
-  it('remove selalu ditolak: tagihan tidak boleh dihapus permanen', async () => {
-    const { db, raw } = makeDb();
-    await expect(new InvoicesRepository(db).remove()).rejects.toBeInstanceOf(InvoiceError);
-    await expect(new InvoicesRepository(db).remove()).rejects.toMatchObject({
-      code: 'DELETE_FORBIDDEN',
+  it('remove menghapus permanen tagihan beserta pembayarannya (opsi B)', async () => {
+    const { db, log, conn } = scriptedDb((sql) => {
+      if (sql.includes('FOR UPDATE')) return [row()];
+      if (sql.includes('SELECT id FROM payments WHERE invoice_id')) return [{ id: 10 }, { id: 11 }];
+      return [];
     });
-    expect(raw.execute).not.toHaveBeenCalled();
+
+    const result = await new InvoicesRepository(db).remove(1, actor);
+
+    expect(result).toEqual({ ok: true });
+    const sqls = log.map((q) => q.sql);
+    expect(sqls.some((s) => s.includes("DELETE FROM finance_events WHERE entity_type = 'payment'"))).toBe(true);
+    expect(sqls.some((s) => s.includes('DELETE FROM payments WHERE invoice_id = ?'))).toBe(true);
+    expect(sqls.some((s) => s.includes("DELETE FROM finance_events WHERE entity_type = 'invoice'"))).toBe(true);
+    expect(sqls.some((s) => s.includes('DELETE FROM invoices WHERE id = ?'))).toBe(true);
+    expect(log.some((q) => q.sql.startsWith('INSERT INTO audit_logs'))).toBe(true);
+    expect(conn.commit).toHaveBeenCalled();
   });
 });

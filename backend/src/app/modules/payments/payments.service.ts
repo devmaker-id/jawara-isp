@@ -14,6 +14,7 @@ import {
 } from './dto/payment.dto';
 import {
   InvoiceBalance,
+  InvoiceBrief,
   LedgerSummary,
   MethodTotal,
   Payment,
@@ -203,5 +204,11 @@ export class PaymentsService {
       throw new BadRequestException('Alasan void wajib diisi');
     }
     return this.repository.void(id, reason, actor).catch((error) => this.rethrow(error));
+  }
+
+  // Hapus permanen (opsi B). Khusus admin: nominal benar-benar hilang dari
+  // ledger, jejak tetap tersimpan di audit_logs.
+  async remove(id: number, actor: PaymentActor): Promise<{ ok: true; invoice: InvoiceBrief }> {
+    return this.repository.remove(id, actor).catch((error) => this.rethrow(error));
   }
 }

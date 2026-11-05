@@ -147,11 +147,11 @@ export class InvoicesController {
     return this.invoicesService.events(id, scope);
   }
 
-  // Jalur lama: selalu ditolak 409. Nomor tagihan & riwayat pembayaran tidak
-  // boleh lenyap; gunakan POST :id/void.
+  // Hapus permanen tagihan + seluruh pembayarannya (admin). Jejak tetap ada di
+  // audit_logs; gunakan POST :id/void untuk pembatalan yang menyisakan riwayat.
   @Delete(':id')
   @Roles('admin')
-  remove() {
-    return this.invoicesService.remove();
+  remove(@Param('id', ParseIntPipe) id: number, @Req() req: AuthenticatedRequest) {
+    return this.invoicesService.remove(id, actorOf(req));
   }
 }

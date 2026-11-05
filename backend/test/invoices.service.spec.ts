@@ -42,9 +42,7 @@ function makeService(repo: Partial<InvoicesRepository> = {}, events?: Partial<Fi
     create: vi.fn().mockResolvedValue(invoice()),
     update: vi.fn().mockResolvedValue(invoice()),
     void: vi.fn().mockResolvedValue(invoice({ status: InvoiceStatus.VOID })),
-    remove: vi
-      .fn()
-      .mockRejectedValue(new InvoiceError('DELETE_FORBIDDEN', 'Tagihan tidak dapat dihapus permanen')),
+    remove: vi.fn().mockResolvedValue({ ok: true }),
     ...repo,
   };
   const financeEvents = {
@@ -67,10 +65,10 @@ describe('InvoicesService', () => {
     await expect(service.findOne(5)).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it('remove ditolak 409: hapus permanen diganti void', async () => {
+  it('remove mendelegasikan hapus permanen ke repository', async () => {
     const { service, raw } = makeService();
-    await expect(service.remove()).rejects.toBeInstanceOf(ConflictException);
-    expect(raw.remove).toHaveBeenCalled();
+    await expect(service.remove(1, actor)).resolves.toEqual({ ok: true });
+    expect(raw.remove).toHaveBeenCalledWith(1, actor);
   });
 
   it('menerjemahkan NOT_FOUND repository menjadi 404', async () => {

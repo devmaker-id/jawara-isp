@@ -110,14 +110,14 @@ describe('atribut RADIUS profil hotspot', () => {
     expect(attrsOf(map.reply)).not.toHaveProperty('Framed-Pool');
   });
 
-  it('grup tanpa parent queue tidak mengirim Mikrotik-Group', () => {
+  it('hotspot tanpa parent queue tetap mengirim Mikrotik-Group', () => {
     const map = toRadiusMapping(profile(), group({ parent_queue: null }), bandwidth);
-    expect(attrsOf(map.reply)).not.toHaveProperty('Mikrotik-Group');
+    expect(attrsOf(map.reply)['Mikrotik-Group']).toBe('HS-RUMAHAN');
   });
 
-  it('parent queue DEFAULT diperlakukan sama dengan kosong', () => {
+  it('parent queue DEFAULT tetap mengirim Mikrotik-Group (profil lokal dipilih)', () => {
     const map = toRadiusMapping(profile(), group({ parent_queue: 'DEFAULT' }), bandwidth);
-    expect(attrsOf(map.reply)).not.toHaveProperty('Mikrotik-Group');
+    expect(attrsOf(map.reply)['Mikrotik-Group']).toBe('HS-RUMAHAN');
   });
 });
 
@@ -165,6 +165,22 @@ describe('limitasi GRUP untuk PPP (radgroupreply)', () => {
     expect(reply['Session-Timeout']).toBe('7200');
     expect(reply['Mikrotik-Total-Limit-Gigawords']).toBe('1');
     expect(reply['Framed-Pool']).toBe('PPP-POOL');
+  });
+
+  it('PPP dengan profil lokal mengirim Mikrotik-Group walau tanpa parent-queue', () => {
+    // Regresi SAMPALEUN: grup router-pool tanpa parent-queue wajib tetap
+    // memilih profil lokal (yang membawa local-address/gateway), kalau tidak
+    // sesi PPP gagal menentukan alamat ("could not determine remote IP").
+    const map = toRadiusMapping(
+      profile({ quota_type: undefined, timebase_value: null, quotabase_value: null,
+                time_limit_seconds: null, quota_limit_bytes: null }) as never,
+      group({ type: 'ppp', name: 'JMNET-SAMPALEUN', pool_mode: 'router-pool',
+              mikrotik_pool_name: 'jw-JMNET-SAMPALEUN', parent_queue: null }),
+      bandwidth,
+    );
+    const reply = attrsOf(map.reply);
+    expect(reply['Mikrotik-Group']).toBe('JMNET-SAMPALEUN');
+    expect(reply['Framed-Pool']).toBe('jw-JMNET-SAMPALEUN');
   });
 
   it('tanpa limit grup, tidak ada atribut batas', () => {

@@ -130,11 +130,10 @@ export function createFakeInvoices(): FakeInvoices {
       items.set(id, voided);
       return voided;
     },
-    remove: async () => {
-      throw new InvoiceError(
-        'DELETE_FORBIDDEN',
-        'Tagihan tidak dapat dihapus permanen. Gunakan pembatalan (void) dengan alasan.',
-      );
+    remove: async (id: number) => {
+      need(id);
+      items.delete(id);
+      return { ok: true };
     },
   } as unknown as InvoicesRepository;
 

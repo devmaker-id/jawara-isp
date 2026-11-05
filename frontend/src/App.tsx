@@ -20,6 +20,8 @@ import MikrotikInterfaces from './pages/mikrotik/Interfaces';
 import MikrotikHotspot from './pages/mikrotik/Hotspot';
 import MikrotikPpp from './pages/mikrotik/Ppp';
 import MikrotikRouting from './pages/mikrotik/Routing';
+import MikrotikRoutes from './pages/mikrotik/Routes';
+import MikrotikFirewall from './pages/mikrotik/Firewall';
 import MikrotikLog from './pages/mikrotik/Log';
 import OnlineSessions from './pages/sesi/OnlineSessions';
 import OltDevices from './pages/olt/Devices';
@@ -227,6 +229,22 @@ const AppContent: React.FC = () => {
             element={
               <PrivateRoute>
                 <MikrotikRouting />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/mikrotik/routes"
+            element={
+              <PrivateRoute>
+                <MikrotikRoutes />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/mikrotik/firewall"
+            element={
+              <PrivateRoute>
+                <MikrotikFirewall />
               </PrivateRoute>
             }
           />

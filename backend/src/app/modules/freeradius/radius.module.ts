@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { MikrotikModule } from '../mikrotik/mikrotik.module';
+import { ProfilesModule } from '../profiles/profiles.module';
 import { ConfigService } from '../../config/config.service';
 import { RadiusController } from './radius.controller';
 import { RadiusInstallService } from './radius-install.service';
@@ -11,7 +12,7 @@ import { RadiusRepository } from './radius.repository';
 import { RadiusService } from './radius.service';
 
 @Module({
-  imports: [AuthModule, MikrotikModule],
+  imports: [AuthModule, MikrotikModule, ProfilesModule],
   controllers: [RadiusController],
   providers: [
     RadiusService,

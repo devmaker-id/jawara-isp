@@ -35,6 +35,7 @@ interface PppProfileRow {
 interface PppSecretRow {
   id: string;
   name: string;
+  password: string;
   service: string;
   profile: string;
   remote_address: string;
@@ -218,13 +219,14 @@ const Ppp: React.FC = () => {
           {secrets.error && <ErrorNote message={secrets.error} onRetry={secrets.reload} />}
           {!secrets.loading && !secrets.error && (
             <Table
-              columns={['Nama', 'Service', 'Profil', 'Remote address', 'Komentar', 'Status', isAdmin ? 'Aksi' : '']}
+              columns={['Nama', 'Password', 'Service', 'Profil', 'Remote address', 'Komentar', 'Status', isAdmin ? 'Aksi' : '']}
               isEmpty={filteredSecrets.length === 0}
               empty={search ? 'Tidak ada secret yang cocok.' : 'Belum ada PPP secret di perangkat.'}
             >
               {secretPager.pageRows.map((row) => (
                 <tr key={row.id} className="hover:bg-slate-700/30">
                   <td className="px-3 py-2 font-medium text-slate-100">{row.name}</td>
+                  <td className="px-3 py-2 font-mono text-xs text-slate-200">{row.password}</td>
                   <td className="px-3 py-2 text-slate-400">{row.service}</td>
                   <td className="px-3 py-2 text-slate-400">{row.profile}</td>
                   <td className="px-3 py-2 font-mono text-xs text-slate-400">{row.remote_address || '-'}</td>

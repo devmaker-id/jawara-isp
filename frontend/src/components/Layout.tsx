@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { createPortal } from 'react-dom';
 import { NavLink, Link, useLocation, Outlet } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useBranding } from '../contexts/BrandingContext';
@@ -32,20 +31,6 @@ const MoonIcon: React.FC = () => (
       d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z" />
   </svg>
 );
-
-/** Mobile < 768px pakai drawer/accordion; desktop pakai flyout dropdown. */
-const useIsDesktop = (): boolean => {
-  const [isDesktop, setIsDesktop] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches,
-  );
-  useEffect(() => {
-    const mq = window.matchMedia('(min-width: 768px)');
-    const onChange = () => setIsDesktop(mq.matches);
-    mq.addEventListener('change', onChange);
-    return () => mq.removeEventListener('change', onChange);
-  }, []);
-  return isDesktop;
-};
 
 /**
  * Identitas panel: logo + nama + tagline, semuanya dari Pengaturan → Branding.
@@ -93,7 +78,11 @@ const BrandMark: React.FC<{ onClick?: () => void; compact?: boolean }> = ({
   );
 };
 
-const MenuItem: React.FC<{ item: MenuItemConfig; onNavigate: () => void }> = ({ item, onNavigate }) => {
+const MenuItem: React.FC<{ item: MenuItemConfig; onNavigate: () => void; collapsed: boolean }> = ({
+  item,
+  onNavigate,
+  collapsed,
+}) => {
   const location = useLocation();
 
   if (!item.available) {
@@ -102,8 +91,10 @@ const MenuItem: React.FC<{ item: MenuItemConfig; onNavigate: () => void }> = ({ 
         <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
         </svg>
-        <span className="truncate">{item.label}</span>
-        <span className="ml-auto text-[10px] uppercase tracking-wider text-slate-600">Belum tersedia</span>
+        {!collapsed && <span className="truncate">{item.label}</span>}
+        {!collapsed && (
+          <span className="ml-auto text-[10px] uppercase tracking-wider text-slate-600">Belum tersedia</span>
+        )}
       </div>
     );
   }
@@ -113,15 +104,15 @@ const MenuItem: React.FC<{ item: MenuItemConfig; onNavigate: () => void }> = ({ 
     <NavLink
       to={item.path}
       onClick={onNavigate}
-      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${active
-        ? 'bg-cyan-500/10 text-cyan-400'
-        : 'text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'
-      }`}
+      title={collapsed ? item.label : undefined}
+      className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
+        collapsed ? 'justify-center' : ''
+      } ${active ? 'bg-cyan-500/10 text-cyan-400' : 'text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'}`}
     >
       <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
       </svg>
-      <span className="truncate">{item.label}</span>
+      {!collapsed && <span className="truncate">{item.label}</span>}
     </NavLink>
   );
 };
@@ -150,11 +141,9 @@ const MenuGroup: React.FC<{
   onNavigate: () => void;
   open: boolean;
   onToggle: () => void;
-  isDesktop: boolean;
-}> = ({ item, onNavigate, open, onToggle, isDesktop }) => {
+  collapsed: boolean;
+}> = ({ item, onNavigate, open, onToggle, collapsed }) => {
   const location = useLocation();
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
   const children = item.children ?? [];
 
   const isChildActive = children.some((child) => matchesMenuPath(child.path, location));
@@ -165,66 +154,24 @@ const MenuGroup: React.FC<{
         <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
         </svg>
-        <span className="truncate">{item.label}</span>
-        <span className="ml-auto text-[10px] uppercase tracking-wider text-slate-600">Belum tersedia</span>
+        {!collapsed && <span className="truncate">{item.label}</span>}
+        {!collapsed && (
+          <span className="ml-auto text-[10px] uppercase tracking-wider text-slate-600">Belum tersedia</span>
+        )}
       </div>
     );
   }
 
-  const toggle = () => {
-    if (isDesktop && !open && buttonRef.current) {
-      const rect = buttonRef.current.getBoundingClientRect();
-      const top = Math.max(8, Math.min(rect.top, window.innerHeight - 360));
-      setCoords({ top, left: rect.right + 6 });
-    }
-    onToggle();
-  };
-
-  // Desktop: flyout ke kanan. Di-render lewat portal ke <body>, supaya tidak
-  // terpotong overflow/transform pada <aside> (drawer mobile).
-  const flyout = isDesktop && open && coords && (
-    <div
-      role="menu"
-      aria-label={`Submenu ${item.label}`}
-      data-menu-flyout=""
-      className="fixed z-50 w-56 overflow-hidden rounded-xl border border-slate-700 bg-slate-800 p-1.5 shadow-2xl"
-      style={{ top: coords.top, left: coords.left }}
-    >
-      <p className="px-2.5 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-        {item.label}
-      </p>
-      {children.map((child) => {
-        const active = matchesMenuPath(child.path, location);
-        return (
-          <NavLink
-            key={child.path}
-            to={child.path}
-            end
-            onClick={onNavigate}
-            role="menuitem"
-            className={`flex items-center rounded-lg px-2.5 py-2 text-sm transition ${
-              active
-                ? 'bg-cyan-500/10 font-medium text-cyan-300'
-                : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'
-            }`}
-          >
-            {active && <span className="mr-2 h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-400" />}
-            <span className="truncate">{child.label}</span>
-          </NavLink>
-        );
-      })}
-    </div>
-  );
-
   return (
     <div>
       <button
-        ref={buttonRef}
         type="button"
-        onClick={toggle}
+        onClick={onToggle}
         aria-expanded={open}
-        aria-haspopup={isDesktop ? 'menu' : undefined}
+        title={collapsed ? item.label : undefined}
         className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
+          collapsed ? 'justify-center' : ''
+        } ${
           isChildActive
             ? 'bg-cyan-500/10 text-cyan-400'
             : 'text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'
@@ -233,21 +180,21 @@ const MenuGroup: React.FC<{
         <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
         </svg>
-        <span className="truncate">{item.label}</span>
-        <svg
-          className={`ml-auto w-4 h-4 flex-shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-        </svg>
+        {!collapsed && <span className="truncate">{item.label}</span>}
+        {!collapsed && (
+          <svg
+            className={`ml-auto w-4 h-4 flex-shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        )}
       </button>
 
-      {flyout && createPortal(flyout, document.body)}
-
-      {/* Mobile: sub-menu inline sebagai accordion. */}
-      {!isDesktop && (
+      {/* Sub-menu inline sebagai accordion (sama untuk desktop & mobile). */}
+      {!collapsed && (
         <div
           className={`grid transition-all duration-200 ease-out ${
             open ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
@@ -270,6 +217,7 @@ const MenuGroup: React.FC<{
                         : 'text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'
                     }`}
                   >
+                    {active && <span className="mr-2 h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-400" />}
                     <span className="truncate">{child.label}</span>
                   </NavLink>
                 );
@@ -292,9 +240,10 @@ const Layout: React.FC = () => {
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   // Dialog "Cek pemakaian user" — dipakai semua role, dari halaman mana pun.
   const [usageOpen, setUsageOpen] = useState(false);
+  // Perkecil sidebar desktop jadi ikon saja.
+  const [collapsed, setCollapsed] = useState(false);
   const accountRef = useRef<HTMLDivElement>(null);
   const navRef = useRef<HTMLElement>(null);
-  const isDesktop = useIsDesktop();
   const location = useLocation();
   const { user, logout } = useAuth();
   const brand = useBranding();
@@ -311,15 +260,14 @@ const Layout: React.FC = () => {
       item.children?.some((child) => matchesMenuPath(child.path, location)),
     )?.path ?? null;
 
-  // Auto-buka grup aktif hanya di mobile (accordion). Di desktop flyout dibuka manual.
+  // Grup aktif otomatis terbuka (accordion inline di semua ukuran layar).
   useEffect(() => {
-    if (activeGroup && !isDesktop) setOpenGroup(activeGroup);
-  }, [activeGroup, isDesktop]);
+    setOpenGroup(activeGroup);
+  }, [activeGroup]);
 
   useEffect(() => {
     setOpen(false);
     setAccountOpen(false);
-    setOpenGroup(null);
   }, [location.pathname]);
 
   // Klik di luar menu akun menutup dropdown.
@@ -327,21 +275,6 @@ const Layout: React.FC = () => {
     const onPointerDown = (event: MouseEvent) => {
       if (accountRef.current && !accountRef.current.contains(event.target as Node)) {
         setAccountOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    return () => document.removeEventListener('mousedown', onPointerDown);
-  }, []);
-
-  // Klik di luar sidebar menutup flyout dropdown (desktop) maupun accordion (mobile).
-  // Flyout di-portal ke <body> (di luar <aside>), jadi klik di dalamnya dikecualikan
-  // supaya item tetap bisa diklik dan navigasi berjalan normal, bukan tertutup duluan.
-  useEffect(() => {
-    const onPointerDown = (event: MouseEvent) => {
-      const target = event.target as Element | null;
-      const insideFlyout = !!target?.closest?.('[data-menu-flyout]');
-      if (navRef.current && !navRef.current.contains(event.target as Node) && !insideFlyout) {
-        setOpenGroup(null);
       }
     };
     document.addEventListener('mousedown', onPointerDown);
@@ -471,8 +404,11 @@ const Layout: React.FC = () => {
         {/* Sidebar kiri: desktop selalu tampil, mobile drawer dari kiri */}
         <aside
           ref={navRef}
-          className={`fixed inset-y-0 left-0 z-40 flex flex-col flex-shrink-0 border-r border-slate-700/50 bg-slate-800 text-slate-100 transition-transform duration-300 ease-in-out ${open ? 'translate-x-0' : '-translate-x-full'} md:static md:inset-auto md:left-auto md:z-auto md:translate-x-0`}
-          style={{ width: 'var(--drawer-width)', maxWidth: 'var(--drawer-max-width)' }}
+          className={`fixed inset-y-0 left-0 z-40 flex flex-col flex-shrink-0 border-r border-slate-700/50 bg-slate-800 text-slate-100 transition-[width,transform] duration-200 ease-in-out ${open ? 'translate-x-0' : '-translate-x-full'} md:static md:inset-auto md:left-auto md:z-auto md:translate-x-0`}
+          style={{
+            width: collapsed ? '64px' : 'var(--drawer-width)',
+            maxWidth: collapsed ? '64px' : 'var(--drawer-max-width)',
+          }}
           aria-label="Sidebar navigasi"
         >
           {/* flex-1 + min-h-0: wajib, agar nav di dalamnya benar-benar scroll
@@ -500,16 +436,41 @@ const Layout: React.FC = () => {
                     item={item}
                     onNavigate={() => setOpen(false)}
                     open={openGroup === item.path}
-                    isDesktop={isDesktop}
-                    onToggle={() =>
-                      setOpenGroup((previous) => (previous === item.path ? null : item.path))
-                    }
+                    collapsed={collapsed}
+                    onToggle={() => {
+                      if (collapsed) setCollapsed(false);
+                      setOpenGroup((previous) => (previous === item.path ? null : item.path));
+                    }}
                   />
                 ) : (
-                  <MenuItem key={item.path} item={item} onNavigate={() => setOpen(false)} />
+                  <MenuItem
+                    key={item.path}
+                    item={item}
+                    onNavigate={() => setOpen(false)}
+                    collapsed={collapsed}
+                  />
                 ),
               )}
             </nav>
+
+            {/* Perkecil/perluas sidebar (desktop). */}
+            <button
+              type="button"
+              onClick={() => setCollapsed((value) => !value)}
+              aria-label={collapsed ? 'Perluas sidebar' : 'Perkecil sidebar'}
+              title={collapsed ? 'Perluas sidebar' : 'Perkecil sidebar'}
+              className="hidden md:flex shrink-0 items-center gap-3 border-t border-slate-700/50 px-3 py-3 text-sm text-slate-400 transition hover:bg-slate-700/50 hover:text-slate-200"
+            >
+              <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d={collapsed ? 'M13 5l7 7-7 7M5 5l7 7-7 7' : 'M11 19l-7-7 7-7M19 19l-7-7 7-7'}
+                />
+              </svg>
+              {!collapsed && <span className="truncate">Perkecil</span>}
+            </button>
           </div>
         </aside>
 

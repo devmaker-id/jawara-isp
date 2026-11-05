@@ -56,6 +56,11 @@ const makeService = (options: { tables?: string[] } = {}) => {
     deleteUser: vi.fn(async () => undefined),
     sessions: vi.fn(async () => []),
     accounting: vi.fn(async () => []),
+    findOwningProfile: vi.fn(
+      async (): Promise<{ type: 'hotspot' | 'ppp'; id: number; name: string } | null> => null,
+    ),
+    countGroupUsers: vi.fn(async () => 0),
+    deleteGroup: vi.fn(async () => 0),
   };
   const db = {
     execute: vi.fn(async (sql: string, params: unknown[]) => {
@@ -72,14 +77,22 @@ const makeService = (options: { tables?: string[] } = {}) => {
     removeRadiusNas: vi.fn(async () => false),
   };
   const configService = { control: vi.fn(async () => ({ service: 'active' })) };
+  const isolir = {
+    syncGroupAttributes: vi.fn(async () => ({ group: 'ISOLIR', attributes: 0 })),
+    provisionDevice: vi.fn(async () => undefined),
+    ensureGroupRow: vi.fn(async () => 0),
+  };
+  const profiles = { removeProfile: vi.fn(async () => ({ id: 1, deleted: true })) };
   const service = new RadiusService(
     repo as never,
     config as never,
     db as never,
     mikrotik as never,
     configService as never,
+    isolir as never,
+    profiles as never,
   );
-  return { service, repo, db, executed, mikrotik, configService };
+  return { service, repo, db, executed, mikrotik, configService, isolir, profiles };
 };
 
 const actor = { userId: 1, ip: '127.0.0.1' };
@@ -349,5 +362,30 @@ describe('RadiusService', () => {
 
     await service.sessions('9999');
     expect(repo.sessions).toHaveBeenCalledWith(9999);
+  });
+
+  it('hapus grup milik profil layanan diteruskan ke profil (cascade)', async () => {
+    const { service, repo, profiles } = makeService({ tables: [...RADIUS_TABLES] });
+    repo.findOwningProfile.mockResolvedValueOnce({ type: 'hotspot', id: 9, name: 'agen' });
+    repo.deleteGroup.mockResolvedValueOnce(2);
+
+    const result = await service.deleteGroup('agen', actor);
+
+    expect(profiles.removeProfile).toHaveBeenCalledWith(actor, 'hotspot', 9);
+    expect(repo.deleteGroup).toHaveBeenCalledWith('agen');
+    expect(result.profile_deleted).toEqual({ type: 'hotspot', id: 9, name: 'agen' });
+    expect(result.removed_users).toBe(2);
+  });
+
+  it('hapus grup mandiri tetap menghapus baris radgroup langsung', async () => {
+    const { service, repo, profiles } = makeService({ tables: [...RADIUS_TABLES] });
+    repo.findOwningProfile.mockResolvedValueOnce(null);
+    repo.deleteGroup.mockResolvedValueOnce(3);
+
+    const result = await service.deleteGroup('CUSTOM', actor);
+
+    expect(repo.deleteGroup).toHaveBeenCalledWith('CUSTOM');
+    expect(profiles.removeProfile).not.toHaveBeenCalled();
+    expect(result.removed_users).toBe(3);
   });
 });

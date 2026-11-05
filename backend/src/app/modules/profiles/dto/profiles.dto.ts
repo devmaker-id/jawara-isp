@@ -302,10 +302,10 @@ export class CreateServiceProfileDto {
   @Min(1, { message: 'owner_id tidak valid.' })
   owner_id?: number | null;
 
-  @Type(() => Number)
-  @IsInt({ message: 'Group profile wajib dipilih.' })
-  @Min(1, { message: 'Group profile wajib dipilih.' })
-  group_profile_id!: number;
+  @IsOptional()
+  @IsInt({ message: 'Group profile harus angka.' })
+  @Min(1, { message: 'Group profile tidak valid.' })
+  group_profile_id?: number | null;
 
   @Type(() => Number)
   @IsInt({ message: 'Bandwidth wajib dipilih.' })
@@ -436,7 +436,7 @@ export class UpdateServiceProfileDto extends CreateServiceProfileDto {
   @Matches(NAME_PATTERN, { message: 'Nama profil tidak valid.' })
   declare name: string;
 
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) declare group_profile_id: number;
+  @IsOptional() @IsInt() @Min(1) declare group_profile_id: number | null;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) declare bandwidth_id: number;
   @IsOptional() @Type(() => Number) @Min(0) declare cost_price: number;
   @IsOptional() @Type(() => Number) @Min(0) declare sell_price: number;

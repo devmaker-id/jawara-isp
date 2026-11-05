@@ -204,6 +204,11 @@ export class IsolirService {
     const config = await this.getConfig();
     const rows: Array<[string, string, string]> = [
       ['Framed-Pool', ':=', config.pool_name],
+      // Profil lokal ISOLIR sudah dibuat di router (saat penyiapan perangkat/NAS),
+      // dan memuat local-address (gateway 10.127.0.1) + remote-address. Tanpa
+      // Mikrotik-Group sesi isolir memakai profil bawaan sehingga gateway-nya
+      // salah / gagal menentukan alamat — sama seperti profil PPP lain.
+      ['Mikrotik-Group', ':=', config.group],
       ['Mikrotik-Rate-Limit', ':=', config.rate_limit],
       ['MS-Primary-DNS-Server', ':=', '1.1.1.1'],
       ['MS-Secondary-DNS-Server', ':=', '8.8.8.8'],

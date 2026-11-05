@@ -5,6 +5,11 @@
  * DENGAN ALLOWLIST: tag aktif dibuang, atribut selain class/style dilepas, dan
  * url()/@import di CSS dihapus. Server juga menolak pola ini saat menyimpan —
  * ini lapisan kedua untuk data lama atau perubahan bentuk penyimpanan.
+ *
+ * Layout bersifat FLUID (grid mengalir), bukan kolom×baris yang dipatok: setiap
+ * kartu punya lebar dasar (mm) yang bisa di-scale, lalu sheet me-wrap kartu
+ * sesuai lebar kertas/margin. Ganti kertas/margin/scale tidak mengubah skala
+ * ulang atau memotong kartu — kartu hanya berpindah baris.
  */
 
 export interface VoucherPrintBrand {
@@ -51,44 +56,45 @@ export const PAPER_PRESETS: Record<Exclude<PaperKind, 'custom'>, PaperSpec> = {
 };
 
 export interface VoucherPrintLayout {
-  columns: number;
+  /** Margin halaman dalam milimeter. */
   marginMm: number;
+  /** Jarak antar kartu dalam milimeter. */
   gapMm: number;
   /** Orientasi kertas; kosong = potret. */
   orientation?: 'portrait' | 'landscape';
-  /** Baris per halaman; 0/kosong = hitung dari tinggi kertas atau mengalir. */
-  rows?: number;
   /** Ukuran kertas; kosong = A4. */
   paper?: PaperSpec;
-  /** Jarak antar kartu terpisah (mm); kosong = pakai gapMm. */
-  gapXMm?: number;
-  gapYMm?: number;
-  /** Ukuran kartu tetap (mm); kosong = bagi rata lebar/tinggi halaman. */
+  /** Lebar DASAR kartu dalam mm (sebelum scale); kosong = 64 (~240px). */
   cardWidthMm?: number;
-  cardHeightMm?: number;
+  /** Skala kartu (perbesar/perkecil, ikut TERCETAK); default 1. */
+  scale?: number;
   /** Tampilkan garis potong pada setiap kartu. */
   cutLines?: boolean;
 }
 
+/** Lebar dasar kartu voucher (mm). Sekitar 240px — cukup untuk satu voucher. */
+export const DEFAULT_CARD_WIDTH_MM = 64;
+
 export interface PrintMetrics {
   paper: PaperSpec;
   orientation: 'portrait' | 'landscape';
+  /** Baris yang muat per lebar kertas (diturunkan, bukan input). */
   columns: number;
-  /** Baris per halaman; 0 = mengalir (satu halaman gulungan). */
-  rows: number;
-  perPage: number;
-  totalPages: number;
   usableWidthMm: number;
   usableHeightMm: number;
+  /** Lebar dasar kartu (mm, sebelum scale) setelah di-clamp. */
   cardWidthMm: number;
-  gapXMm: number;
-  gapYMm: number;
+  /** Skala kartu setelah di-clamp. */
+  scale: number;
+  /** Lebar kartu efektif setelah scale (mm). */
+  effectiveCardWidthMm: number;
+  gapMm: number;
 }
 
 export const mmToPx = (mm: number): number => Math.round(mm * 3.7795275591);
 
-const clampInt = (value: number, min: number, max: number, fallback: number): number => {
-  const rounded = Math.round(Number(value));
+const clamp = (value: number, min: number, max: number, fallback: number): number => {
+  const rounded = Math.round(value * 10) / 10;
   return Number.isFinite(rounded) ? Math.min(max, Math.max(min, rounded)) : fallback;
 };
 
@@ -100,56 +106,40 @@ export function resolvePaper(layout: VoucherPrintLayout): PaperSpec {
 }
 
 /**
- * Hitung grid & jumlah halaman dari konfigurasi sebenarnya (bukan angka tetap).
- * Baris dihitung dari tinggi kertas bila admin tidak mengisinya.
+ * Hitung metrik cetak dari konfigurasi sebenarnya. Tanpa kolom×baris yang
+ * dipatok: jumlah kartu per baris dihitung dari lebar kertas vs lebar kartu
+ * (yang sudah di-scale). Gulungan thermal selalu satu kolom selebar rol.
  */
-export function printMetrics(cardCount: number, layout: VoucherPrintLayout): PrintMetrics {
+export function printMetrics(_cardCount: number, layout: VoucherPrintLayout): PrintMetrics {
   const paper = resolvePaper(layout);
-  const margin = Math.min(Math.max(Number(layout.marginMm) || 8, 0), 40);
-  const gapX = Math.max(0, Number(layout.gapXMm ?? layout.gapMm) || 0);
-  const gapY = Math.max(0, Number(layout.gapYMm ?? layout.gapMm) || 0);
-  const columns = clampInt(layout.columns || 3, 1, 12, 3);
+  const margin = clamp(Number(layout.marginMm) || 8, 5, 24, 8);
+  const gap = clamp(Number(layout.gapMm ?? 3), 0, 15, 3);
+  const scale = clamp(Number(layout.scale ?? 1), 0.5, 2, 1);
+  const base = clamp(Number(layout.cardWidthMm ?? DEFAULT_CARD_WIDTH_MM), 15, 300, DEFAULT_CARD_WIDTH_MM);
+
   const usableWidthMm = Math.max(10, paper.widthMm - margin * 2);
   const usableHeightMm = paper.heightMm === null ? 0 : Math.max(10, paper.heightMm - margin * 2);
 
-  const cardWidthMm =
-    Number(layout.cardWidthMm) > 0
-      ? Number(layout.cardWidthMm)
-      : Math.max(5, (usableWidthMm - gapX * (columns - 1)) / columns);
+  const effectiveCardWidthMm = Math.min(base * scale, usableWidthMm);
+  const columns =
+    paper.heightMm === null
+      ? 1
+      : Math.max(1, Math.floor((usableWidthMm + gap) / (effectiveCardWidthMm + gap)));
 
-  let rows = Number(layout.rows) > 0 ? clampInt(Number(layout.rows), 1, 20, 1) : 0;
-  if (rows === 0 && usableHeightMm > 0) {
-    const cardHeight = Number(layout.cardHeightMm) > 0 ? Number(layout.cardHeightMm) : 0;
-    if (cardHeight > 0) rows = Math.max(1, Math.floor((usableHeightMm + gapY) / (cardHeight + gapY)));
-  }
-
-  const perPage = rows > 0 ? columns * rows : Math.max(1, cardCount);
-  const totalPages = rows > 0 ? Math.max(1, Math.ceil(cardCount / perPage)) : 1;
+  const orientation: 'portrait' | 'landscape' =
+    paper.heightMm === null ? 'portrait' : paper.widthMm > paper.heightMm ? 'landscape' : 'portrait';
 
   return {
     paper,
-    orientation: paper.heightMm === null ? 'portrait' : paper.widthMm > paper.heightMm ? 'landscape' : 'portrait',
+    orientation,
     columns,
-    rows,
-    perPage,
-    totalPages,
     usableWidthMm,
     usableHeightMm,
-    cardWidthMm,
-    gapXMm: gapX,
-    gapYMm: gapY,
+    cardWidthMm: base,
+    scale,
+    effectiveCardWidthMm,
+    gapMm: gap,
   };
-}
-
-/** Potong daftar kartu menjadi halaman sesuai grid (dipakai preview & cetak). */
-export function paginateCards<T>(cards: T[], layout: VoucherPrintLayout): T[][] {
-  const metrics = printMetrics(cards.length, layout);
-  if (metrics.rows === 0) return cards.length ? [cards] : [];
-  const pages: T[][] = [];
-  for (let index = 0; index < cards.length; index += metrics.perPage) {
-    pages.push(cards.slice(index, index + metrics.perPage));
-  }
-  return pages;
 }
 
 /**
@@ -242,11 +232,11 @@ export function fillCard(html: string, card: VoucherPrintCard, brand: VoucherPri
 }
 
 /**
- * Dokumen cetak lengkap.
+ * Dokumen cetak lengkap (fluid grid).
  *
- * Bila `layout.rows` diisi, kartu dipenggal per halaman (kolom × baris) sehingga
- * jumlah per lembar pasti — mis. A4 potret 6×5 = 30 kartu, lanskap 10×6 = 60.
- * Tanpa `rows`, perilaku lama dipertahankan: satu grid mengalir.
+ * Semua kartu dirender dalam SATU sheet flex-wrap. Kartu berukuran fisik tetap
+ * (lebar dasar × scale) dan `break-inside: avoid` menjaga tiap kartu utuh; browser
+ * memecah halaman secara alami saat jumlah kartu melebihi tinggi kertas.
  */
 export function buildPrintDocument(
   templateHtml: string,
@@ -257,54 +247,28 @@ export function buildPrintDocument(
 ): string {
   const cardHtml = sanitizeTemplateHtml(templateHtml);
   const metrics = printMetrics(cards.length, layout);
-  const { columns: cols, rows, gapXMm, gapYMm, paper } = metrics;
+  const { paper, cardWidthMm, scale, gapMm } = metrics;
 
   const renderCard = (card: VoucherPrintCard) =>
     `<div class="v-card" data-price="${card.price_value}" data-tier="${card.price_tier}" ` +
     `style="--tier-color:${tierColor(card.price_value)}">${fillCard(cardHtml, card, brand, printedAt)}</div>`;
 
-  // Kartu dipenggal per halaman supaya jumlah per lembar pasti; tanpa baris
-  // (gulungan thermal) semua kartu berada di satu halaman mengalir.
-  const pages: VoucherPrintCard[][] = [];
-  if (rows > 0 && cards.length > 0) {
-    for (let index = 0; index < cards.length; index += metrics.perPage) {
-      pages.push(cards.slice(index, index + metrics.perPage));
-    }
-  } else {
-    pages.push(cards);
-  }
-  const sheets = pages
-    .map(
-      (page, index) =>
-        `<div class="sheet${index === pages.length - 1 ? ' last' : ''}">${page.map(renderCard).join('\n')}</div>`,
-    )
-    .join('\n');
+  const sheets = `<div class="sheet">${cards.map(renderCard).join('\n')}</div>`;
 
-  // Tinggi baris dihitung dari tinggi kertas agar kolom × baris benar-benar
-  // muat satu halaman, bukan bergantung pada isi kartu.
-  const rowRule =
-    rows > 0
-      ? `grid-auto-rows:${((metrics.usableHeightMm - (rows - 1) * gapYMm) / rows).toFixed(2)}mm;`
-      : Number(layout.cardHeightMm) > 0
-        ? `grid-auto-rows:${Number(layout.cardHeightMm)}mm;`
-        : '';
-  const colRule = `grid-template-columns:repeat(${cols},${
-    Number(layout.cardWidthMm) > 0 ? `${Number(layout.cardWidthMm)}mm` : 'minmax(0,1fr)'
-  });`;
   const pageSize = paper.heightMm === null ? `${paper.widthMm}mm auto` : `${paper.widthMm}mm ${paper.heightMm}mm`;
-  const cutRule = layout.cutLines
-    ? '.v-card{outline:1px dashed #94a3b8;outline-offset:-1px}'
-    : '';
+  const cutRule = layout.cutLines ? '.v-card{outline:1px dashed #94a3b8;outline-offset:-1px}' : '';
 
+  // `zoom` menskalakan seluruh kartu proporsional (termasuk font) dan ikut
+  // memengaruhi layout di Chromium, sehingga flex-wrap menghitung ulang jumlah
+  // kartu per baris — tidak ada tumpang tindih atau kartu terpotong.
   return `<!doctype html>
 <html lang="id"><head><meta charset="utf-8"><title>Voucher</title>
 <style>
 @page{size:${pageSize};margin:${layout.marginMm}mm}
 *{-webkit-print-color-adjust:exact;print-color-adjust:exact;box-sizing:border-box}
 body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#fff;color:#0f172a}
-.sheet{display:grid;${colRule}${rowRule}gap:${gapYMm}mm ${gapXMm}mm}
-.sheet:not(.last){break-after:page;page-break-after:always}
-.v-card{break-inside:avoid;page-break-inside:avoid;min-width:0;${rows > 0 ? 'overflow:hidden;' : ''}}
+.sheet{display:flex;flex-wrap:wrap;gap:${gapMm}mm}
+.v-card{width:${cardWidthMm}mm;flex:0 0 ${cardWidthMm}mm;max-width:${cardWidthMm}mm;zoom:${scale};break-inside:avoid;page-break-inside:avoid;min-width:0}
 ${cutRule}
 @media screen{body{padding:8px;background:#e2e8f0}.sheet{background:#fff;padding:${layout.marginMm}mm;margin-bottom:12px}}
 </style></head>
@@ -402,9 +366,12 @@ export function templateProblems(
     out.push('Penulisan {{...}} tidak lengkap.');
   }
 
-  if (![1, 2, 3].includes(template.layout.columns)) out.push('Kolom harus 1, 2, atau 3.');
   if (template.layout.marginMm < 5 || template.layout.marginMm > 24) out.push('Margin halaman harus 5-24 mm.');
-  if (template.layout.gapMm < 2 || template.layout.gapMm > 15) out.push('Jarak antar kartu harus 2-15 mm.');
+  if (template.layout.gapMm < 0 || template.layout.gapMm > 15) out.push('Jarak antar kartu harus 0-15 mm.');
+  const cardWidth = Number(template.layout.cardWidthMm ?? 0);
+  if (cardWidth && (cardWidth < 15 || cardWidth > 300)) out.push('Lebar kartu harus 15-300 mm.');
+  const scale = Number(template.layout.scale ?? 1);
+  if (scale < 0.5 || scale > 2) out.push('Skala kartu harus 0.5-2.');
   return [...new Set(out)];
 }
 

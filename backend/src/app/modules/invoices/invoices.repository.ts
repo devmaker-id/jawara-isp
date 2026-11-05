@@ -494,14 +494,47 @@ export class InvoicesRepository {
     });
   }
 
-  // DELETE fisik dihapus dari alur aplikasi: nomor tagihan tidak boleh bolong
-  // dan relasi ke pembayaran tidak boleh lenyap tanpa jejak.
-  async remove(): Promise<never> {
-    throw new InvoiceError(
-      'DELETE_FORBIDDEN',
-      'Tagihan tidak dapat dihapus permanen. Gunakan pembatalan (void) dengan alasan ' +
-        'agar nomor tagihan dan riwayatnya tetap tersimpan.',
-    );
+  // Hapus permanen tagihan beserta seluruh pembayarannya (opsi B "hapus penuh").
+  // Berbeda dari void yang hanya membatalkan dan menyisakan baris, di sini nomor
+  // tagihan benar-benar lenyap. Snapshot & pelaku disimpan ke audit_logs
+  // (bertahan, FK ke users); finance_events milik tagihan/pembayaran terkait ikut
+  // dihapus agar tidak menggantung (finance_events sengaja tanpa FK).
+  async remove(id: number, actor: InvoiceActor): Promise<{ ok: true }> {
+    return this.db.withTransaction(async (conn) => {
+      const invoice = await this.lock(conn, id);
+      const [payRows] = await conn.query<(RowDataPacket & { id: number })[]>(
+        'SELECT id FROM payments WHERE invoice_id = ?',
+        [id],
+      );
+      const paymentIds = (payRows ?? []).map((row) => Number(row.id));
+
+      await conn.query(
+        'INSERT INTO audit_logs (user_id, action, details, ip_address) VALUES (?, ?, ?, ?)',
+        [
+          actor.id,
+          'INVOICE_HARD_DELETE',
+          JSON.stringify({
+            invoice: invoiceSnapshot(invoice),
+            payments: paymentIds,
+            actor: { id: actor.id, email: actor.email, name: actor.name },
+            at: new Date().toISOString(),
+          }),
+          actor.ip.slice(0, 45),
+        ],
+      );
+
+      if (paymentIds.length > 0) {
+        await conn.query(
+          `DELETE FROM finance_events WHERE entity_type = 'payment' AND entity_id IN (${paymentIds.map(() => '?').join(',')})`,
+          paymentIds,
+        );
+        await conn.query('DELETE FROM payments WHERE invoice_id = ?', [id]);
+      }
+      // Urutan anak→induk: payments (RESTRICT) sudah hilang, baru invoice.
+      await conn.query("DELETE FROM finance_events WHERE entity_type = 'invoice' AND entity_id = ?", [id]);
+      await conn.query('DELETE FROM invoices WHERE id = ?', [id]);
+      return { ok: true };
+    });
   }
 
   private async select(conn: PoolConnection, id: number, lock: boolean): Promise<Invoice | null> {

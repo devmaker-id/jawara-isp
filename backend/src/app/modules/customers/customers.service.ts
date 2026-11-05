@@ -18,6 +18,7 @@ import { UsersRepository } from '../users/users.repository';
 import { isMissingOwnerColumn, RequestScope, SYSTEM_SCOPE } from '../auth/request-scope';
 import { PermissionsService } from '../permissions/permissions.service';
 import { ApprovalService } from '../permissions/approval.service';
+import { SessionsService } from '../sessions/sessions.service';
 
 export type { Customer };
 
@@ -62,6 +63,7 @@ export class CustomersService {
     private readonly users: UsersRepository,
     private readonly permissions: PermissionsService,
     private readonly approval: ApprovalService,
+    private readonly sessions: SessionsService,
   ) {}
 
   // Tanpa `page` hasil tetap array (kompatibel dengan klien lama).
@@ -437,27 +439,27 @@ export class CustomersService {
         targetId: id,
       });
     }
-    return this.remove(id);
+    return this.remove(id, actor);
   }
 
-  // Pelanggan yang punya tagihan tidak boleh dihapus: FK customers melakukan
-  // CASCADE ke invoices, sehingga riwayat ikut hilang. Akun RADIUS ikut
-  // dicabut bersama pelanggan, sedangkan riwayat sesi (radacct) tetap utuh
-  // karena kuncinya username, bukan id pelanggan.
-  async remove(id: number): Promise<{ ok: true }> {
+  // Hapus permanen pelanggan beserta warisannya — tagihan, pembayaran, akun
+  // RADIUS (opsi B "hapus penuh"). Riwayat sesi radacct tetap utuh karena
+  // kuncinya username, bukan id pelanggan. Jejak pelaku disimpan ke audit_logs.
+  async remove(id: number, actor?: CustomerActor): Promise<{ ok: true }> {
     await this.requireCustomer(id);
-    const relations = await this.repository.countRelations(id).catch((error) => this.rethrow(error));
-    if (relations.invoices > 0) {
-      throw new ConflictException(
-        `Pelanggan memiliki ${relations.invoices} tagihan` +
-          (relations.services > 0 ? ` dan ${relations.services} akun RADIUS` : '') +
-          '. Nonaktifkan pelanggan (status disable) agar riwayat tidak hilang.',
-      );
-    }
-    const deleted = await this.repository.remove(id).catch((error) => this.rethrow(error));
+    // Kumpulkan akun RADIUS lebih dulu supaya bisa ditendang SETELAH barisnya
+    // dihapus (kalau ditendang lebih dulu, pelanggan bisa langsung login ulang).
+    const accounts = await this.repository.findAccounts(id, false).catch(() => []);
+    const usernames = accounts.map((account) => account.username).filter(Boolean);
+    const deleted = await this.repository
+      .remove(id, actor ? { userId: actor.userId, ip: actor.ip } : undefined)
+      .catch((error) => this.rethrow(error));
     if (!deleted) {
       throw new NotFoundException(`Pelanggan dengan ID ${id} tidak ditemukan`);
     }
+    await Promise.allSettled(
+      usernames.map((username) => this.sessions.disconnectByUsername(username)),
+    );
     return { ok: true };
   }
 }

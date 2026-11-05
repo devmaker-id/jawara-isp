@@ -54,4 +54,11 @@ export class SessionsController {
   disconnect(@Param('id') id: string, @Scope() scope: RequestScope) {
     return this.sessions.disconnect(id, scope);
   }
+
+  // Putus semua sesi aktif milik satu username (tendang saat hapus akun).
+  @Post('by-username/:username/disconnect')
+  @Roles('admin', 'operator')
+  disconnectByUsername(@Param('username') username: string) {
+    return this.sessions.disconnectByUsername(decodeURIComponent(username));
+  }
 }

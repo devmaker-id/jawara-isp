@@ -122,9 +122,43 @@ describe('parser syslog → event kanonik', () => {
     expect(event.oltName).toBe('OLT_BIBITNET');
   });
 
-  it('VSOL ONU_REGISTER', () => {
-    const raw = 'ONU_REGISTER PON 0/1 ONU 5 sn ZTEGcc4382c5';
-    expect(parseSyslogEvent(raw).eventType).toBe('ONU_REGISTER');
+  it('VSOL ONU Online → LINKUP + serial', () => {
+    const raw = '<27>Nov  5 17:51:06 gpon-olt auditd[0]: ONU Online  PON 0/1 ONU 12 sn ZTEGcbb6bd02 .';
+    expect(parseSyslogEvent(raw)).toMatchObject({
+      eventType: 'ONU_LINKUP',
+      portId: '0/1',
+      onuId: '12',
+      onuSerial: 'ZTEGcbb6bd02',
+      connectionState: 'ONLINE',
+    });
+  });
+
+  it('VSOL ONU Offline → LINKDOWN + OFFLINE', () => {
+    const raw = '<27>Nov  5 17:51:06 gpon-olt auditd[0]: ONU Offline  PON 0/1 ONU 8 sn ZTEGcc5c3bd5 .';
+    const event = parseSyslogEvent(raw);
+    expect(event.eventType).toBe('ONU_LINKDOWN');
+    expect(event.connectionState).toBe('OFFLINE');
+  });
+
+  it('VSOL ONU Dying Gasp → DYING_GASP + listrik padam', () => {
+    const raw = '<27>Nov  5 17:51:06 gpon-olt auditd[0]: ONU Dying Gasp  PON 0/1 ONU 6 sn HWTCb3f123a0 .';
+    const event = parseSyslogEvent(raw);
+    expect(event.eventType).toBe('ONU_DYING_GASP');
+    expect(event.connectionState).toBe('ONU_POWER_OFF');
+  });
+
+  it('VSOL ONU Port Los → LINKDOWN + fiber putus', () => {
+    const raw =
+      '<27>Nov  5 17:50:53 gpon-olt auditd[0]: ONU Port Los  PON 0/1 ONU 8 sn ZTEGcc5c3bd5  LAN2 LINK DOWN.';
+    const event = parseSyslogEvent(raw);
+    expect(event.eventType).toBe('ONU_LINKDOWN');
+    expect(event.connectionState).toBe('FIBER_LOS');
+  });
+
+  it('HiFocus linkdown → OFFLINE (sebab dari ctcStatus, bukan syslog)', () => {
+    const raw =
+      '<30>Jun 24 01:52:25 OLT_BIBITNET: [2026-06-24 01:52:25] ONU 0/4:26 [ 1C:27:04:B0:B3:AF ] [pak_mamay] linkdown';
+    expect(parseSyslogEvent(raw).connectionState).toBe('OFFLINE');
   });
 
   it('tidak dikenal → UNKNOWN', () => {

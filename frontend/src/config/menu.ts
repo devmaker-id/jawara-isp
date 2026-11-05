@@ -35,6 +35,8 @@ export const menuItems: MenuItemConfig[] = [
       { path: '/mikrotik/hotspot', label: 'Hotspot' },
       { path: '/mikrotik/ppp', label: 'PPP' },
       { path: '/mikrotik/routing', label: 'Routing & ARP' },
+      { path: '/mikrotik/routes', label: 'Routes & Policy' },
+      { path: '/mikrotik/firewall', label: 'Firewall' },
       { path: '/mikrotik/log', label: 'Log Aktivitas' },
     ],
   },

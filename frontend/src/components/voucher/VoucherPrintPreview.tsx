@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   buildPrintDocument,
   mmToPx,
-  paginateCards,
   printHtmlDocument,
   printMetrics,
   type VoucherPrintBrand,
@@ -11,14 +10,12 @@ import {
 } from '../../utils/voucher-print';
 
 /**
- * Print Preview voucher.
+ * Print Preview voucher (fluid).
  *
- * Satu-satunya renderer tetap `buildPrintDocument` — halaman preview memakai
- * dokumen yang sama persis dengan yang dikirim ke dialog cetak, hanya dipotong
- * per halaman. Jadi yang terlihat di layar = yang tercetak.
- *
- * `window.print()` hanya dipanggil dari tombol "Cetak / Simpan PDF" di sini,
- * bukan saat pengguna menekan "Cetak" pada dialog konfigurasi.
+ * Satu-satunya renderer tetap `buildPrintDocument` — preview menampilkan dokumen
+ * yang sama persis dengan yang dikirim ke dialog cetak. Kartu mengalir (wrap),
+ * jadi semua voucher tampil dalam satu lembar panjang; browser yang memecah
+ * halaman saat cetak.
  */
 
 export interface VoucherPrintPreviewProps {
@@ -50,32 +47,28 @@ export const VoucherPrintPreview: React.FC<VoucherPrintPreviewProps> = ({
   onBack,
   onClose,
 }) => {
-  const pages = useMemo(() => paginateCards(cards, layout), [cards, layout]);
   const metrics = useMemo(() => printMetrics(cards.length, layout), [cards.length, layout]);
-  const [page, setPage] = useState(0);
-  const [scale, setScale] = useState(1);
+  // Skala tampilan di layar (fit lebar panel) — terpisah dari skala kartu yang
+  // tersimpan di layout dan ikut tercetak.
+  const [fit, setFit] = useState(1);
   const stageRef = useRef<HTMLDivElement | null>(null);
 
-  const totalPages = Math.max(1, pages.length);
-  const safePage = Math.min(page, totalPages - 1);
-
-  // Dokumen halaman aktif — renderer yang sama dengan hasil cetak.
-  const pageDoc = useMemo(() => {
-    const slice = pages[safePage] ?? [];
-    return buildPrintDocument(templateHtml, slice, layout, brand, printedAt);
-  }, [pages, safePage, templateHtml, layout, brand, printedAt]);
+  const doc = useMemo(
+    () => buildPrintDocument(templateHtml, cards, layout, brand, printedAt),
+    [templateHtml, cards, layout, brand, printedAt],
+  );
 
   // Skala mengikuti lebar panel supaya kertas A4/A5/thermal muat di layar.
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
-    const fit = () => {
+    const compute = () => {
       const available = stage.clientWidth - 32;
       const paperPx = mmToPx(metrics.paper.widthMm);
-      setScale(Math.min(1, Math.max(0.2, available / paperPx)));
+      setFit(Math.min(1, Math.max(0.2, available / paperPx)));
     };
-    fit();
-    const observer = new ResizeObserver(fit);
+    compute();
+    const observer = new ResizeObserver(compute);
     observer.observe(stage);
     return () => observer.disconnect();
   }, [metrics.paper.widthMm]);
@@ -83,31 +76,23 @@ export const VoucherPrintPreview: React.FC<VoucherPrintPreviewProps> = ({
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
-      if (event.key === 'ArrowLeft') setPage((value) => Math.max(0, value - 1));
-      if (event.key === 'ArrowRight') setPage((value) => Math.min(totalPages - 1, value + 1));
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose, totalPages]);
+  }, [onClose]);
 
-  const paperPx = mmToPx(metrics.paper.widthMm);
+  // Gulungan thermal: tinggi dokumen ikut banyaknya kartu (mengalir). Kertas
+  // lembar: tampilkan satu "halaman" per layar, isinya bisa digulir di iframe.
   const isRoll = metrics.paper.heightMm === null;
-  // Gulungan: tinggi dokumen bisa sangat panjang; preview dibatasi dan isinya
-  // digulir di dalam iframe supaya halaman tetap ringan.
   const heightPx = isRoll
-    ? Math.min(1600, Math.max(900, mmToPx(40) * Math.ceil((pages[safePage]?.length ?? 1) / metrics.columns)))
+    ? Math.min(1600, Math.max(900, mmToPx(40) * Math.ceil(cards.length / Math.max(1, metrics.columns))))
     : mmToPx(metrics.paper.heightMm as number);
 
   const firstCard = cards[0];
   const lastCard = cards[cards.length - 1];
-  const rangeFrom = safePage * (metrics.rows > 0 ? metrics.perPage : cards.length) + 1;
-  const rangeTo =
-    metrics.rows > 0
-      ? Math.min(cards.length, rangeFrom + (pages[safePage]?.length ?? 0) - 1)
-      : cards.length;
 
   const doPrint = () => {
-    printHtmlDocument(buildPrintDocument(templateHtml, cards, layout, brand, printedAt));
+    printHtmlDocument(doc);
   };
 
   return (
@@ -121,7 +106,7 @@ export const VoucherPrintPreview: React.FC<VoucherPrintPreviewProps> = ({
         <div>
           <h2 className="text-base font-semibold text-white">Print Preview</h2>
           <p className="mt-0.5 text-xs text-slate-400">
-            Periksa susunan sebelum mencetak. Dialog cetak browser baru terbuka setelah Anda menekan
+            Semua voucher tampil mengalir. Dialog cetak browser baru terbuka setelah Anda menekan
             Cetak / Simpan PDF.
           </p>
         </div>
@@ -152,21 +137,18 @@ export const VoucherPrintPreview: React.FC<VoucherPrintPreviewProps> = ({
       </header>
 
       <div className="grid min-h-0 flex-1 gap-3 overflow-hidden p-3 lg:grid-cols-[300px_1fr]">
-        {/* Ringkasan konfigurasi sebenarnya (dihitung dari layout, bukan tetap) */}
         <aside className="min-h-0 space-y-2 overflow-y-auto rounded-xl border border-slate-700/60 bg-slate-900/70 p-3 text-sm">
           <p className="text-xs uppercase tracking-wide text-slate-500">Ringkasan cetak</p>
           <dl className="space-y-1.5">
             {[
               ['Total voucher', String(cards.length)],
-              ['Total halaman', String(totalPages)],
-              ['Grid', `${metrics.columns} kolom × ${metrics.rows > 0 ? metrics.rows : '—'} baris`],
-              ['Voucher per halaman', metrics.rows > 0 ? String(metrics.perPage) : `${cards.length} (mengalir)`],
+              ['Kartu per baris', `${metrics.columns}`],
+              ['Lebar kartu', `${metrics.cardWidthMm} mm${metrics.scale !== 1 ? ` × ${metrics.scale}` : ''}`],
               ['Ukuran kertas', `${PAPER_LABEL[metrics.paper.kind] ?? metrics.paper.kind} (${metrics.paper.widthMm}×${metrics.paper.heightMm ?? '∞'} mm)`],
               ['Orientasi', metrics.paper.heightMm === null ? 'Gulungan' : metrics.orientation === 'landscape' ? 'Landscape' : 'Portrait'],
-              ['Margin / jarak', `${layout.marginMm} mm · ${metrics.gapXMm}×${metrics.gapYMm} mm`],
+              ['Margin / jarak', `${layout.marginMm} mm · ${metrics.gapMm} mm`],
               ['Garis potong', layout.cutLines ? 'Aktif' : 'Mati'],
               ['Template', templateName || '(bawaan)'],
-              ['Halaman ini', `${rangeFrom}–${rangeTo} dari ${cards.length}`],
             ].map(([label, value]) => (
               <div key={label} className="flex items-start justify-between gap-3">
                 <dt className="text-slate-400">{label}</dt>
@@ -185,19 +167,18 @@ export const VoucherPrintPreview: React.FC<VoucherPrintPreviewProps> = ({
           </p>
         </aside>
 
-        {/* Kertas: iframe sandbox tanpa script, dokumen identik dengan hasil cetak */}
         <div ref={stageRef} className="min-h-0 overflow-auto rounded-xl border border-slate-700/60 bg-slate-800/40 p-4">
-          <div style={{ width: paperPx * scale, height: heightPx * scale, margin: '0 auto' }}>
+          <div style={{ width: mmToPx(metrics.paper.widthMm) * fit, height: heightPx * fit, margin: '0 auto' }}>
             <iframe
-              title={`Halaman ${safePage + 1}`}
-              srcDoc={pageDoc}
+              title="Pratinjau voucher"
+              srcDoc={doc}
               sandbox="allow-modals"
               style={{
-                width: paperPx,
+                width: mmToPx(metrics.paper.widthMm),
                 height: heightPx,
                 border: 0,
                 background: '#fff',
-                transform: `scale(${scale})`,
+                transform: `scale(${fit})`,
                 transformOrigin: 'top left',
               }}
             />
@@ -206,29 +187,12 @@ export const VoucherPrintPreview: React.FC<VoucherPrintPreviewProps> = ({
       </div>
 
       <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-700/60 bg-slate-900/80 px-4 py-3">
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setPage((value) => Math.max(0, value - 1))}
-            disabled={safePage === 0}
-            className="rounded-lg border border-slate-600 px-3 py-2 text-sm text-slate-200 transition hover:bg-slate-700 disabled:opacity-40"
-          >
-            ← Sebelumnya
-          </button>
-          <span className="text-sm text-slate-300">
-            Halaman {safePage + 1} dari {totalPages}
-          </span>
-          <button
-            type="button"
-            onClick={() => setPage((value) => Math.min(totalPages - 1, value + 1))}
-            disabled={safePage >= totalPages - 1}
-            className="rounded-lg border border-slate-600 px-3 py-2 text-sm text-slate-200 transition hover:bg-slate-700 disabled:opacity-40"
-          >
-            Berikutnya →
-          </button>
-        </div>
+        <p className="text-xs text-slate-400">
+          Kartu mengalir otomatis — browser memecah halaman saat cetak.
+        </p>
         <p className="text-xs text-slate-500">
-          {cards.length} voucher · {totalPages} halaman · {metrics.orientation === 'landscape' ? 'landscape' : 'portrait'}
+          {cards.length} voucher · {metrics.columns} per baris ·{' '}
+          {metrics.orientation === 'landscape' ? 'landscape' : 'portrait'}
         </p>
       </footer>
     </div>

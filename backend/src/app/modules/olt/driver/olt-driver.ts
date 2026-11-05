@@ -23,6 +23,17 @@ export interface OltConnection {
   promptPattern: string | null;
 }
 
+/** Klasifikasi penyebab status ONU non-online. Nilai kanonik lintas vendor. */
+export const CONNECTION_STATES = [
+  'ONLINE',
+  'OFFLINE',
+  'ONU_POWER_OFF',
+  'FIBER_LOS',
+  'ONU_AUTH_FAILED',
+  'UNKNOWN',
+] as const;
+export type ConnectionState = (typeof CONNECTION_STATES)[number];
+
 /** Satu ONU hasil pembacaan status + deskripsi + redaman digabung. */
 export interface OltOnu {
   onuId: string;
@@ -36,6 +47,8 @@ export interface OltOnu {
   adminState: string | null;
   omccState: string | null;
   phaseState: string | null;
+  /** Penyebab non-online: ONLINE/OFFLINE/ONU_POWER_OFF/FIBER_LOS/ONU_AUTH_FAILED/UNKNOWN. */
+  connectionState: ConnectionState | null;
   online: boolean;
   rxPowerOnu: number | null;
   rxPowerOlt: number | null;
@@ -73,6 +86,8 @@ export interface OltAdapter {
   readonly opticalInInventory?: boolean;
   /** Baca redaman satu ONU. Wajib ada bila `opticalInInventory` bukan true. */
   readOptical?(portId: string, onuId: string): Promise<OltOptical | null>;
+  /** Baca detail satu ONU (`show onu info epon <port> <id>`) — HiFocus/Hioso saja. */
+  readOnuInfo?(portId: string, onuId: string): Promise<string | null>;
   /** Tutup sesi. Wajib dipanggil di blok `finally` pemanggil. */
   close(): Promise<void>;
 }

@@ -24,6 +24,7 @@ import {
 import { AssignGroupDto, SaveGroupDto } from './dto/radius-group.dto';
 import { NasBackupFile, writeNasBackup } from './nas-backup';
 import { RADIUS_TABLES, RadiusRepository } from './radius.repository';
+import { ProfilesService } from '../profiles/profiles.service';
 
 /** Toleransi selisih jam perangkat vs server sebelum NAS boleh disimpan. */
 const NAS_CLOCK_TOLERANCE_SECONDS = 120;
@@ -59,6 +60,7 @@ export class RadiusService {
     private readonly mikrotik: MikrotikService,
     private readonly configService: RadiusConfigService,
     private readonly isolir: IsolirService,
+    private readonly profiles: ProfilesService,
   ) {}
 
   private async schemaState() {
@@ -620,6 +622,18 @@ export class RadiusService {
 
   async deleteGroup(groupname: string, actor: { userId: number; ip: string }) {
     await this.ensureReady();
+    // Grup yang namanya sama dengan profil layanan (hotspot/PPP) adalah proyeksi
+    // dari profil tersebut. Hapus lewat profil agar satu-satunya sumber data —
+    // profil — ikut terhapus dan guard voucher tetap berlaku. Grup mandiri
+    // (mis. ISOLIR atau buatan manual) tetap dihapus langsung di sini.
+    const owner = await this.radius.findOwningProfile(groupname);
+    if (owner) {
+      await this.profiles.removeProfile(actor, owner.type, owner.id);
+      // Sweep sisa keanggotaan radusergroup bila ada user yang dipasangkan
+      // manual ke grup bernama profil ini di luar alur voucher.
+      const removedUsers = await this.radius.deleteGroup(groupname);
+      return { groupname, removed_users: removedUsers, profile_deleted: owner };
+    }
     const removedUsers = await this.radius.deleteGroup(groupname);
     await this.audit(actor, 'radius.group.delete', { groupname, removed_users: removedUsers });
     return { groupname, removed_users: removedUsers };

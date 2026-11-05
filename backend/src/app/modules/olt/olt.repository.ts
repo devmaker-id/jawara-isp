@@ -328,10 +328,10 @@ export class OltRepository {
           await connection.query(
             `INSERT INTO olt_onus
                (olt_id, port_id, onu_id, serial_number, onu_mac, onu_name, description,
-                admin_state, omcc_state, phase_state, online,
+                admin_state, omcc_state, phase_state, connection_state, online,
                 rx_power_onu, rx_power_olt, tx_power, temperature, voltage, tx_bias,
                 last_seen_at, missing_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NULL)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NULL)
              ON DUPLICATE KEY UPDATE
                serial_number = VALUES(serial_number),
                onu_mac       = VALUES(onu_mac),
@@ -340,6 +340,9 @@ export class OltRepository {
                admin_state   = VALUES(admin_state),
                omcc_state    = VALUES(omcc_state),
                phase_state   = VALUES(phase_state),
+               -- HiFocus selalu mengisi (dari ctcStatus) dan boleh menimpa; VSOL
+               -- kirim NULL saat offline supaya sebab dari syslog tidak tertimpa.
+               connection_state = COALESCE(VALUES(connection_state), connection_state),
                online        = VALUES(online),
                -- Vendor yang membaca redaman terpisah (HiFocus) mengirim NULL
                -- di sini; nilai lama harus dipertahankan, bukan dihapus setiap
@@ -369,6 +372,7 @@ export class OltRepository {
               onu.adminState,
               onu.omccState,
               onu.phaseState,
+              onu.connectionState,
               onu.online ? 1 : 0,
               onu.rxPowerOnu,
               onu.rxPowerOlt,
@@ -877,26 +881,82 @@ export class OltRepository {
     onuMac: string | null;
     online: 0 | 1;
     eventType: string;
+    /** Penyebab non-online: ONU_POWER_OFF / FIBER_LOS / OFFLINE / ONLINE / ... */
+    connectionState: string;
   }): Promise<{ changed: boolean }> {
     let result: { affectedRows?: number };
     if (input.portId && input.onuId) {
       result = await this.db.execute(
         `UPDATE olt_onus
-            SET online = ?, last_event = ?, last_event_at = NOW(), last_seen_at = NOW()
+            SET online = ?, last_event = ?, last_event_at = NOW(), last_seen_at = NOW(),
+                connection_state = ?
           WHERE olt_id = ? AND port_id = ? AND onu_id = ? AND online <> ?`,
-        [input.online, input.eventType, input.oltId, input.portId, input.onuId, input.online],
+        [
+          input.online,
+          input.eventType,
+          input.connectionState,
+          input.oltId,
+          input.portId,
+          input.onuId,
+          input.online,
+        ],
       );
     } else if (input.onuMac) {
       result = await this.db.execute(
         `UPDATE olt_onus
-            SET online = ?, last_event = ?, last_event_at = NOW(), last_seen_at = NOW()
+            SET online = ?, last_event = ?, last_event_at = NOW(), last_seen_at = NOW(),
+                connection_state = ?
           WHERE olt_id = ? AND onu_mac = ? AND online <> ?`,
-        [input.online, input.eventType, input.oltId, input.onuMac, input.online],
+        [
+          input.online,
+          input.eventType,
+          input.connectionState,
+          input.oltId,
+          input.onuMac,
+          input.online,
+        ],
       );
     } else {
       return { changed: false };
     }
     return { changed: Number(result.affectedRows ?? 0) > 0 };
+  }
+
+  /** Konteks pelanggan/identitas/redaman untuk pesan alert syslog. */
+  async findOnuAlertContext(oltId: number, portId: string | null, onuId: string | null, onuMac: string | null): Promise<{
+    customerName: string | null;
+    internetNo: string | null;
+    onuName: string | null;
+    serialNumber: string | null;
+    onuMac: string | null;
+    rxPowerOlt: number | null;
+    rxPowerOnu: number | null;
+    opticalReadAt: Date | null;
+  } | null> {
+    const base = `
+      SELECT o.onu_name, o.serial_number, o.onu_mac,
+             o.rx_power_olt, o.rx_power_onu, o.optical_read_at,
+             c.name AS customer_name, c.internet_no AS internet_no
+        FROM olt_onus o
+        LEFT JOIN customers c ON c.id = o.customer_id
+       WHERE o.olt_id = ?`;
+    const row =
+      portId && onuId
+        ? await this.db.queryOne<RowDataPacket>(`${base} AND o.port_id = ? AND o.onu_id = ? LIMIT 1`, [oltId, portId, onuId])
+        : onuMac
+          ? await this.db.queryOne<RowDataPacket>(`${base} AND o.onu_mac = ? LIMIT 1`, [oltId, onuMac])
+          : null;
+    if (!row) return null;
+    return {
+      customerName: (row.customer_name as string) ?? null,
+      internetNo: (row.internet_no as string) ?? null,
+      onuName: (row.onu_name as string) ?? null,
+      serialNumber: (row.serial_number as string) ?? null,
+      onuMac: (row.onu_mac as string) ?? null,
+      rxPowerOlt: row.rx_power_olt != null ? Number(row.rx_power_olt) : null,
+      rxPowerOnu: row.rx_power_onu != null ? Number(row.rx_power_onu) : null,
+      opticalReadAt: row.optical_read_at ? new Date(row.optical_read_at as Date) : null,
+    };
   }
 
   async insertSyslogAction(input: {

@@ -737,6 +737,11 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
                                   </span>
                                 )}
                               </div>
+                              {account.password && (
+                                <div className="font-mono text-[10px] text-slate-300">
+                                  pass: {account.password}
+                                </div>
+                              )}
                               <div className="text-[10px] text-slate-500">
                                 {account.profile_type} · {account.profile_name}
                               </div>
@@ -832,6 +837,9 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
                       {account ? (
                         <>
                           <span className="font-mono text-slate-200">{account.username}</span>
+                          {account.password && (
+                            <span className="font-mono text-slate-400"> / pass: {account.password}</span>
+                          )}
                           <span className="text-slate-500"> · {account.profile_type}/{account.profile_name}</span>
                         </>
                       ) : (
@@ -1376,8 +1384,8 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
             </p>
             <p className="text-xs text-slate-500">
               Akun RADIUS-nya ikut dicabut dari <code>radcheck</code>, <code>radreply</code>, dan{' '}
-              <code>radusergroup</code> sehingga tidak bisa login lagi. Pelanggan yang sudah punya tagihan
-              ditolak server (409) — nonaktifkan saja agar riwayat tetap tersimpan.
+              <code>radusergroup</code> sehingga tidak bisa login lagi. Tagihan beserta seluruh riwayat
+              pembayarannya akan ikut terhapus permanen.
             </p>
             <div className="flex gap-3 justify-end">
               <button

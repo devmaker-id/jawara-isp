@@ -107,6 +107,7 @@ export class HisfocusAdapter implements OltAdapter {
       adminState: row.adminState,
       omccState: row.omccState,
       phaseState: row.phaseState,
+      connectionState: row.connectionState,
       online: row.online,
       rxPowerOnu: null,
       rxPowerOlt: null,
@@ -124,6 +125,20 @@ export class HisfocusAdapter implements OltAdapter {
       .run(`show onu optical-ddm epon ${portId} ${onuId}`, 15_000)
       .catch(() => '');
     return parseOptical(raw);
+  }
+
+  /**
+   * Detail satu ONU (`show onu info epon <port> <id>`) — READ-ONLY.
+   * Dipakai untuk membaca `ctc_autoneg` (sebab offline) saat event syslog masuk;
+   * perintah ini tetap mengembalikan data untuk ONU yang sedang offline.
+   */
+  async readOnuInfo(portId: string, onuId: string): Promise<string | null> {
+    if (!this.ready) throw new Error('Sesi OLT belum dibuka.');
+    const shell = this.shell!;
+    const raw = await shell
+      .run(`show onu info epon ${portId} ${onuId}`, 30_000)
+      .catch(() => '');
+    return raw || null;
   }
 
   async close(): Promise<void> {

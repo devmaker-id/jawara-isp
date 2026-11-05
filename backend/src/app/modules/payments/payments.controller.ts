@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -124,5 +125,14 @@ export class PaymentsController {
     @Req() req: AuthenticatedRequest,
   ) {
     return this.paymentsService.void(id, dto, actorOf(req));
+  }
+
+  // Hapus permanen pembayaran (opsi B). Khusus admin: nominal hilang dari
+  // ledger; jejak tersimpan di audit_logs.
+  @Delete('payments/:id')
+  @Roles('admin')
+  @HttpCode(HttpStatus.OK)
+  remove(@Param('id', ParseIntPipe) id: number, @Req() req: AuthenticatedRequest) {
+    return this.paymentsService.remove(id, actorOf(req));
   }
 }

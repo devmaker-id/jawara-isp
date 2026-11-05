@@ -156,11 +156,9 @@ describe('Invoices (e2e)', () => {
       await api().patch(`/api/invoices/${id}`).set(auth(adminToken)).send({ status: 'paid' }).expect(400);
     });
 
-    it('hapus permanen ditolak → 409 dan tagihan tetap ada', async () => {
-      const res = await api().delete(`/api/invoices/${id}`).set(auth(adminToken)).expect(409);
-      expect(res.body.message).toMatch(/tidak dapat dihapus permanen/i);
-      const detail = await api().get(`/api/invoices/${id}`).set(auth(adminToken)).expect(200);
-      expect(detail.body.id).toBe(id);
+    it('hapus permanen oleh admin → 200 dan tagihan hilang', async () => {
+      await api().delete(`/api/invoices/${id}`).set(auth(adminToken)).expect(200);
+      await api().get(`/api/invoices/${id}`).set(auth(adminToken)).expect(404);
     });
   });
 
@@ -272,10 +270,10 @@ describe('Invoices (e2e)', () => {
         .expect(409);
     });
 
-    it('tagihan void tetap terbaca dan tidak bisa dihapus → 200 / 409', async () => {
+    it('tagihan void tetap bisa dihapus permanen oleh admin → 200', async () => {
       const detail = await api().get(`/api/invoices/${id}`).set(auth(adminToken)).expect(200);
       expect(detail.body.status).toBe('void');
-      await api().delete(`/api/invoices/${id}`).set(auth(adminToken)).expect(409);
+      await api().delete(`/api/invoices/${id}`).set(auth(adminToken)).expect(200);
     });
 
     it('riwayat aktivitas tagihan memuat event audit → 200', async () => {
@@ -326,9 +324,9 @@ describe('Invoices (e2e)', () => {
       await api().patch('/api/invoices/999999').set(auth(adminToken)).send({ amount: 10 }).expect(404);
     });
 
-    // DELETE tidak lagi melihat ID: operasinya dilarang untuk tagihan mana pun.
-    it('delete → 409 (hapus permanen tidak tersedia)', async () => {
-      await api().delete('/api/invoices/999999').set(auth(adminToken)).expect(409);
+    // DELETE fisik kini tersedia (opsi B): tagihan yang tidak ada → 404.
+    it('delete tagihan tidak ada → 404', async () => {
+      await api().delete('/api/invoices/999999').set(auth(adminToken)).expect(404);
     });
   });
 });

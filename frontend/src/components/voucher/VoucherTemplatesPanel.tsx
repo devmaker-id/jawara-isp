@@ -35,7 +35,7 @@ export interface VoucherVariable {
   label: string;
 }
 
-const DEFAULT_LAYOUT: VoucherTemplateLayout = { columns: 3, marginMm: 8.5, gapMm: 3.5 };
+const DEFAULT_LAYOUT: VoucherTemplateLayout = { marginMm: 8.5, gapMm: 3.5, cardWidthMm: 64, scale: 1 };
 const MAX_TEMPLATES = 20;
 const MAX_HTML = 200_000;
 
@@ -246,7 +246,7 @@ export const VoucherTemplatesPanel: React.FC<{
         </p>
       </td>
       <td className={`${cellClass} font-mono text-xs`}>
-        {row.layout.columns} kolom · {row.layout.marginMm} mm · jarak {row.layout.gapMm} mm
+        {row.layout.cardWidthMm ?? 64} mm{row.layout.scale && row.layout.scale !== 1 ? ` × ${row.layout.scale}` : ''} · margin {row.layout.marginMm} mm
       </td>
       <td className={cellClass}>
         <span
@@ -380,7 +380,7 @@ export const VoucherTemplatesPanel: React.FC<{
                   )}
                 </p>
                 <p className="mt-0.5 text-[11px] text-slate-400">
-                  {row.layout.columns} kolom · {row.layout.marginMm} mm · {row.html.length.toLocaleString('id-ID')} kar.
+                  {row.layout.cardWidthMm ?? 64} mm · margin {row.layout.marginMm} · {row.html.length.toLocaleString('id-ID')} kar.
                 </p>
               </div>
               <span
@@ -620,43 +620,44 @@ export const VoucherTemplatesPanel: React.FC<{
                     </p>
 
                     <p className="mb-1 mt-3 text-[11px] font-medium uppercase tracking-wider text-slate-400">
-                      Grid halaman
+                      Ukuran kartu &amp; kertas
                     </p>
-                    <div className="mb-2 grid grid-cols-3 gap-2">
+                    <div className="mb-2 grid grid-cols-2 gap-2">
                       <label className="block">
-                        <span className="mb-0.5 block text-[11px] text-slate-400">Kolom</span>
+                        <span className="mb-0.5 block text-[11px] text-slate-400">Lebar kartu (mm)</span>
                         <input
                           type="number"
-                          min={1}
-                          max={10}
-                          value={draft.layout.columns}
+                          min={15}
+                          max={300}
+                          value={draft.layout.cardWidthMm ?? 64}
                           onChange={(e) =>
                             setDraft({
                               ...draft,
-                              layout: { ...draft.layout, columns: Math.min(10, Math.max(1, Number(e.target.value) || 1)) },
+                              layout: { ...draft.layout, cardWidthMm: Math.min(300, Math.max(15, Number(e.target.value) || 64)) },
                             })
                           }
                           className="w-full rounded bg-slate-900 px-2 py-1.5 font-mono text-xs text-slate-100 ring-1 ring-slate-700"
                         />
                       </label>
                       <label className="block">
-                        <span className="mb-0.5 block text-[11px] text-slate-400">Baris/halaman</span>
+                        <span className="mb-0.5 block text-[11px] text-slate-400">Skala kartu (×)</span>
                         <input
                           type="number"
-                          min={0}
-                          max={12}
-                          value={draft.layout.rows ?? 0}
+                          min={0.5}
+                          max={2}
+                          step={0.1}
+                          value={draft.layout.scale ?? 1}
                           onChange={(e) =>
                             setDraft({
                               ...draft,
-                              layout: { ...draft.layout, rows: Math.min(12, Math.max(0, Number(e.target.value) || 0)) },
+                              layout: { ...draft.layout, scale: Math.min(2, Math.max(0.5, Number(e.target.value) || 1)) },
                             })
                           }
                           className="w-full rounded bg-slate-900 px-2 py-1.5 font-mono text-xs text-slate-100 ring-1 ring-slate-700"
                         />
                       </label>
                       <label className="block">
-                        <span className="mb-0.5 block text-[11px] text-slate-400">Kertas</span>
+                        <span className="mb-0.5 block text-[11px] text-slate-400">Orientasi</span>
                         <select
                           value={draft.layout.orientation ?? 'portrait'}
                           onChange={(e) =>
@@ -671,38 +672,6 @@ export const VoucherTemplatesPanel: React.FC<{
                           <option value="landscape">Lanskap</option>
                         </select>
                       </label>
-                    </div>
-                    <div className="mb-2 flex flex-wrap gap-1.5">
-                      {[
-                        { label: 'Potret 30', columns: 6, rows: 5, orientation: 'portrait' as const },
-                        { label: 'Lanskap 60', columns: 10, rows: 6, orientation: 'landscape' as const },
-                      ].map((preset) => (
-                        <button
-                          key={preset.label}
-                          type="button"
-                          onClick={() =>
-                            setDraft({
-                              ...draft,
-                              layout: {
-                                ...draft.layout,
-                                columns: preset.columns,
-                                rows: preset.rows,
-                                orientation: preset.orientation,
-                              },
-                            })
-                          }
-                          className="rounded border border-slate-700 px-2 py-1 text-[11px] text-slate-300 hover:border-cyan-500 hover:text-cyan-300"
-                        >
-                          {preset.label}
-                        </button>
-                      ))}
-                      <span className="self-center text-[11px] text-slate-500">
-                        {draft.layout.rows
-                          ? `${draft.layout.columns * draft.layout.rows} kartu/halaman`
-                          : 'mengalir tanpa pemenggalan'}
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
                       <label className="block">
                         <span className="mb-0.5 block text-[11px] text-slate-400">Margin (mm)</span>
                         <input
@@ -718,10 +687,10 @@ export const VoucherTemplatesPanel: React.FC<{
                         />
                       </label>
                       <label className="block">
-                        <span className="mb-0.5 block text-[11px] text-slate-400">Jarak (mm)</span>
+                        <span className="mb-0.5 block text-[11px] text-slate-400">Jarak antar kartu (mm)</span>
                         <input
                           type="number"
-                          min={2}
+                          min={0}
                           max={15}
                           step={0.5}
                           value={draft.layout.gapMm}
@@ -732,6 +701,10 @@ export const VoucherTemplatesPanel: React.FC<{
                         />
                       </label>
                     </div>
+                    <p className="mb-2 text-[11px] text-slate-500">
+                      Kartu berukuran tetap dan mengalir (wrap) sesuai kertas; ganti kertas/margin/scale tidak
+                      mengubah skala kartu atau memotongnya.
+                    </p>
                   </div>
 
                   <div className={pane === 'pratinjau' ? 'hidden xl:block' : ''}>

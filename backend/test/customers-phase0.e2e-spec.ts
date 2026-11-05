@@ -199,11 +199,21 @@ describe('Customers Fase 0 (e2e)', () => {
     });
   });
 
+  describe('penonaktifan tidak menghapus riwayat', () => {
+    it('PATCH is_active=false menyisakan pelanggan, tagihan, dan sesi', async () => {
+      const res = await call('patch', '/api/customers/1', tokens.operator)
+        .send({ is_active: false })
+        .expect(200);
+      expect(res.body.is_active).toBe(false);
+      expect(customers.items.get(1)).toBeDefined();
+      expect(customers.relations.get(1)).toEqual({ invoices: 2, services: 1 });
+    });
+  });
+
   describe('penghapusan pelanggan', () => {
-    it('menolak hapus pelanggan yang punya tagihan/sesi layanan (409)', async () => {
-      const res = await call('delete', '/api/customers/1', tokens.admin).expect(409);
-      expect(res.body.message).toMatch(/Nonaktifkan pelanggan/i);
-      expect(customers.items.has(1)).toBe(true);
+    it('admin menghapus pelanggan yang punya tagihan/sesi (opsi B, 200)', async () => {
+      await call('delete', '/api/customers/1', tokens.admin).expect(200);
+      expect(customers.items.has(1)).toBe(false);
     });
 
     it('mengizinkan hapus pelanggan tanpa riwayat', async () => {
@@ -218,16 +228,5 @@ describe('Customers Fase 0 (e2e)', () => {
 
     // Alur antrean hapus reseller diuji terhadap server nyata (skrip t20_rbac.js),
     // karena repository pelanggan di suite ini dibuat tanpa kolom pemilik.
-  });
-
-  describe('penonaktifan tidak menghapus riwayat', () => {
-    it('PATCH is_active=false menyisakan pelanggan, tagihan, dan sesi', async () => {
-      const res = await call('patch', '/api/customers/1', tokens.operator)
-        .send({ is_active: false })
-        .expect(200);
-      expect(res.body.is_active).toBe(false);
-      expect(customers.items.get(1)).toBeDefined();
-      expect(customers.relations.get(1)).toEqual({ invoices: 2, services: 1 });
-    });
   });
 });

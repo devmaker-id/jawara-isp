@@ -207,14 +207,17 @@ const Grup: React.FC = () => {
     setError(null);
     try {
       // encodeURIComponent: nama grup boleh mengandung titik/strip.
-      const { data } = await api.delete<{ removed_users: number }>(
-        `/api/freeradius/groups/${encodeURIComponent(confirmDelete.groupname)}`,
-      );
+      const { data } = await api.delete<{
+        removed_users: number;
+        profile_deleted?: { type: string; id: number; name: string };
+      }>(`/api/freeradius/groups/${encodeURIComponent(confirmDelete.groupname)}`);
       setConfirmDelete(null);
       setToast(
-        data.removed_users > 0
-          ? `Grup dihapus. ${data.removed_users} user dilepas dari grup ini.`
-          : 'Grup dihapus.',
+        data.profile_deleted
+          ? `Grup "${confirmDelete.groupname}" dan profil layanannya ikut dihapus.`
+          : data.removed_users > 0
+            ? `Grup dihapus. ${data.removed_users} user dilepas dari grup ini.`
+            : 'Grup dihapus.',
       );
       await Promise.all([load(), loadParity(tab)]);
     } catch (err) {

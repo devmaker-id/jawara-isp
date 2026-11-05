@@ -178,11 +178,6 @@ const Bandwidth: React.FC = () => {
     setError(null);
     const payload: Record<string, unknown> = {
       name: form.name.trim(),
-      ...(form.owner_id === 'none'
-        ? { owner_id: null }
-        : form.owner_id !== ''
-          ? { owner_id: Number(form.owner_id) }
-          : {}),
       min_upload_kbps: toKbps(form.min_up, form.unit),
       min_download_kbps: toKbps(form.min_down, form.unit),
       max_upload_kbps: toKbps(form.max_up, form.unit),
@@ -190,6 +185,13 @@ const Bandwidth: React.FC = () => {
       burst_enabled: form.burst,
       priority: Number(form.priority),
     };
+    // owner_id hanya ada saat membuat: saat edit pemilik tidak bisa diubah
+    // (OwnerSelect disembunyikan), dan backend UpdateBandwidthDto menolak field
+    // ini lewat forbidNonWhitelisted.
+    if (!editId) {
+      if (form.owner_id === 'none') payload.owner_id = null;
+      else if (form.owner_id !== '') payload.owner_id = Number(form.owner_id);
+    }
     // Burst TIDAK dikirim: backend menghitungnya 2x max-limit. Mengirim angka
     // sendiri hanya akan diabaikan atau dijepit.
     if (form.burst) {

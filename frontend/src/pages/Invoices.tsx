@@ -656,6 +656,27 @@ const Invoices: React.FC = () => {
     }
   };
 
+  // Hapus permanen (admin): tagihan + seluruh pembayarannya lenyap dari ledger.
+  // Berbeda dari void yang hanya menandai; jejak pelaku tetap di audit log.
+  const removeInvoice = async (invoice: InvoiceItem) => {
+    if (
+      !window.confirm(
+        `Hapus permanen tagihan ${invoice.invoice_number} (${formatRupiah(invoice.amount)}) beserta seluruh pembayarannya?\n\n` +
+          'Ini BUKAN void — baris dan riwayat pembayarannya benar-benar hilang dari ledger. Jejak pelaku tetap tersimpan di audit log.',
+      )
+    ) {
+      return;
+    }
+    try {
+      await api.delete(`/api/invoices/${invoice.id}`);
+      setToast({ type: 'success', text: `Tagihan ${invoice.invoice_number} dihapus permanen.` });
+      setDetail((d) => (d && d.id === invoice.id ? null : d));
+      await load();
+    } catch (error) {
+      setToast({ type: 'error', text: readError(error, 'Gagal menghapus tagihan.') });
+    }
+  };
+
   const inputClass =
     'w-full px-4 py-3 rounded-lg bg-slate-700/50 border border-slate-600 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 outline-none transition text-slate-100';
 
@@ -833,6 +854,13 @@ const Invoices: React.FC = () => {
                             tone: 'danger',
                             hidden: !(canWrite && invoice.status !== 'void'),
                             onSelect: () => openInvoiceVoid(invoice),
+                          },
+                          {
+                            key: 'delete',
+                            label: 'Hapus permanen',
+                            tone: 'danger',
+                            hidden: !canDelete,
+                            onSelect: () => removeInvoice(invoice),
                           },
                         ]}
                       />

@@ -3,6 +3,7 @@ import { AuthModule } from '../auth/auth.module';
 import { MikrotikModule } from '../mikrotik/mikrotik.module';
 import { WhatsAppModule } from '../whatsapp/whatsapp.module';
 import { SettingsModule } from '../settings/settings.module';
+import { SessionsModule } from '../sessions/sessions.module';
 import { ConfigService } from '../../config/config.service';
 import { ProfilesController, VouchersController } from './profiles.controller';
 import {
@@ -14,7 +15,7 @@ import {
 import { ProfilesService } from './profiles.service';
 
 @Module({
-  imports: [AuthModule, MikrotikModule, WhatsAppModule, SettingsModule],
+  imports: [AuthModule, MikrotikModule, WhatsAppModule, SettingsModule, SessionsModule],
   controllers: [ProfilesController, VouchersController],
   providers: [
     ProfilesService,

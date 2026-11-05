@@ -330,7 +330,7 @@ export class RadiusRepository {
   async sessions(limit = 200) {
     return this.db.query<RadiusSessionRow>(
       `SELECT radacctid, username, nasipaddress, framedipaddress, acctstarttime,
-              acctsessiontime, acctinputoctets, acctoutputoctets, callingstationid
+              acctuniqueid, acctsessiontime, acctinputoctets, acctoutputoctets, callingstationid
          FROM radacct a WHERE a.acctstoptime IS NULL AND NOT ${STALE_SQL}
         ORDER BY acctstarttime DESC LIMIT ?`,
       [Math.min(Math.max(limit, 1), 500)],
@@ -510,6 +510,26 @@ export class RadiusRepository {
       [groupname],
     );
     return Number(rows[0]?.total ?? 0);
+  }
+
+  /**
+   * Mencari profil layanan yang "memiliki" sebuah nama grup RADIUS. Profil
+   * hotspot/PPP adalah sumber data grup: radgroupreply/radgroupcheck mereka
+   * ditulis dengan groupname = radius_group (atau name bila belum disinkron).
+   */
+  async findOwningProfile(
+    groupname: string,
+  ): Promise<{ type: 'hotspot' | 'ppp'; id: number; name: string } | null> {
+    for (const type of ['hotspot', 'ppp'] as const) {
+      const table = type === 'hotspot' ? 'hotspot_profiles' : 'ppp_profiles';
+      const rows = await this.db.query<{ id: number; name: string }>(
+        `SELECT id, name FROM ${table}
+          WHERE radius_group = ? OR (radius_group IS NULL AND name = ?) LIMIT 1`,
+        [groupname, groupname],
+      );
+      if (rows[0]) return { type, ...rows[0] };
+    }
+    return null;
   }
 
   async deleteGroup(groupname: string): Promise<number> {

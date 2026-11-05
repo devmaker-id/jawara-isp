@@ -206,13 +206,14 @@ const Hotspot: React.FC = () => {
           {users.error && <ErrorNote message={users.error} onRetry={users.reload} />}
           {!users.loading && !users.error && (
             <Table
-              columns={['Nama', 'Profil', 'Server', 'Batas uptime', 'Pemakaian', 'Status', 'Komentar', isAdmin ? 'Aksi' : '']}
+              columns={['Nama', 'Password', 'Profil', 'Server', 'Batas uptime', 'Pemakaian', 'Status', 'Komentar', isAdmin ? 'Aksi' : '']}
               isEmpty={filteredUsers.length === 0}
               empty={search ? 'Tidak ada user yang cocok.' : 'Belum ada user hotspot di perangkat.'}
             >
               {userPager.pageRows.map((row) => (
                 <tr key={row.id} className="hover:bg-slate-700/30">
                   <td className="px-3 py-2 font-medium text-slate-100">{row.name}</td>
+                  <td className="px-3 py-2 font-mono text-xs text-slate-200">{row.password}</td>
                   <td className="px-3 py-2 text-slate-400">{row.profile}</td>
                   <td className="px-3 py-2 text-slate-400">{row.server}</td>
                   <td className="px-3 py-2 text-slate-400">{row.limit_uptime || '-'}</td>

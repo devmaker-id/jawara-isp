@@ -193,11 +193,14 @@ export class SessionsService {
       return { ...base, ok: true, outcome: 'ack', message: 'NAS menerima permintaan putus sesi' };
     }
     if (outcome === 'nak') {
+      // Sesi hantu: NAS sudah tidak punya sesi ini, tetapi radacct masih terbuka.
+      // Tutup barisnya supaya tidak tampil "berjalan" selamanya.
+      await this.repository.closeGhost(acctuniqueid);
       return {
         ...base,
         ok: false,
         outcome: 'nak',
-        message: 'NAS menolak permintaan (sesi mungkin sudah tidak aktif di perangkat)',
+        message: 'Sesi sudah tidak aktif di perangkat; catatan radacct ditutup.',
       };
     }
     return {
@@ -208,5 +211,56 @@ export class SessionsService {
         ? `NAS tidak menjawab pada port ${port} dari sumber ${source} (CoA belum aktif atau sumber tidak diizinkan NAS)`
         : `NAS tidak menjawab pada port ${port} (CoA belum aktif atau port tertutup)`,
     };
+  }
+
+  /**
+   * Putus semua sesi aktif milik satu username (dipakai saat menghapus akun dan
+   * tombol tendang di halaman Sesi & Akuntansi). Sesi hantu (NAK = NAS tidak
+   * punya sesi itu) ditutup di radacct sehingga tidak tampil "berjalan" selamanya.
+   */
+  async disconnectByUsername(username: string): Promise<{
+    username: string;
+    target: number;
+    ack: number;
+    nak: number;
+    noReply: number;
+  }> {
+    const sessions = await this.repository.activeByUsername(username);
+    if (sessions.length === 0) {
+      return { username, target: 0, ack: 0, nak: 0, noReply: 0 };
+    }
+
+    const port = await this.repository.coaPort();
+    const source = await this.repository.coaSource();
+    let ack = 0;
+    let nak = 0;
+    let noReply = 0;
+
+    for (const session of sessions) {
+      const secret = await this.repository.nasSecret(session.nasipaddress);
+      if (!secret) {
+        noReply += 1;
+        continue;
+      }
+      const outcome = await sendDisconnectRequest({
+        nasIp: session.nasipaddress,
+        port,
+        secret,
+        username,
+        sessionId: session.acctsessionid,
+        framedIp: session.framedipaddress,
+        source,
+      });
+      if (outcome === 'ack') {
+        ack += 1;
+      } else if (outcome === 'nak') {
+        nak += 1;
+        await this.repository.closeGhost(session.acctuniqueid);
+      } else {
+        noReply += 1;
+      }
+    }
+
+    return { username, target: sessions.length, ack, nak, noReply };
   }
 }
