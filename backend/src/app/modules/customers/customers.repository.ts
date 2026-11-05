@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { randomBytes } from 'node:crypto';
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { DatabaseService } from '../../database/database.service';
 import { ownerFilter, RequestScope, SYSTEM_SCOPE } from '../auth/request-scope';
@@ -728,6 +729,34 @@ export class CustomersRepository {
           groupname,
           status: options.status,
         });
+
+        // Prepaid: sistem menganggap lunas saat pendaftaran → tagihan 'paid' +
+        // pendapatan diakui hari ini (cash basis). Postpaid tidak lewat sini —
+        // tagihannya dibuat scheduler, pendapatan diakui saat masa pakai habis.
+        if ((dto.billing_type ?? 'prepaid') === 'prepaid') {
+          const amount = Number(account.price) + Number(account.taxAmount);
+          const fmt = (d: Date) =>
+            `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          const start = new Date();
+          const end = new Date(start.getFullYear(), start.getMonth() + 1, start.getDate());
+          const number = `INV-${fmt(start).replace(/-/g, '')}-${randomBytes(2).toString('hex').toUpperCase()}`;
+          await conn.query(
+            `INSERT INTO invoices
+               (invoice_number, customer_id, username, customer_name, amount, status, due_date, period_start, period_end, paid_date, revenue_recognized_at, description)
+             VALUES (?, ?, ?, ?, ?, 'paid', ?, ?, ?, NOW(), NOW(), ?)`,
+            [
+              number,
+              customerId,
+              account.username,
+              dto.name,
+              amount,
+              fmt(start),
+              fmt(start),
+              fmt(end),
+              'Pendaftaran prepaid',
+            ],
+          );
+        }
       }
 
       return customerId;
