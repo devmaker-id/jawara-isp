@@ -135,13 +135,18 @@ export class RenewalService {
 
   async preview(customerId: number, query: RenewalPreviewQueryDto, scope: RequestScope) {
     const ctx = await this.context(customerId, query, scope);
+    const lockedProfile =
+      ctx.customer.billing_type === 'postpaid' &&
+      (await this.repository.hasUnpaidInvoices(customerId));
     return {
       customer: {
         id: ctx.customer.id,
         name: ctx.customer.name,
         internet_no: ctx.customer.internet_no,
         status: ctx.customer.status,
+        billing_type: ctx.customer.billing_type,
       },
+      locked_profile: lockedProfile,
       account: {
         username: ctx.account.username,
         profile_type: ctx.account.profile_type,
@@ -191,6 +196,18 @@ export class RenewalService {
     }
 
     const ctx = await this.context(customerId, dto, scope);
+
+    // Postpaid: pindah paket terkunci sampai tagihan sebelumnya lunas.
+    if (
+      ctx.customer.billing_type === 'postpaid' &&
+      dto.profile_id !== undefined &&
+      dto.profile_id !== ctx.account.profile_id &&
+      (await this.repository.hasUnpaidInvoices(customerId))
+    ) {
+      throw new BadRequestException(
+        'Pindah paket terkunci untuk pelanggan postpaid sampai tagihan sebelumnya lunas.',
+      );
+    }
 
     if (dto.payment_mode === 'credit') {
       return this.renewOnCredit(ctx, dto, scope, actor);

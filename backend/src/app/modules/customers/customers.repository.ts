@@ -807,11 +807,11 @@ export class CustomersRepository {
       fields.push('billing_type = ?');
       params.push(dto.billing_type);
     }
-    // Perubahan tanggal tagihan: untuk saat ini langsung tulis billing_day.
-    // Mekanisme "berlaku siklus berikutnya" lewat next_billing_day menyusul
-    // bersama scheduler tagihan.
+    // Perubahan tanggal tagihan berlaku MULAI SIKLUS BERIKUTNYA: disimpan ke
+    // next_billing_day, lalu dipromosikan scheduler saat siklus baru dimulai.
+    // Periode yang sudah berjalan tidak dihitung ulang.
     if (dto.billing_day !== undefined) {
-      fields.push('billing_day = ?');
+      fields.push('next_billing_day = ?');
       params.push(dto.billing_day);
     }
 

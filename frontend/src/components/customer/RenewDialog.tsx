@@ -13,7 +13,14 @@ import api from '../../services/api';
 type Method = 'cash' | 'transfer' | 'qris' | 'other';
 
 interface Preview {
-  customer: { id: number; name: string; internet_no: string | null; status: string };
+  customer: {
+    id: number;
+    name: string;
+    internet_no: string | null;
+    status: string;
+    billing_type?: 'prepaid' | 'postpaid';
+  };
+  locked_profile?: boolean;
   account: {
     username: string;
     profile_type: 'hotspot' | 'ppp';
@@ -215,7 +222,12 @@ export const RenewDialog: React.FC<{
             <div className="mt-4 space-y-3">
               <label className="block text-sm">
                 <span className="mb-1 block text-slate-400">Paket perpanjangan</span>
-                <select value={profileId} onChange={(e) => void ubahPaket(e.target.value)} className={inputClass}>
+                <select
+                  value={profileId}
+                  onChange={(e) => void ubahPaket(e.target.value)}
+                  className={inputClass}
+                  disabled={preview.locked_profile}
+                >
                   {profiles.length === 0 && <option value={String(preview.profile.id)}>{preview.profile.name}</option>}
                   {profiles.map((p) => (
                     <option key={p.id} value={p.id}>
@@ -223,6 +235,11 @@ export const RenewDialog: React.FC<{
                     </option>
                   ))}
                 </select>
+                {preview.locked_profile && (
+                  <p className="mt-1 text-[11px] text-amber-400">
+                    Pindah paket terkunci untuk postpaid sampai tagihan sebelumnya lunas.
+                  </p>
+                )}
               </label>
 
               <div className="grid grid-cols-2 gap-3 text-sm">

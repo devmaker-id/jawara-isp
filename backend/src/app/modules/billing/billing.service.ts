@@ -43,6 +43,7 @@ interface DueCustomer extends RowDataPacket {
   name: string;
   billing_type: 'prepaid' | 'postpaid';
   billing_day: number | null;
+  next_billing_day: number | null;
   reg_day: number;
   username: string;
   price: number | string;
@@ -95,7 +96,7 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
   private async generateDueInvoices(now: Date): Promise<number> {
     const leadDays = await this.leadDays();
     const rows = await this.db.query<DueCustomer>(`
-      SELECT c.id, c.name, c.billing_type, c.billing_day, DAY(c.created_at) AS reg_day,
+      SELECT c.id, c.name, c.billing_type, c.billing_day, c.next_billing_day, DAY(c.created_at) AS reg_day,
              v.username, v.price, v.tax_amount
         FROM customers c
         JOIN radius_vouchers v ON v.customer_id = c.id
@@ -104,11 +105,24 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
 
     let created = 0;
     for (const row of rows) {
-      const day = Number(row.billing_day) || Number(row.reg_day) || 1;
+      // Perubahan tanggal tagihan yang menunggu (berlaku siklus berikutnya):
+      // pakai tanggal baru untuk siklus yang mulai sekarang.
+      const hasPending = row.next_billing_day !== null && row.next_billing_day !== undefined;
+      const day = hasPending
+        ? Number(row.next_billing_day)
+        : Number(row.billing_day) || Number(row.reg_day) || 1;
       const due = nextDueDate(day, now);
       const diffDays = (startOfDay(due).getTime() - startOfDay(now).getTime()) / DAY_MS;
       // Hanya terbit dalam jendela "N hari sebelum jatuh tempo".
       if (diffDays < 0 || diffDays > leadDays) continue;
+
+      // Siklus baru dimulai → promosikan perubahan tanggal & bersihkan penanda.
+      if (hasPending) {
+        await this.db.execute(
+          'UPDATE customers SET billing_day = next_billing_day, next_billing_day = NULL WHERE id = ?',
+          [row.id],
+        );
+      }
 
       const amount = Number(row.price ?? 0) + Number(row.tax_amount ?? 0);
       if (amount <= 0) continue;

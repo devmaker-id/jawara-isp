@@ -36,6 +36,7 @@ export interface RenewalCustomer {
   status: string;
   internet_no: string | null;
   owner_id: number | null;
+  billing_type: 'prepaid' | 'postpaid';
 }
 
 export interface RenewalAccount {
@@ -128,7 +129,7 @@ export class RenewalRepository {
       params.push(scope.ownerId);
     }
     const rows = await this.db.query<RowDataPacket>(
-      `SELECT c.id, c.name, c.status, c.internet_no, c.owner_id
+      `SELECT c.id, c.name, c.status, c.internet_no, c.owner_id, c.billing_type
          FROM customers c
         WHERE c.id = ?${ownerSql}`,
       params,
@@ -141,7 +142,18 @@ export class RenewalRepository {
       status: String(row.status ?? 'active'),
       internet_no: row.internet_no === null ? null : String(row.internet_no),
       owner_id: row.owner_id === null ? null : Number(row.owner_id),
+      billing_type: row.billing_type === 'postpaid' ? 'postpaid' : 'prepaid',
     };
+  }
+
+  /** Apakah pelanggan masih punya tagihan belum lunas (untuk kunci pindah paket postpaid). */
+  async hasUnpaidInvoices(customerId: number): Promise<boolean> {
+    const row = await this.db.queryOne<RowDataPacket & { n: number | string }>(
+      `SELECT COUNT(*) AS n FROM invoices
+        WHERE customer_id = ? AND status IN ('unpaid', 'overdue', 'partial')`,
+      [customerId],
+    );
+    return Number(row?.n ?? 0) > 0;
   }
 
   /** Akun layanan milik pelanggan; `username` opsional untuk memilih satu. */
