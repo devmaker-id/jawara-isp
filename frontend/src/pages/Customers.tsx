@@ -922,10 +922,14 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
                       {account ? (
                         <>
                           <span className="font-mono text-slate-200">{account.username}</span>
+                          {account.online && (
+                            <span className="ml-1 rounded bg-emerald-500/15 px-1 text-[10px] text-emerald-400">online</span>
+                          )}
                           {account.password && (
                             <span className="font-mono text-slate-400"> / pass: {account.password}</span>
                           )}
                           <span className="text-slate-500"> · {account.profile_type}/{account.profile_name}</span>
+                          <div className="mt-0.5 text-[11px] text-cyan-300">{accountLimitLabel(account)}</div>
                         </>
                       ) : (
                         <span className="text-amber-400">belum punya akun</span>

@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import type { RowDataPacket } from 'mysql2/promise';
 import { DatabaseService } from '../../database/database.service';
-import { probeCoa } from './coa-probe';
+import { SessionsService } from '../sessions/sessions.service';
 import { IsolirService } from './isolir.service';
 
 /**
@@ -122,6 +122,7 @@ export class RadiusEnforcementService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly db: DatabaseService,
     private readonly isolir: IsolirService,
+    private readonly sessions: SessionsService,
   ) {}
 
   onModuleInit() {
@@ -269,8 +270,13 @@ export class RadiusEnforcementService implements OnModuleInit, OnModuleDestroy {
           report.blocked_hotspot += 1;
         }
         if (openSessions > 0 && used?.nas) {
-          const sent = await this.disconnect(String(used.nas), account.username);
-          if (sent) report.disconnected += 1;
+          // CoA lengkap (User-Name + Session-Id + Framed-IP + source). probeCoa
+          // lama hanya mengirim User-Name, sehingga RouterOS PPPoE menjawab NAK
+          // ("no ip provided") dan sesi tidak pernah benar-benar putus.
+          const result = await this.sessions
+            .disconnectByUsername(account.username)
+            .catch(() => ({ ack: 0, nak: 0, noReply: 0 } as const));
+          report.disconnected += result.ack;
         }
       } catch (error) {
         report.errors.push(
@@ -353,22 +359,5 @@ export class RadiusEnforcementService implements OnModuleInit, OnModuleDestroy {
       );
     });
     this.logger.log(`Blokir hotspot ${account.username}: ${message}`);
-  }
-
-  /** CoA Disconnect ke NAS pemilik sesi, memakai secret dari tabel `nas`. */
-  private async disconnect(nasAddress: string, username: string): Promise<boolean> {
-    const rows = await this.db.query<{ secret: string }>(
-      'SELECT secret FROM nas WHERE nasname = ? LIMIT 1',
-      [nasAddress],
-    );
-    if (!rows[0]?.secret) return false;
-    const result = await probeCoa({
-      host: nasAddress,
-      port: 3799,
-      secret: rows[0].secret,
-      username,
-      timeoutMs: 3000,
-    });
-    return result.reachable;
   }
 }
