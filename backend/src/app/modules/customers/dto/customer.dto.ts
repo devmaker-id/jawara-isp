@@ -125,6 +125,19 @@ export class CreateCustomerDto {
   })
   status?: CustomerStatus;
 
+  // Tipe pembayaran: prepaid (bayar dulu) / postpaid (pakai dulu).
+  @IsOptional()
+  @IsIn(['prepaid', 'postpaid'], { message: 'Tipe pembayaran harus prepaid atau postpaid.' })
+  billing_type?: 'prepaid' | 'postpaid';
+
+  // Hari jatuh tempo bulanan (1-31). Kosong = ikut tanggal registrasi.
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'Tanggal tagihan harus angka 1-31.' })
+  @Min(1, { message: 'Tanggal tagihan minimal 1.' })
+  @Max(31, { message: 'Tanggal tagihan maksimal 31.' })
+  billing_day?: number;
+
   // Akun RADIUS. Opsional agar pelanggan lama/tanpa layanan tetap bisa dibuat.
   @IsOptional()
   @ValidateNested()
@@ -171,6 +184,19 @@ export class UpdateCustomerDto {
     message: 'Status harus active, expired, suspend, atau disable.',
   })
   status?: CustomerStatus;
+
+  // Tipe pembayaran: prepaid (bayar dulu) / postpaid (pakai dulu).
+  @IsOptional()
+  @IsIn(['prepaid', 'postpaid'], { message: 'Tipe pembayaran harus prepaid atau postpaid.' })
+  billing_type?: 'prepaid' | 'postpaid';
+
+  // Hari jatuh tempo bulanan (1-31). Kosong = ikut tanggal registrasi.
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'Tanggal tagihan harus angka 1-31.' })
+  @Min(1, { message: 'Tanggal tagihan minimal 1.' })
+  @Max(31, { message: 'Tanggal tagihan maksimal 31.' })
+  billing_day?: number;
 
   // Perubahan akun: hanya field yang dikirim yang diubah.
   @IsOptional()

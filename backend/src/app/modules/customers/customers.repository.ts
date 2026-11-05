@@ -28,6 +28,12 @@ export interface Customer {
   is_active: boolean;
   /** Status sebenarnya: active/expired/suspend/disable. */
   status: CustomerStatus;
+  /** Tipe pembayaran: prepaid (bayar dulu) / postpaid (pakai dulu). */
+  billing_type: 'prepaid' | 'postpaid';
+  /** Hari jatuh tempo bulanan (1-31); null = ikut tanggal registrasi. */
+  billing_day: number | null;
+  /** Perubahan tanggal tagihan yang tertunda (berlaku siklus berikutnya). */
+  next_billing_day: number | null;
   /** Akun pemilik data (admin/operator/reseller). null = data internal. */
   owner_id: number | null;
   /** Nama pemilik, diambil dari tabel users. */
@@ -94,6 +100,9 @@ interface CustomerRow extends RowDataPacket {
   address: string;
   is_active: number | boolean;
   status: string | null;
+  billing_type: string;
+  billing_day: number | null;
+  next_billing_day: number | null;
   created_at: Date;
 }
 
@@ -109,6 +118,10 @@ function toCustomer(row: CustomerRow): Customer {
     // MySQL BOOLEAN = TINYINT(1) → 1/0
     is_active: row.is_active === 1 || row.is_active === true,
     status: normaliseStatus(row.status),
+    billing_type: row.billing_type === 'postpaid' ? 'postpaid' : 'prepaid',
+    billing_day: row.billing_day === null || row.billing_day === undefined ? null : Number(row.billing_day),
+    next_billing_day:
+      row.next_billing_day === null || row.next_billing_day === undefined ? null : Number(row.next_billing_day),
     owner_id: row.owner_id === null || row.owner_id === undefined ? null : Number(row.owner_id),
     owner_name: (row.owner_name as string | null) ?? null,
     created_by: row.created_by === null || row.created_by === undefined ? null : Number(row.created_by),
@@ -120,7 +133,7 @@ function toCustomer(row: CustomerRow): Customer {
 // Nama pemilik & pembuat lewat subquery, bukan JOIN: klausa WHERE/COUNT yang
 // sudah ada tidak perlu diubah dan tidak ada risiko baris berlipat.
 const COLUMNS =
-  'id, name, internet_no, email, phone, address, is_active, status, created_at, owner_id, created_by, ' +
+  'id, name, internet_no, email, phone, address, is_active, status, billing_type, billing_day, next_billing_day, created_at, owner_id, created_by, ' +
   '(SELECT u.name FROM users u WHERE u.id = customers.owner_id) AS owner_name, ' +
   '(SELECT u.name FROM users u WHERE u.id = customers.created_by) AS created_by_name, ' +
   `(SELECT JSON_OBJECT('id', o.id, 'olt', d.name, 'port', o.port_id, 'onu_id', o.onu_id,
@@ -653,7 +666,7 @@ export class CustomersRepository {
       // belum diisi operator, nomornya tetap NULL (sama seperti data lama).
       const internetNo = dto.internet_no?.trim() || (await this.nextInternetNo(conn));
 
-      const columns = ['name', 'internet_no', 'email', 'phone', 'address', 'is_active', 'status'];
+      const columns = ['name', 'internet_no', 'email', 'phone', 'address', 'is_active', 'status', 'billing_type', 'billing_day'];
       const params: unknown[] = [
         dto.name,
         internetNo,
@@ -662,6 +675,9 @@ export class CustomersRepository {
         dto.address ?? '',
         options.status === 'active' ? 1 : 0,
         options.status,
+        dto.billing_type ?? 'prepaid',
+        // Default hari tagihan = tanggal registrasi (bisa diubah operator).
+        dto.billing_day ?? new Date().getDate(),
       ];
       // Pemilik: null berarti data internal (tanpa pemilik). Ditulis eksplisit
       // supaya pewarisan dari profil tidak hilang saat nilainya null.
@@ -757,6 +773,17 @@ export class CustomersRepository {
       // Jaga is_active tetap sinkron agar filter lama tidak menyesatkan.
       fields.push('is_active = ?');
       params.push(dto.status === 'active' ? 1 : 0);
+    }
+    if (dto.billing_type !== undefined) {
+      fields.push('billing_type = ?');
+      params.push(dto.billing_type);
+    }
+    // Perubahan tanggal tagihan: untuk saat ini langsung tulis billing_day.
+    // Mekanisme "berlaku siklus berikutnya" lewat next_billing_day menyusul
+    // bersama scheduler tagihan.
+    if (dto.billing_day !== undefined) {
+      fields.push('billing_day = ?');
+      params.push(dto.billing_day);
     }
 
     if (fields.length > 0) {
