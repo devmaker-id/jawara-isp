@@ -887,6 +887,21 @@ export class CustomersRepository {
     });
   }
 
+  /**
+   * Kosongkan jejak masa aktif (login pertama, kedaluwarsa, alasan blokir,
+   * isolir) lalu sinkronkan ulang akun ke RADIUS. Masa aktif akan dihitung
+   * ulang dari login berikutnya memakai validity profil saat ini.
+   */
+  async resetMasaAktif(customerId: number): Promise<void> {
+    await this.db.execute(
+      `UPDATE radius_vouchers
+          SET first_login_at = NULL, expires_at = NULL, block_reason = NULL, isolir_at = NULL
+        WHERE customer_id = ?`,
+      [customerId],
+    );
+    await this.syncAccounts(customerId);
+  }
+
   async remove(id: number, actor?: { userId: number; ip: string }): Promise<boolean> {
     return this.db.withTransaction(async (conn) => {
       // Jejak permanen sebelum baris dihapus (opsi B "hapus penuh"). Ringkas:

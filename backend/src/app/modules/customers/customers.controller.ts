@@ -156,6 +156,15 @@ export class CustomersController {
     return this.customersService.update(id, updateDto);
   }
 
+  // Reset masa aktif: admin saja. Hapus jejak login pertama & kedaluwarsa agar
+  // masa aktif dihitung ulang dari login berikutnya memakai validity profil
+  // saat ini (dipakai saat profil diubah setelah pelanggan sudah aktif).
+  @Post(':id/reset-masa-aktif')
+  @Roles('admin')
+  resetMasaAktif(@Param('id', ParseIntPipe) id: number, @Scope() scope: RequestScope) {
+    return this.customersService.resetMasaAktif(id, scope);
+  }
+
   // Penghapusan pelanggan ikut menghapus tagihan & sesi layanan (FK cascade)
   // → admin saja.
   // Satu jalur untuk dua kemungkinan: pemanggil yang punya `customer.delete`

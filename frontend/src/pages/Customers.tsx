@@ -232,6 +232,7 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
   const { user } = useAuth();
   const canDelete = user?.role === 'admin';
   const canAssignOwner = user?.role === 'admin';
+  const canResetMasaAktif = user?.role === 'admin';
   // Pemasangan/pelepasan ONU mengikuti izin backend (`olt.update`): admin & operator.
   const canManageOnu = user?.role === 'admin' || user?.role === 'operator';
 
@@ -282,6 +283,27 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
 
   const [confirmTarget, setConfirmTarget] = useState<Customer | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [resetTarget, setResetTarget] = useState<Customer | null>(null);
+  const [resetting, setResetting] = useState(false);
+
+  const handleResetMasaAktif = async () => {
+    if (!resetTarget) return;
+    setResetting(true);
+    try {
+      await api.post(`/api/customers/${resetTarget.id}/reset-masa-aktif`);
+      setToast({
+        type: 'success',
+        text: `Masa aktif "${resetTarget.name}" direset. Dihitung ulang dari login berikutnya.`,
+      });
+      setResetTarget(null);
+      await load();
+    } catch (error) {
+      setToast({ type: 'error', text: readError(error, 'Gagal mereset masa aktif.') });
+      setResetTarget(null);
+    } finally {
+      setResetting(false);
+    }
+  };
 
   const load = useCallback(async () => {
     if (!loadedOnce.current) setLoading(true);
@@ -838,6 +860,12 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
                               },
                               { key: 'edit', label: 'Ubah pelanggan', onSelect: () => openEdit(customer) },
                               {
+                                key: 'reset-aktif',
+                                label: 'Reset masa aktif',
+                                hidden: !(canResetMasaAktif && account),
+                                onSelect: () => setResetTarget(customer),
+                              },
+                              {
                                 key: 'owner',
                                 label: 'Ubah pemilik',
                                 hidden: !(canAssignOwner && ownerAvailable),
@@ -916,6 +944,12 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
                             onSelect: () => setRenewTarget(customer),
                           },
                           { key: 'edit', label: 'Ubah pelanggan', onSelect: () => openEdit(customer) },
+                              {
+                                key: 'reset-aktif',
+                                label: 'Reset masa aktif',
+                                hidden: !(canResetMasaAktif && account),
+                                onSelect: () => setResetTarget(customer),
+                              },
                           {
                             key: 'owner',
                             label: 'Ubah pemilik',
@@ -1465,6 +1499,45 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
                 className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-500 hover:bg-red-400 disabled:opacity-50 transition"
               >
                 {deleting ? 'Menghapus...' : 'Hapus'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    {resetTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reset-title"
+            className="w-full max-w-sm bg-slate-800 rounded-2xl border border-slate-700 shadow-2xl p-5 space-y-4"
+          >
+            <h2 id="reset-title" className="text-lg font-semibold text-white">
+              Reset masa aktif?
+            </h2>
+            <p className="text-sm text-slate-400">
+              Masa aktif <span className="text-slate-200 font-medium">{resetTarget.name}</span> akan dihitung ulang
+              dari login berikutnya, mengikuti masa aktif profil saat ini.
+            </p>
+            <p className="text-xs text-slate-500">
+              Sesi yang sedang berjalan diputus, dan jejak login-pertama serta tanggal kedaluwarsa dihapus.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => setResetTarget(null)}
+                disabled={resetting}
+                className="px-4 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-slate-700/50 disabled:opacity-50 transition"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleResetMasaAktif()}
+                disabled={resetting}
+                className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-amber-500 hover:bg-amber-400 disabled:opacity-50 transition"
+              >
+                {resetting ? 'Meriset...' : 'Reset'}
               </button>
             </div>
           </div>

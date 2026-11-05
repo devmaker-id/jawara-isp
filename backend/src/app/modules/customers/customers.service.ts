@@ -346,6 +346,19 @@ export class CustomersService {
     return this.findOne(id, scope);
   }
 
+  /**
+   * Reset masa aktif semua akun pelanggan: hapus jejak login pertama dan
+   * kedaluwarsa agar masa aktif dihitung ulang dari login berikutnya memakai
+   * validity profil saat ini. Admin saja. Sesi aktif ditendang supaya pelanggan
+   * re-login dan masa aktifnya langsung terhitung ulang.
+   */
+  async resetMasaAktif(id: number, scope: RequestScope = SYSTEM_SCOPE): Promise<Customer> {
+    await this.requireCustomer(id, scope);
+    await this.repository.resetMasaAktif(id).catch((error) => this.rethrow(error));
+    await this.disconnectCustomerSessions(id);
+    return this.findOne(id, scope);
+  }
+
   async update(id: number, dto: UpdateCustomerDto): Promise<Customer> {
     const current = await this.requireCustomer(id);
     if (dto.email && dto.email !== current.email) {
