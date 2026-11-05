@@ -264,6 +264,7 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
     return fromUrl && STATUS_VALUES.includes(fromUrl) ? fromUrl : '';
   });
   const [ownerAvailable, setOwnerAvailable] = useState(false);
+  const [ownerChecked, setOwnerChecked] = useState(false);
   const [ownerTarget, setOwnerTarget] = useState<Customer | null>(null);
   const [ownerValue, setOwnerValue] = useState('');
   const [ownerSaving, setOwnerSaving] = useState(false);
@@ -360,7 +361,8 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
     api
       .get('/api/customers/meta')
       .then((res) => setOwnerAvailable(Boolean(res.data?.owner_assignment)))
-      .catch(() => setOwnerAvailable(false));
+      .catch(() => setOwnerAvailable(false))
+      .finally(() => setOwnerChecked(true));
   }, []);
 
   useEffect(() => {
@@ -675,7 +677,7 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
         </div>
       )}
 
-      {!ownerAvailable && (
+      {ownerChecked && !ownerAvailable && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
           Penetapan pemilik belum aktif: kolom <code>customers.owner_id</code> belum ada.
           Menunggu migrasi <code>003_customer_reseller_ownership.sql</code> atau{' '}
