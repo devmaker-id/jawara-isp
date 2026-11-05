@@ -338,6 +338,11 @@ export class CustomersService {
   ): Promise<Customer> {
     await this.requireCustomer(id, scope);
     await this.repository.update(id, { status }).catch((error) => this.rethrow(error));
+    // Status non-active = blokir: tendang sesi aktif (CoA/PoD) supaya langsung
+    // putus, bukan tetap online sampai reconnect berikutnya.
+    if (status !== 'active') {
+      await this.disconnectCustomerSessions(id);
+    }
     return this.findOne(id, scope);
   }
 
@@ -413,6 +418,11 @@ export class CustomersService {
     if (!updated) {
       throw new NotFoundException(`Pelanggan dengan ID ${id} tidak ditemukan`);
     }
+    // Perubahan status/akun (profil, limit, password) butuh sesi ditendang agar
+    // atribut RADIUS baru langsung berlaku (CoA/PoD), bukan setelah reconnect.
+    if (dto.status !== undefined || dto.is_active !== undefined || dto.account !== undefined) {
+      await this.disconnectCustomerSessions(id);
+    }
     return this.findOne(id);
   }
 
@@ -461,5 +471,18 @@ export class CustomersService {
       usernames.map((username) => this.sessions.disconnectByUsername(username)),
     );
     return { ok: true };
+  }
+
+  /**
+   * Tendang semua sesi aktif milik akun pelanggan (CoA/PoD — RFC 5176).
+   * Dipanggil setelah status/akun diubah agar perubahan langsung berlaku;
+   * kegagalan tendang diabaikan (sesi akan berhenti sendiri saat reconnect).
+   */
+  private async disconnectCustomerSessions(id: number): Promise<void> {
+    const accounts = await this.repository.findAccounts(id, false).catch(() => []);
+    const usernames = accounts.map((account) => account.username).filter(Boolean);
+    await Promise.allSettled(
+      usernames.map((username) => this.sessions.disconnectByUsername(username)),
+    );
   }
 }

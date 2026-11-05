@@ -68,6 +68,16 @@ export interface CustomerAccount {
   /** Sesi yang masih terbuka menurut radacct, bukan menurut perangkat. */
   online: boolean;
   last_seen: Date | null;
+  /** Limitasi profil layanan (dibaca dari grup/profil) untuk ditampilkan di daftar. */
+  validity_value: number | null;
+  validity_unit: string | null;
+  quota_type: 'unlimited' | 'limited' | null;
+  time_limit_seconds: number | null;
+  quota_limit_bytes: number | null;
+  timebase_value: number | null;
+  timebase_unit: string | null;
+  quotabase_value: number | null;
+  quotabase_unit: string | null;
 }
 
 interface CustomerRow extends RowDataPacket {
@@ -156,7 +166,21 @@ export function normaliseStatus(value: string | null | undefined): CustomerStatu
 const ACCOUNT_COLUMNS = `v.id, v.username, v.profile_type, v.profile_id, v.profile_name,
   v.user_type, v.status, v.expires_at,
   EXISTS(SELECT 1 FROM radacct a WHERE a.username = v.username AND a.acctstoptime IS NULL AND NOT ${STALE_SQL}) AS online,
-  (SELECT MAX(a.acctstarttime) FROM radacct a WHERE a.username = v.username) AS last_seen`;
+  (SELECT MAX(a.acctstarttime) FROM radacct a WHERE a.username = v.username) AS last_seen,
+  COALESCE(h.validity_value, p.validity_value) AS validity_value,
+  COALESCE(h.validity_unit,  p.validity_unit)  AS validity_unit,
+  p.time_limit_seconds AS time_limit_seconds,
+  p.quota_limit_bytes  AS quota_limit_bytes,
+  h.quota_type AS quota_type,
+  h.timebase_value AS timebase_value,
+  h.timebase_unit AS timebase_unit,
+  h.quotabase_value AS quotabase_value,
+  h.quotabase_unit AS quotabase_unit`;
+
+// Profil layanan ikut diambil (bukan lewat subquery) supaya limitasi grup
+// (waktu/kuota) dan masa aktif tersedia di daftar tanpa N+1 query.
+const ACCOUNT_JOINS = `LEFT JOIN hotspot_profiles h ON v.profile_type = 'hotspot' AND h.id = v.profile_id
+  LEFT JOIN ppp_profiles p     ON v.profile_type = 'ppp'     AND p.id = v.profile_id`;
 
 /** Satu baris akun RADIUS → objek API. */
 function toAccount(row: RowDataPacket, withPassword = false): CustomerAccount {
@@ -172,6 +196,20 @@ function toAccount(row: RowDataPacket, withPassword = false): CustomerAccount {
     expires_at: (row.expires_at as Date | null) ?? null,
     online: Number(row.online) === 1,
     last_seen: (row.last_seen as Date | null) ?? null,
+    validity_value: row.validity_value === null || row.validity_value === undefined ? null : Number(row.validity_value),
+    validity_unit: (row.validity_unit as string | null) ?? null,
+    quota_type: (row.quota_type as 'unlimited' | 'limited' | null) ?? null,
+    time_limit_seconds:
+      row.time_limit_seconds === null || row.time_limit_seconds === undefined
+        ? null
+        : Number(row.time_limit_seconds),
+    quota_limit_bytes:
+      row.quota_limit_bytes === null || row.quota_limit_bytes === undefined ? null : Number(row.quota_limit_bytes),
+    timebase_value: row.timebase_value === null || row.timebase_value === undefined ? null : Number(row.timebase_value),
+    timebase_unit: (row.timebase_unit as string | null) ?? null,
+    quotabase_value:
+      row.quotabase_value === null || row.quotabase_value === undefined ? null : Number(row.quotabase_value),
+    quotabase_unit: (row.quotabase_unit as string | null) ?? null,
   };
 }
 
@@ -293,6 +331,7 @@ export class CustomersRepository {
       const accounts = await this.db.query<RowDataPacket>(
         `SELECT v.customer_id, ${ACCOUNT_COLUMNS}, v.password
            FROM radius_vouchers v
+           ${ACCOUNT_JOINS}
           WHERE v.customer_id IN (${ids.map(() => '?').join(',')})
           ORDER BY v.username`,
         ids,
@@ -315,6 +354,7 @@ export class CustomersRepository {
   async findAccounts(customerId: number, withPassword = true): Promise<CustomerAccount[]> {
     const rows = await this.db.query<RowDataPacket>(
       `SELECT ${ACCOUNT_COLUMNS}, v.password FROM radius_vouchers v
+        ${ACCOUNT_JOINS}
         WHERE v.customer_id = ? ORDER BY v.username`,
       [customerId],
     );

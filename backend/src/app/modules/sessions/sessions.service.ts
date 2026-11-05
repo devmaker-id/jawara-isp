@@ -55,11 +55,15 @@ const ipv4 = (address: string): Buffer =>
 export function buildDisconnectPacket(target: CoaTarget, identifier?: number): Buffer {
   const secret = Buffer.from(target.secret, 'utf8');
   const id = identifier ?? randomBytes(1)[0];
+  // Framed-IP disertakan untuk semua sesi yang punya IP valid. RouterOS PPPoE
+  // juga mencarinya: tanpa Framed-IP ia menjawab "Radius disconnect with no ip
+  // provided". Saat sesi berpindah cepat (flap) nilai ini bisa sesaat basi dan
+  // RouterOS mencatat "unknown ip" — itu transient, sesi tetap diputuskan lewat
+  // User-Name.
   const attributes = Buffer.concat([
     attribute(1, Buffer.from(target.username, 'utf8')),
     attribute(44, Buffer.from(target.sessionId, 'utf8')),
     attribute(4, ipv4(target.nasIp)),
-    // Framed-IP wajib untuk sesi hotspot: tanpanya RouterOS menjawab NAK.
     ...(target.framedIp && isIPv4(target.framedIp)
       ? [attribute(8, ipv4(target.framedIp))]
       : []),

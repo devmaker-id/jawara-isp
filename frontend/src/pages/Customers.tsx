@@ -27,6 +27,15 @@ interface CustomerAccount {
   status: string;
   expires_at: string | null;
   online: boolean;
+  validity_value?: number | null;
+  validity_unit?: string | null;
+  quota_type?: 'unlimited' | 'limited';
+  time_limit_seconds?: number | null;
+  quota_limit_bytes?: number | null;
+  timebase_value?: number | null;
+  timebase_unit?: string | null;
+  quotabase_value?: number | null;
+  quotabase_unit?: string | null;
 }
 
 interface Customer {
@@ -80,10 +89,22 @@ interface ProfileOption {
   quotabase_unit?: string | null;
   time_limit_seconds?: number | null;
   quota_limit_bytes?: number | null;
+  validity_value?: number | null;
+  validity_unit?: string | null;
 }
 
-/** Ringkasan limitasi sebuah grup/profil, untuk ditampilkan apa adanya. */
-const groupLimitText = (profile: ProfileOption | undefined): { time: string; quota: string } => {
+/** Kolom limitasi yang dibaca ringkasannya; dipakai profil & akun pelanggan. */
+interface LimitInfo {
+  timebase_value?: number | null;
+  timebase_unit?: string | null;
+  quotabase_value?: number | null;
+  quotabase_unit?: string | null;
+  time_limit_seconds?: number | null;
+  quota_limit_bytes?: number | null;
+}
+
+/** Ringkasan limitasi sebuah grup/profil/akun, untuk ditampilkan apa adanya. */
+const groupLimitText = (profile: LimitInfo | undefined): { time: string; quota: string } => {
   if (!profile) return { time: '-', quota: '-' };
   const unitLabel: Record<string, string> = { minute: 'menit', hour: 'jam', day: 'hari' };
   const time =
@@ -157,6 +178,41 @@ const formatBytes = (bytes: number | null): string => {
   if (!bytes) return '';
   if (bytes >= 1_000_000_000) return `${Math.round((bytes / 1_000_000_000) * 10) / 10} GB`;
   return `${Math.round(bytes / 1_000_000)} MB`;
+};
+
+// Tanggal penuh "DD/MM/YYYY HH:MM" untuk kedaluwarsa.
+const formatDateTime = (value: string | Date | null): string => {
+  if (!value) return '-';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '-';
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
+const VALIDITY_LABEL: Record<string, string> = { minute: 'menit', hour: 'jam', day: 'hari', month: 'bulan' };
+
+// Masa aktif akun: 'unlimited' (tanpa batas), tanggal kedaluwarsa, atau
+// 'X hari (belum aktif)' bila profil punya masa aktif tapi belum pernah login.
+const masaAktifText = (account: CustomerAccount): string => {
+  const validity = Number(account.validity_value ?? 0) || 0;
+  if (validity <= 0) return 'unlimited';
+  if (account.expires_at) return formatDateTime(account.expires_at);
+  return `${validity} ${VALIDITY_LABEL[account.validity_unit ?? 'day'] ?? account.validity_unit} (belum aktif)`;
+};
+
+/** Baris ringkas kuota + masa aktif untuk daftar pelanggan. */
+const accountLimitLabel = (account: CustomerAccount): string => {
+  const { quota } = groupLimitText(account);
+  const quotaTxt = quota === 'tanpa batas' ? 'unlimited' : quota;
+  return `${quotaTxt} · ${masaAktifText(account)}`;
+};
+
+// Masa aktif sebuah profil (untuk section "Limitasi grup" di form pelanggan).
+const profileValidityText = (profile: ProfileOption | undefined): string => {
+  if (!profile) return '—';
+  const validity = Number(profile.validity_value ?? 0) || 0;
+  if (validity <= 0) return 'unlimited';
+  return `${validity} ${VALIDITY_LABEL[profile.validity_unit ?? 'day'] ?? profile.validity_unit}`;
 };
 
 // Ambil pesan dari backend agar pengguna melihat alasan sebenarnya
@@ -745,6 +801,7 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
                               <div className="text-[10px] text-slate-500">
                                 {account.profile_type} · {account.profile_name}
                               </div>
+                              <div className="text-[10px] text-slate-400">{accountLimitLabel(account)}</div>
                             </div>
                           ) : (
                             <span className="text-xs text-amber-400">belum punya akun</span>
@@ -1212,7 +1269,7 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
                         value={form.username}
                         onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
                         className={`${inputClass} font-mono`}
-                        placeholder="mis. munji01"
+                        placeholder="mis. devmaker"
                         // Username adalah identitas login dan kunci riwayat radacct.
                         disabled={Boolean(editing)}
                         required={!editing}
@@ -1241,12 +1298,17 @@ const Customers: React.FC<{ profileType?: 'hotspot' | 'ppp' }> = ({ profileType 
 
                     <div className="sm:col-span-2 rounded-lg border border-slate-700 bg-slate-950/50 p-3">
                       <p className="text-xs font-semibold text-slate-300">Limitasi grup</p>
-                      <div className="mt-1 grid grid-cols-2 gap-2 font-mono text-[11px] text-slate-400">
-                        <div>batas waktu : {groupLimitText(profileOptions.find((p) => String(p.id) === form.profile_id)).time}</div>
-                        <div>batas kuota : {groupLimitText(profileOptions.find((p) => String(p.id) === form.profile_id)).quota}</div>
-                      </div>
+                      {selectedProfile ? (
+                        <div className="mt-1 grid grid-cols-2 gap-2 font-mono text-[11px] text-slate-400">
+                          <div>batas waktu : {groupLimitText(selectedProfile).time}</div>
+                          <div>batas kuota : {groupLimitText(selectedProfile).quota}</div>
+                          <div>masa aktif : {profileValidityText(selectedProfile)}</div>
+                        </div>
+                      ) : (
+                        <p className="mt-1 font-mono text-[11px] text-slate-500">pilih profil dulu untuk melihat limitasinya</p>
+                      )}
                       <p className="mt-2 text-[11px] text-slate-500">
-                        Batas waktu dan kuota melekat pada grup (profil layanan) dan berlaku untuk semua
+                        Batas waktu, kuota, dan masa aktif melekat pada grup (profil layanan) dan berlaku untuk semua
                         pelanggan di dalamnya. Ubah di Profile Group → Profil{' '}
                         {form.profile_type === 'hotspot' ? 'Hotspot' : 'PPP'}.
                       </p>

@@ -379,6 +379,23 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
     const bw = bandwidths.find((b) => b.id === id);
     return bw ? `${bw.max_upload_kbps}/${bw.max_download_kbps} kbps` : '';
   };
+  // Ringkasan limitasi PPP untuk kolom daftar: kuota dan/atau batas waktu,
+  // supaya profil 500 GB langsung terlihat beda dari unlimited tanpa membuka pratinjau.
+  const pppLimitLabel = (row: ProfileRow) => {
+    const bytes = Number(row.quota_limit_bytes ?? 0);
+    const secs = Number(row.time_limit_seconds ?? 0);
+    const quota =
+      bytes > 0
+        ? bytes >= 1_000_000_000
+          ? `${bytes / 1_000_000_000} GB`
+          : `${Math.round(bytes / 1_000_000)} MB`
+        : null;
+    const time = secs > 0 ? (secs >= 3600 ? `${secs / 3600} jam` : `${Math.round(secs / 60)} menit`) : null;
+    const parts = [quota, time].filter((part): part is string => Boolean(part));
+    return parts.length === 0 ? 'unlimited' : parts.join(' / ');
+  };
+  const pppLimited = (row: ProfileRow) =>
+    Number(row.quota_limit_bytes ?? 0) > 0 || Number(row.time_limit_seconds ?? 0) > 0;
   const rupiah = (value: number) =>
     new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(value);
 
@@ -412,7 +429,7 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
               'Harga jual',
               'PPN',
               'Masa aktif',
-              isHotspot ? 'Kuota' : 'Shared',
+              'Kuota',
               'Pemilik',
               'Dibuat oleh',
               isAdmin ? 'Aksi' : '',
@@ -447,7 +464,10 @@ const ServiceProfile: React.FC<{ type: ProfileType }> = ({ type }) => {
                       <Badge tone="good">unlimited</Badge>
                     )
                   ) : (
-                    row.shared_users
+                    <>
+                      <Badge tone={pppLimited(row) ? 'warn' : 'good'}>{pppLimitLabel(row)}</Badge>
+                      <span className="block font-mono text-[10px] text-slate-500">shared {row.shared_users}</span>
+                    </>
                   )}
                 </td>
                 <td className="px-3 py-2 text-xs text-slate-400">
