@@ -15,14 +15,15 @@ import { normalizeRetentionPolicy } from '../src/app/modules/olt/syslog/syslog.r
 import { normalizeHandlerConfig } from '../src/app/modules/olt/syslog/syslog.events';
 
 describe('driver syslog — HiFocus (EPON)', () => {
-  it('enable → syslog server <ip> + write', () => {
+  it('enable → syslog server <ip> + wr', () => {
     const cmds = hisfocusApplyCommands({ enabled: true, collectorIp: '192.168.76.254' });
-    expect(cmds).toEqual(['configure terminal', 'syslog server 192.168.76.254', 'write']);
+    expect(cmds).toEqual(['configure terminal', 'syslog server 192.168.76.254', 'wr']);
   });
 
-  it('disable → syslog server 0.0.0.0 + write', () => {
+  it('disable → syslog server 0.0.0.0 + wr', () => {
     const cmds = hisfocusApplyCommands({ enabled: false, collectorIp: '192.168.76.254' });
     expect(cmds[1]).toBe('syslog server 0.0.0.0');
+    expect(cmds[2]).toBe('wr');
   });
 
   it('parse running-config mencari syslog server', () => {

@@ -14,17 +14,20 @@ import { OltConnection } from '../driver/olt-driver';
  *
  *   baca  : show running-config   → baris `syslog server <ip>`
  *   set   : configure terminal → syslog server <ip>
- *   simpan: write
+ *   simpan: wr          (tulis config ke flash; perintah penuh `write` me-reboot OLT)
  *
  * Hanya IP tujuan yang dapat diatur — tidak ada port/protocol/severity.
  * Port tetap UDP/514. Disable dilakukan dengan `syslog server 0.0.0.0`.
  *
  * Catatan perilaku perangkat: mengirim `syslog server 0.0.0.0` membuat sesi
  * CLI terputus (daemon syslog di-restart). Karena itu disable diterapkan dengan
- * urutan: kirim perintah (sesi mungkin putus) → buka sesi baru → `write`.
+ * urutan: kirim perintah (sesi mungkin putus) → buka sesi baru → `wr`.
  */
 
-const WRITE = 'write';
+// Simpan config ke flash. Wajib `wr`, BUKAN `write`: perintah penuh `write`
+// pada HiFocus/Hioso membuat layar blank dan me-reboot perangkat. Singkatan
+// `wr` aman dan mengembalikan "Configuration file saved ok!".
+const WRITE = 'wr';
 
 /** Baris perintah untuk menerapkan target (dipisah agar mudah diuji). */
 export function hisfocusApplyCommands(target: SyslogClientTarget): string[] {
