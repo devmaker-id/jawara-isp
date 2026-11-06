@@ -205,10 +205,23 @@ export class SalesService {
   async revenueSnapshot(scope: RequestScope, todayInput?: string) {
     const today = todayInput ?? (await this.todayFromDatabase());
     const monthStart = `${today.slice(0, 7)}-01`;
-    const [day, month] = await Promise.all([
+    const [day, month, dailyRows] = await Promise.all([
       this.repository.revenue(today, today, scope),
       this.repository.revenue(monthStart, today, scope),
+      this.repository.revenueDaily(monthStart, today, scope),
     ]);
+
+    // Isi hari tanpa transaksi dengan nol supaya grafik harian utuh sebulan
+    // (hari 1..hari ini), bukan cuma hari yang kebetulan ada pemasukan.
+    const byDay = new Map(dailyRows.map((row) => [row.day, row]));
+    const lastDay = Number(today.slice(8, 10));
+    const daily: Array<{ day: string; payments: number; vouchers: number }> = [];
+    for (let d = 1; d <= lastDay; d += 1) {
+      const key = `${today.slice(0, 8)}${String(d).padStart(2, '0')}`;
+      const row = byDay.get(key);
+      daily.push({ day: key, payments: row?.payments ?? 0, vouchers: row?.vouchers ?? 0 });
+    }
+
     return {
       today,
       month_start: monthStart,
@@ -222,6 +235,7 @@ export class SalesService {
       month_vouchers: month.voucher_income,
       month_voucher_cost: month.voucher_cost,
       month_margin: month.voucher_margin,
+      daily,
       scope: this.scopeLabel(scope),
     };
   }

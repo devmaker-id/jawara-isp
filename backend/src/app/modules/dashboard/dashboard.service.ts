@@ -58,6 +58,8 @@ export interface RevenueSnapshot {
   month_vouchers: number;
   month_voucher_cost: number;
   month_margin: number;
+  /** Pendapatan per hari bulan berjalan (tagihan + voucher), untuk grafik harian. */
+  daily: Array<{ day: string; payments: number; vouchers: number }>;
   scope: 'all' | 'own';
 }
 
@@ -74,6 +76,7 @@ const EMPTY_REVENUE: RevenueSnapshot = {
   month_vouchers: 0,
   month_voucher_cost: 0,
   month_margin: 0,
+  daily: [],
   scope: 'own',
 };
 

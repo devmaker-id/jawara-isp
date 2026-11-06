@@ -163,6 +163,35 @@ export class VoucherSalesRepository {
   }
 
   /**
+   * Pendapatan per hari (grafik harian dashboard), urut tanggal. Mengembalikan
+   * hanya hari yang punya transaksi — pemanggil mengisi hari kosong dengan nol.
+   */
+  async revenueDaily(
+    from: string,
+    to: string,
+    scope?: RequestScope,
+  ): Promise<Array<{ day: string; payments: number; vouchers: number }>> {
+    const range = this.range(from, to);
+    const scopeFilter = VoucherSalesRepository.revenueFilter(scope);
+    const where = [range.sql, scopeFilter.sql].filter(Boolean).join(' AND ');
+    const rows = await this.db.query<RowDataPacket>(
+      `SELECT DATE_FORMAT(t.at, '%Y-%m-%d') AS day,
+              COALESCE(SUM(CASE WHEN t.source = 'payment' THEN t.amount ELSE 0 END), 0) AS payments,
+              COALESCE(SUM(CASE WHEN t.source = 'voucher' THEN t.amount ELSE 0 END), 0) AS vouchers
+         FROM (${this.unionSql()}) t
+        ${where ? `WHERE ${where}` : ''}
+        GROUP BY DATE_FORMAT(t.at, '%Y-%m-%d')
+        ORDER BY day`,
+      [...range.params, ...scopeFilter.params],
+    );
+    return rows.map((row) => ({
+      day: String(row.day),
+      payments: Number(row.payments ?? 0),
+      vouchers: Number(row.vouchers ?? 0),
+    }));
+  }
+
+  /**
    * Satu bentuk baris untuk kedua sumber uang: sumber, nominal, modal, pemilik,
    * pencatat, waktu. Semua perhitungan di atasnya memakai kolom yang sama,
    * sehingga menambah sumber pendapatan baru cukup menambah satu UNION.

@@ -67,6 +67,7 @@ interface RevenueSnapshot {
   month_payments: number;
   month_vouchers: number;
   month_margin: number;
+  daily: Array<{ day: string; payments: number; vouchers: number }>;
   scope: 'all' | 'own';
 }
 
@@ -145,6 +146,18 @@ interface DashboardData {
 
 const rupiah = (value: number): string =>
   `Rp ${value.toLocaleString('id-ID', { maximumFractionDigits: 0 })}`;
+
+// Nilai sumbu grafik: jutaan/ribuan supaya tidak memenuhi sumbu dengan angka
+// panjang saat menampilkan pendapatan harian.
+const rupiahSingkat = (value: number): string => {
+  if (!value) return '0';
+  if (value >= 1_000_000) {
+    const jt = value / 1_000_000;
+    return `${Number.isInteger(jt) ? jt : jt.toFixed(1)} jt`;
+  }
+  if (value >= 1_000) return `${Math.round(value / 1_000)} rb`;
+  return String(Math.round(value));
+};
 
 const angka = (value: number): string => value.toLocaleString('id-ID');
 
@@ -274,41 +287,38 @@ const DashboardHeader: React.FC<{
   );
 };
 
-// Grafik pendapatan: kas masuk (tagihan) + penjualan voucher, hari ini vs bulan.
+// Grafik pendapatan harian: kas masuk (tagihan) + penjualan voucher per hari,
+// selama bulan berjalan (hari 1..hari ini).
 const RevenueChart: React.FC<{ revenue: RevenueSnapshot }> = ({ revenue }) => {
-  const rows = [
-    {
-      periode: 'Hari ini',
-      Tagihan: revenue.today_payments,
-      Voucher: revenue.today_vouchers,
-    },
-    {
-      periode: 'Bulan ini',
-      Tagihan: revenue.month_payments,
-      Voucher: revenue.month_vouchers,
-    },
-  ];
+  const rows = (revenue.daily ?? []).map((d) => ({
+    hari: d.day,
+    Tagihan: d.payments,
+    Voucher: d.vouchers,
+  }));
   return (
-    <Section title="Analitik keuangan" subtitle="Kas masuk dari tagihan dan penjualan voucher (rupiah)">
+    <Section title="Analitik keuangan" subtitle="Kas masuk harian (tagihan + voucher, rupiah) bulan berjalan">
       <div className="h-60">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={rows} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
             <XAxis
-              dataKey="periode"
-              tick={{ fill: '#94a3b8', fontSize: 12 }}
+              dataKey="hari"
+              tick={{ fill: '#94a3b8', fontSize: 11 }}
               axisLine={{ stroke: '#334155' }}
               tickLine={false}
+              tickFormatter={(v: string) => v.slice(8, 10)}
+              interval="preserveStartEnd"
             />
             <YAxis
               tick={{ fill: '#94a3b8', fontSize: 11 }}
               axisLine={false}
               tickLine={false}
-              tickFormatter={(v: number) => (v === 0 ? '0' : `${Math.round(v / 1_000_000)} jt`)}
+              tickFormatter={(v: number) => rupiahSingkat(v)}
             />
             <Tooltip
               cursor={{ fill: '#33415555' }}
               formatter={(value) => [rupiah(Number(value))]}
+              labelFormatter={(label) => `Tanggal ${label}`}
               contentStyle={{
                 background: '#1e293b',
                 border: '1px solid #334155',
