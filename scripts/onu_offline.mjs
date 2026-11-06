@@ -109,7 +109,8 @@ for (const [oltName, list] of byOlt) {
   lines.push('```');
   for (const r of list) {
     const nama = r.description || r.onu_name || r.customer_name || `ONU ${r.port_id}:${r.onu_id}`;
-    lines.push(`${r.port_id}/${r.onu_id}  ${nama}`);
+    const noInternet = r.internet_no ? `  ·  ${r.internet_no}` : '';
+    lines.push(`${r.port_id}/${r.onu_id}  ${nama}${noInternet}`);
   }
   lines.push('```');
   lines.push('');
