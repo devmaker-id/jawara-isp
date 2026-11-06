@@ -34,6 +34,7 @@ DEFAULT_ADMIN_IDS = ("6287886628289",)
 # keluarga (Saung Mama) sengaja TIDAK dipetakan -> ditolak.
 DEFAULT_GROUP_OLTS = {
     "120363433225691134@g.us": (1, 2, 3),  # Teknis Z - Exploler (technical operations)
+    "120363429877029752@g.us": (3,),        # JMNET -> Sampaleun
 }
 
 GROUP_DENIED = "Perintah /onu_offline tidak tersedia di grup ini."
