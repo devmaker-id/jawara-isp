@@ -1,0 +1,7 @@
+name: wa-onu-offline
+version: 1.0.0
+description: "Perintah /onu_offline: daftar ONU offline dirutekan per grup WhatsApp, dijawab sebelum agen (tanpa panggilan model AI)."
+author: devmaker
+license: MIT
+provides_commands:
+  - onu_offline
