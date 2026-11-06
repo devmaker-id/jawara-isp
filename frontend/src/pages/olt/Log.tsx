@@ -111,7 +111,8 @@ const LogOnu: React.FC = () => {
   const [handlerAlert, setHandlerAlert] = useState(false);
   const [handlerGroup, setHandlerGroup] = useState('');
   const [handlerEvents, setHandlerEvents] = useState<string[]>(['ONU_LINKDOWN', 'ONU_DYING_GASP']);
-  const [handlerCooldown, setHandlerCooldown] = useState(10);
+  const [handlerSpacing, setHandlerSpacing] = useState(300);
+  const [handlerFlap, setHandlerFlap] = useState(3);
   const [handlerBusy, setHandlerBusy] = useState(false);
   const [handlerNote, setHandlerNote] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
 
@@ -258,14 +259,16 @@ const LogOnu: React.FC = () => {
           whatsapp_alert: boolean;
           whatsapp_group: string;
           alert_events: string[];
-          cooldown_minutes: number;
+          spacing_seconds: number;
+          flap_threshold: number;
         };
       }).config;
       setHandlerSync(config.inventory_sync);
       setHandlerAlert(config.whatsapp_alert);
       setHandlerGroup(config.whatsapp_group ?? '');
       setHandlerEvents(config.alert_events ?? []);
-      setHandlerCooldown(config.cooldown_minutes ?? 10);
+      setHandlerSpacing(config.spacing_seconds ?? 300);
+      setHandlerFlap(config.flap_threshold ?? 3);
     } catch {
       // pakai nilai bawaan bila belum pernah diset
     }
@@ -285,7 +288,8 @@ const LogOnu: React.FC = () => {
         whatsapp_alert: handlerAlert,
         whatsapp_group: handlerGroup,
         alert_events: handlerEvents,
-        cooldown_minutes: handlerCooldown,
+        spacing_seconds: handlerSpacing,
+        flap_threshold: handlerFlap,
       });
       setHandlerNote({ tone: 'ok', text: 'Konfigurasi event tersimpan.' });
     } catch (error) {
@@ -663,22 +667,41 @@ const LogOnu: React.FC = () => {
                   </div>
                 </div>
 
-                <label className="block text-xs text-slate-300">
-                  Jeda antar pesan (menit)
-                  <input
-                    type="number"
-                    min={1}
-                    max={60}
-                    value={handlerCooldown}
-                    onChange={(event) =>
-                      setHandlerCooldown(Math.max(1, Math.min(60, Number(event.target.value) || 10)))
-                    }
-                    className="mt-1 w-24 rounded-lg border border-slate-600 bg-slate-900/60 px-3 py-2 text-sm text-slate-100"
-                  />
-                  <p className="mt-1 text-[11px] text-slate-500">
-                    ONU yang bolak-balik mati/hidup dalam jeda ini dirangkum jadi satu pesan (flap), bukan spam.
-                  </p>
-                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="block text-xs text-slate-300">
+                    Jeda antar pesan (detik)
+                    <input
+                      type="number"
+                      min={1}
+                      max={3600}
+                      value={handlerSpacing}
+                      onChange={(event) =>
+                        setHandlerSpacing(Math.max(1, Math.min(3600, Number(event.target.value) || 300)))
+                      }
+                      className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-900/60 px-3 py-2 text-sm text-slate-100"
+                    />
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      Jarak minimum antar dua pesan untuk ONU yang sama.
+                    </p>
+                  </label>
+
+                  <label className="block text-xs text-slate-300">
+                    Batas event beruntun (flap)
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={handlerFlap}
+                      onChange={(event) =>
+                        setHandlerFlap(Math.max(1, Math.min(100, Number(event.target.value) || 3)))
+                      }
+                      className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-900/60 px-3 py-2 text-sm text-slate-100"
+                    />
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      Hentikan kirim setelah N event beruntun pada ONU yang sama.
+                    </p>
+                  </label>
+                </div>
               </>
             )}
 

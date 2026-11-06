@@ -203,10 +203,17 @@ describe('handler event ONU — normalisasi konfigurasi', () => {
     expect(config.whatsapp_group).toBe('');
   });
 
-  it('membatasi cooldown_minutes pada rentang 1–60', () => {
-    expect(normalizeHandlerConfig({ cooldown_minutes: 0 }).cooldown_minutes).toBe(1);
-    expect(normalizeHandlerConfig({ cooldown_minutes: 99 }).cooldown_minutes).toBe(60);
-    expect(normalizeHandlerConfig({ cooldown_minutes: 15 }).cooldown_minutes).toBe(15);
-    expect(normalizeHandlerConfig({}).cooldown_minutes).toBe(10);
+  it('membatasi spacing_seconds pada rentang 1–3600', () => {
+    expect(normalizeHandlerConfig({ spacing_seconds: 0 }).spacing_seconds).toBe(1);
+    expect(normalizeHandlerConfig({ spacing_seconds: 99999 }).spacing_seconds).toBe(3600);
+    expect(normalizeHandlerConfig({ spacing_seconds: 120 }).spacing_seconds).toBe(120);
+    expect(normalizeHandlerConfig({}).spacing_seconds).toBe(300);
+  });
+
+  it('membatasi flap_threshold pada rentang 1–100', () => {
+    expect(normalizeHandlerConfig({ flap_threshold: 0 }).flap_threshold).toBe(1);
+    expect(normalizeHandlerConfig({ flap_threshold: 999 }).flap_threshold).toBe(100);
+    expect(normalizeHandlerConfig({ flap_threshold: 5 }).flap_threshold).toBe(5);
+    expect(normalizeHandlerConfig({}).flap_threshold).toBe(3);
   });
 });

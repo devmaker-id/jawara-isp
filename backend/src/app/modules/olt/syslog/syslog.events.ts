@@ -30,8 +30,10 @@ export interface SyslogHandlerConfig {
   whatsapp_alert: boolean;
   whatsapp_group: string;
   alert_events: string[];
-  /** Jeda (menit) minimal antar pesan untuk ONU yang sama; flap dalam jeda ini dirangkum jadi satu pesan. */
-  cooldown_minutes: number;
+  /** Jeda minimum (detik) antar dua pesan WhatsApp untuk ONU yang sama. */
+  spacing_seconds: number;
+  /** Batas event beruntun untuk ONU yang sama; setelahnya dianggap flap dan pengiriman dihentikan. */
+  flap_threshold: number;
 }
 
 const CONFIG_KEY = 'olt_syslog_handlers';
@@ -42,7 +44,8 @@ export const DEFAULT_HANDLER_CONFIG: SyslogHandlerConfig = {
   whatsapp_alert: false,
   whatsapp_group: '',
   alert_events: ['ONU_LINKDOWN', 'ONU_DYING_GASP'],
-  cooldown_minutes: 10,
+  spacing_seconds: 300,
+  flap_threshold: 3,
 };
 
 export const ALERTABLE_EVENT_TYPES = [
@@ -86,15 +89,11 @@ interface AlertContext {
   redaman: string | null;
 }
 
-/** Jejak flap (mati/hidup berulang) per ONU selama jendela cooldown. Hanya di memori. */
-interface FlapRecord {
-  group: string;
-  oltName: string;
-  ponOnu: string;
-  context: AlertContext;
+/** Jejak event beruntun per ONU (dedup + deteksi flap). Hanya di memori. */
+interface FlapState {
   count: number;
-  firstAt: number;
-  lastAt: number;
+  lastSentAt: number;
+  suppressed: boolean;
   timer: NodeJS.Timeout;
 }
 
@@ -104,16 +103,21 @@ export function normalizeHandlerConfig(input: Partial<SyslogHandlerConfig>): Sys
         .filter((event) => (ALERTABLE_EVENT_TYPES as readonly string[]).includes(event))
         .slice(0, 20)
     : [...DEFAULT_HANDLER_CONFIG.alert_events];
-  const rawCooldown = Number(input.cooldown_minutes);
-  const cooldown = Number.isFinite(rawCooldown)
-    ? Math.min(Math.max(Math.round(rawCooldown), 1), 60)
-    : DEFAULT_HANDLER_CONFIG.cooldown_minutes;
+  const rawSpacing = Number(input.spacing_seconds);
+  const spacing = Number.isFinite(rawSpacing)
+    ? Math.min(Math.max(Math.round(rawSpacing), 1), 3600)
+    : DEFAULT_HANDLER_CONFIG.spacing_seconds;
+  const rawThreshold = Number(input.flap_threshold);
+  const threshold = Number.isFinite(rawThreshold)
+    ? Math.min(Math.max(Math.round(rawThreshold), 1), 100)
+    : DEFAULT_HANDLER_CONFIG.flap_threshold;
   return {
     inventory_sync: input.inventory_sync === true,
     whatsapp_alert: input.whatsapp_alert === true,
     whatsapp_group: String(input.whatsapp_group ?? '').trim().slice(0, 64),
     alert_events: alertEvents,
-    cooldown_minutes: cooldown,
+    spacing_seconds: spacing,
+    flap_threshold: threshold,
   };
 }
 
@@ -122,7 +126,7 @@ export class SyslogEventHandlerService {
   private readonly logger = new Logger(SyslogEventHandlerService.name);
   private cache: SyslogHandlerConfig | null = null;
   private cachedAt = 0;
-  private readonly flaps = new Map<string, FlapRecord>();
+  private readonly flaps = new Map<string, FlapState>();
   /** ONU yang sedang diprobe telnet-nya — cegah probe ganda saat flap. */
   private readonly probing = new Set<string>();
 
@@ -211,7 +215,7 @@ export class SyslogEventHandlerService {
           .findOnuAlertContext(device.id, parsed.portId, parsed.onuId, parsed.onuMac)
           .catch(() => null);
         const context = this.buildContext(parsed, row);
-        this.alertWithCooldown(config, device.id, device.name, enriched, context);
+        this.alertWithDedup(config, device.id, device.name, enriched, context);
       }
     } catch (error) {
       this.logger.warn(`Handler event ONU gagal: ${error instanceof Error ? error.message : String(error)}`);
@@ -332,11 +336,16 @@ export class SyslogEventHandlerService {
   }
 
   /**
-   * Kirim alert dengan pembatas flap: kejadian pertama untuk satu ONU dikirim
-   * seketika, kejadian berikutnya dalam jendela cooldown ditahan lalu dirangkum
-   * menjadi satu pesan "bolak-balik mati/hidup N kali" saat jendela berakhir.
+   * Kirim alert dengan pembatas flap:
+   *   - `spacing_seconds` : jarak minimum antar dua pesan untuk ONU yang sama.
+   *     Kejadian yang terlalu rapat tidak dikirim (dilewati), tetapi tetap
+   *     dihitung sebagai indikasi kegagalan berulang.
+   *   - `flap_threshold`  : setelah N event beruntun untuk ONU yang sama, anggap
+   *     bolak-balik (flap) dan hentikan pengiriman sepenuhnya — tanpa pesan
+   *     ringkasan flap, hanya dicatat ke log.
+   * Status flap direset otomatis setelah ONU hening selama 2× spacing.
    */
-  private alertWithCooldown(
+  private alertWithDedup(
     config: SyslogHandlerConfig,
     oltId: number,
     oltName: string,
@@ -345,58 +354,47 @@ export class SyslogEventHandlerService {
   ): void {
     const key = this.onuKey(oltId, parsed);
     const now = Date.now();
-    const existing = this.flaps.get(key);
-
-    if (existing) {
-      existing.count += 1;
-      existing.lastAt = now;
-      return; // ditahan — dirangkum oleh flushFlap
+    let state = this.flaps.get(key);
+    if (!state) {
+      state = {
+        count: 0,
+        lastSentAt: 0,
+        suppressed: false,
+        timer: null as unknown as NodeJS.Timeout,
+      };
+      this.flaps.set(key, state);
     }
 
-    const ponOnu = parsed.portId && parsed.onuId ? `${parsed.portId}/${parsed.onuId}` : '—';
+    // Selama ONU masih mengirim event, tunda reset status flap sampai hening.
+    this.armFlapReset(state, key, config.spacing_seconds);
 
-    const record: FlapRecord = {
-      group: config.whatsapp_group,
-      oltName,
-      ponOnu,
-      context,
-      count: 1,
-      firstAt: now,
-      lastAt: now,
-      timer: null as unknown as NodeJS.Timeout,
-    };
-    this.flaps.set(key, record);
+    if (state.suppressed) return;
 
-    record.timer = setTimeout(() => this.flushFlap(key), config.cooldown_minutes * 60_000);
-    record.timer.unref?.();
+    // Hitung semua event beruntun — inilah sinyal "flap", bukan jumlah kiriman.
+    state.count += 1;
 
-    void this.sendAlert(config.whatsapp_group, parsed, oltName, context);
+    const spacingMs = config.spacing_seconds * 1000;
+    if (state.lastSentAt === 0 || now - state.lastSentAt >= spacingMs) {
+      state.lastSentAt = now;
+      void this.sendAlert(config.whatsapp_group, parsed, oltName, context);
+    }
+
+    if (state.count >= config.flap_threshold) {
+      state.suppressed = true;
+      const ponOnu = parsed.portId && parsed.onuId ? `${parsed.portId}/${parsed.onuId}` : '—';
+      this.logger.warn(
+        `ONU ${oltName} ${ponOnu} dianggap flap setelah ${state.count} event beruntun; alert WhatsApp dihentikan.`,
+      );
+    }
   }
 
-  private flushFlap(key: string): void {
-    const record = this.flaps.get(key);
-    if (!record) return;
-    this.flaps.delete(key);
-    if (record.count <= 1) return; // tidak ada flap — pesan awal sudah cukup
-
-    const span = Math.max(1, Math.round((record.lastAt - record.firstAt) / 60000));
-    const text = [
-      '🔁 ONU bolak-balik mati/hidup (flap)',
-      record.context.customerName ? `*Pelanggan*: ${record.context.customerName}` : '',
-      record.context.internetNo ? `*No. Internet*: ${record.context.internetNo}` : '',
-      !record.context.customerName && record.context.perangkat
-        ? `*Perangkat*: ${record.context.perangkat}`
-        : '',
-      `*OLT*: ${record.oltName}`,
-      `*PON/ONU*: ${record.ponOnu}`,
-      `*Kejadian*: ${record.count} kali dalam ±${span} menit`,
-    ]
-      .filter(Boolean)
-      .join('\n');
-
-    this.worker.send(record.group, text).catch((error) => {
-      this.logger.warn(`Alert flap gagal dikirim: ${error instanceof Error ? error.message : String(error)}`);
-    });
+  /** Reset status flap bila ONU hening selama 2× jeda antar pesan. */
+  private armFlapReset(state: FlapState, key: string, spacingSeconds: number): void {
+    if (state.timer) clearTimeout(state.timer);
+    state.timer = setTimeout(() => {
+      this.flaps.delete(key);
+    }, spacingSeconds * 1000 * 2);
+    state.timer.unref?.();
   }
 
   private onuKey(oltId: number, parsed: ParsedSyslogEvent): string {

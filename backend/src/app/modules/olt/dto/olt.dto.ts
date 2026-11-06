@@ -273,8 +273,15 @@ export class SetSyslogHandlerConfigDto {
 
   @IsOptional()
   @Type(() => Number)
-  @IsInt({ message: 'cooldown_minutes harus angka bulat.' })
-  @Min(1, { message: 'cooldown_minutes minimal 1 menit.' })
-  @Max(60, { message: 'cooldown_minutes maksimal 60 menit.' })
-  cooldown_minutes?: number;
+  @IsInt({ message: 'spacing_seconds harus angka bulat.' })
+  @Min(1, { message: 'spacing_seconds minimal 1 detik.' })
+  @Max(3600, { message: 'spacing_seconds maksimal 3600 detik.' })
+  spacing_seconds?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'flap_threshold harus angka bulat.' })
+  @Min(1, { message: 'flap_threshold minimal 1.' })
+  @Max(100, { message: 'flap_threshold maksimal 100.' })
+  flap_threshold?: number;
 }
