@@ -502,6 +502,17 @@ export class OltService {
     const driver = createSyslogDriver(this.connection(device));
     try {
       const before = await driver.read();
+
+      // Idempoten: jangan membuat ulang aturan syslog yang masih sama. Menerapkan
+      // ulang aturan identik membuat sebagian OLT HiFocus blank/reboot. Bila sudah
+      // sesuai target, lewati apply sepenuhnya.
+      const unchanged =
+        Boolean(before.enabled) === Boolean(dto.enabled) &&
+        (!dto.enabled || before.collectorIp === collectorIp);
+      if (unchanged) {
+        return { before, after: before, verified: true, unchanged: true };
+      }
+
       const after = await driver.apply({
         enabled: dto.enabled,
         collectorIp: dto.enabled ? collectorIp : '0.0.0.0',

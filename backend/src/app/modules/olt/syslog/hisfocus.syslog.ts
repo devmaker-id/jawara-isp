@@ -27,11 +27,14 @@ import { OltConnection } from '../driver/olt-driver';
 
 const DISABLED_IP = '0.0.0.0';
 
-/** Menghasilkan command konfigurasi tanpa menyimpan konfigurasi. */
+/** Menghasilkan command konfigurasi (keluar dari config mode sebelum simpan). */
 export function hisfocusApplyCommands(target: SyslogClientTarget): string[] {
   const ip = target.enabled ? target.collectorIp : DISABLED_IP;
 
-  return ['configure terminal', `syslog server ${ip}`];
+  // `exit` meninggalkan config mode ke privileged supaya `writeFile()` (wr)
+  // dikirim dari mode yang benar — mengetik simpan dari dalam config mode
+  // inilah yang membuat perangkat blank/reboot.
+  return ['configure terminal', `syslog server ${ip}`, 'exit'];
 }
 
 /** Parse konfigurasi syslog dari running-config. */
