@@ -1287,44 +1287,6 @@ export class ProfilesService {
     });
   }
 
-  /**
-   * Aktivasi voucher: masa aktif mulai dihitung dari LOGIN PERTAMA.
-   * Dipanggil saat voucher pertama kali dipakai.
-   */
-  async activateVoucher(actor: Actor, id: number) {
-    const voucher = await this.vouchers.findById(id);
-    if (!voucher) throw new NotFoundException(`Voucher #${id} tidak ditemukan.`);
-    if (voucher.status === 'expired') {
-      throw new ConflictException('Voucher sudah kedaluwarsa.');
-    }
-    if (voucher.first_login_at) {
-      return voucher; // sudah pernah aktif, jangan hitung ulang
-    }
-
-    const profile = await this.profiles.findById(voucher.profile_type, Number(voucher.profile_id));
-    if (!profile) throw new NotFoundException('Profil voucher tidak ditemukan.');
-
-    const seconds =
-      Number(profile.validity_value) > 0
-        ? unitToSeconds(Number(profile.validity_value), profile.validity_unit)
-        : 0;
-
-    await this.vouchers.update(id, {
-      status: 'active',
-      first_login_at: new Date(),
-      // 0 menit/hari = tanpa batas → expires_at tetap NULL.
-      expires_at: seconds > 0 ? new Date(Date.now() + seconds * 1000) : null,
-    });
-    // Pastikan akun RADIUS ada: bisa saja sempat dicabut saat status expired.
-    await this.writeRadiusAccount(
-      voucher.username,
-      voucher.password,
-      profile.radius_group ?? profile.name,
-    );
-    await this.audit(actor, 'voucher.activate', { id, seconds });
-    return this.vouchers.findById(id);
-  }
-
   async setVoucherStatus(actor: Actor, id: number, status: string) {
     const voucher = await this.vouchers.findById(id);
     if (!voucher) throw new NotFoundException(`Voucher #${id} tidak ditemukan.`);

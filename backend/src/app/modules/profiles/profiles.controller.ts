@@ -366,13 +366,6 @@ export class VouchersController {
     return this.service.generateVouchers(actorOf(request), dto);
   }
 
-  @Post(':id/activate')
-  @Roles('admin', 'operator', 'resseler')
-  @RequirePermission('voucher.generate')
-  activate(@Req() request: Request, @Param('id', ParseIntPipe) id: number) {
-    return this.service.activateVoucher(actorOf(request), id);
-  }
-
   // Didaftarkan sebelum ':id/status' supaya "bulk" tidak dianggap id.
   @Patch('bulk/status')
   @Roles('admin', 'operator', 'resseler')

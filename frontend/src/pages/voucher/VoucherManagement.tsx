@@ -208,7 +208,9 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
   const [genOwner, setGenOwner] = useState('');
   const [waOpen, setWaOpen] = useState(false);
   const [waPhone, setWaPhone] = useState('');
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  // Sasaran aksi hapus (1 baris lewat menu Aksi, atau banyak lewat dropdown).
+  // null = dialog tertutup.
+  const [deleteTarget, setDeleteTarget] = useState<number[] | null>(null);
 
   // Menu "Konfigurasi & Manajemen": aksi yang tidak dipakai tiap menit
   // dikumpulkan di satu dropdown supaya toolbar tidak penuh tombol.
@@ -402,12 +404,7 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
       return `${data.created} voucher dibuat untuk profil ${data.profile}.${owner}`;
     });
 
-  const activateOne = (row: VoucherRow) =>
-    run(async () => {
-      await api.post(`/api/vouchers/${row.id}/activate`);
-      await load();
-      return `Voucher ${row.username} diaktifkan; masa aktif mulai berjalan.`;
-    });
+  const deleteOne = (row: VoucherRow) => setDeleteTarget([row.id]);
 
   const bulkStatus = (status: Status, label: string) =>
     run(async () => {
@@ -420,12 +417,11 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
       return `${data.changed} voucher ditandai ${label}.`;
     });
 
-  const bulkDelete = () =>
+  const doDelete = () =>
     run(async () => {
-      const { data } = await api.post<{ removed: number }>('/api/vouchers/remove', {
-        ids: targetIds,
-      });
-      setConfirmDelete(false);
+      const ids = deleteTarget ?? [];
+      const { data } = await api.post<{ removed: number }>('/api/vouchers/remove', { ids });
+      setDeleteTarget(null);
       setSelected(new Set());
       await load();
       return `${data.removed} voucher dihapus beserta akun RADIUS-nya.`;
@@ -759,7 +755,7 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
                       </MenuItem>
                       <MenuItem
                         danger
-                        onClick={() => { setMenuOpen(false); setConfirmDelete(true); }}
+                        onClick={() => { setMenuOpen(false); setDeleteTarget([...targetIds]); }}
                         disabled={busy || !hasSelection}
                       >
                         Hapus voucher…
@@ -967,11 +963,12 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
                           label={`Aksi untuk voucher ${row.username}`}
                           actions={[
                             {
-                              key: 'activate',
-                              label: 'Aktifkan voucher',
+                              key: 'delete',
+                              label: 'Hapus voucher',
+                              tone: 'danger',
                               disabled: busy,
-                              hidden: !(canBulkWrite && row.status !== 'active' && row.status !== 'expired'),
-                              onSelect: () => void activateOne(row),
+                              hidden: !isAdmin,
+                              onSelect: () => deleteOne(row),
                             },
                           ]}
                         />
@@ -1649,17 +1646,17 @@ const VoucherManagement: React.FC<{ type: VoucherType }> = ({ type }) => {
       )}
 
       {/* Konfirmasi hapus */}
-      {confirmDelete && (
+      {deleteTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div role="dialog" aria-modal="true" className="w-full max-w-md space-y-3 rounded-xl border border-slate-700 bg-slate-800 p-5">
-            <h2 className="text-lg font-semibold text-white">Hapus {targetIds.length} voucher?</h2>
+            <h2 className="text-lg font-semibold text-white">Hapus {deleteTarget.length} voucher?</h2>
             <p className="text-sm text-slate-400">
               Akun RADIUS-nya ikut dicabut sehingga tidak bisa login lagi. Riwayat sesi di radacct
               tetap tersimpan. Tindakan ini tidak bisa dibatalkan.
             </p>
             <div className="flex justify-end gap-2">
-              <Button onClick={() => setConfirmDelete(false)}>Batal</Button>
-              <Button variant="danger" onClick={() => void bulkDelete()} disabled={busy}>
+              <Button onClick={() => setDeleteTarget(null)}>Batal</Button>
+              <Button variant="danger" onClick={() => void doDelete()} disabled={busy}>
                 {busy ? 'Menghapus…' : 'Ya, hapus'}
               </Button>
             </div>
