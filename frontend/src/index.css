@@ -152,22 +152,26 @@ body {
   }
 }
 
-/* Page container: consistent padding, max-width, no horizontal overflow */
+/* Page container: lebar ikut layar (bukan 1280px tetap) supaya tabel data lebar
+   tidak menyisakan ruang kosong besar di desktop; tetap dibatas 1920px supaya di
+   monitor ultra-wide/4K konten tidak melebar tak berujung. Padding responsif
+   (12px di HP, naik ke 16px/20px di layar lebih besar). */
 .page-container {
-  max-width: 1280px;
+  width: 100%;
+  max-width: 1920px;
   margin-inline: auto;
-  padding-inline: 16px;
+  padding-inline: 12px;
 }
 
 @media (min-width: 768px) {
   .page-container {
-    padding-inline: 24px;
+    padding-inline: 16px;
   }
 }
 
 @media (min-width: 1024px) {
   .page-container {
-    padding-inline: 32px;
+    padding-inline: 20px;
   }
 }
 
@@ -357,11 +361,11 @@ html[data-theme='light'] .hover\:bg-cyan-500:hover {
 /* ===== Sistem tabel bersama — Spacious Enterprise, kepadatan Medium =====
    Satu sumber untuk semua tabel panel. Semua warna memakai token tema
    (--card, --border, --text-muted) sehingga mode siang/malam konsisten
-   tanpa kelas tambahan. Tinggi baris: padding 10px + teks 14px ≈ 44px. */
+   tanpa kelas tambahan. Tinggi baris: padding 6.4px + teks 14px ≈ 27px. */
 
 :root {
-  --tbl-pad-x: 1rem;
-  --tbl-pad-y: 0.625rem;
+  --tbl-pad-x: 0.75rem;  /* 16px → 12px */
+  --tbl-pad-y: 0.4rem;   /* 10px → 6.4px, rapat seperti DataTables */
   --tbl-head-bg: color-mix(in srgb, var(--border) 16%, var(--card));
   --tbl-sep: color-mix(in srgb, var(--border) 65%, transparent);
   --tbl-radius: 0.75rem;
