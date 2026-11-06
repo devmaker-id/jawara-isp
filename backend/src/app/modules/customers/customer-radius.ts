@@ -59,7 +59,7 @@ export function statusCheckAttributes(
 
 /** Format tanggal FreeRADIUS: "26 Oct 2026 15:00:00". */
 export function freeRadiusDate(date: Date): string {
-  const bulan = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+  const bulan = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const two = (n: number) => String(n).padStart(2, '0');
   return (
     `${two(date.getDate())} ${bulan[date.getMonth()]} ${date.getFullYear()} ` +

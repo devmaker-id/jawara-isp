@@ -49,7 +49,7 @@ describe('BLOCK_MESSAGE', () => {
 
 describe('freeRadiusDate', () => {
   it('format tanggal Expiration FreeRADIUS', () => {
-    expect(freeRadiusDate(new Date('2026-10-26T15:04:05'))).toBe('26 Okt 2026 15:04:05');
+    expect(freeRadiusDate(new Date('2026-10-26T15:04:05'))).toBe('26 Oct 2026 15:04:05');
   });
 });
 

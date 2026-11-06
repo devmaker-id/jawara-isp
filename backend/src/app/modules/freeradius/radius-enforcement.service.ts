@@ -76,9 +76,9 @@ export const BLOCK_MESSAGE: Record<string, string> = {
   validity: 'User expired',
 };
 
-/** Format tanggal FreeRADIUS: "26 Okt 2026 15:04:05". */
+/** Format tanggal FreeRADIUS: "26 Oct 2026 15:04:05". */
 export function freeRadiusDate(date: Date): string {
-  const bulan = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+  const bulan = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const two = (n: number) => String(n).padStart(2, '0');
   return (
     `${two(date.getDate())} ${bulan[date.getMonth()]} ${date.getFullYear()} ` +

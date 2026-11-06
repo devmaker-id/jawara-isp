@@ -87,9 +87,13 @@ describe('statusCheckAttributes', () => {
 });
 
 describe('freeRadiusDate', () => {
-  it('memakai nama bulan Indonesia tanpa spasi tambahan', () => {
-    expect(freeRadiusDate(new Date('2026-10-26T15:04:05'))).toBe('26 Okt 2026 15:04:05');
-    expect(freeRadiusDate(new Date('2026-08-01T00:00:00'))).toBe('01 Agu 2026 00:00:00');
+  it('memakai nama bulan Inggris sesuai format FreeRADIUS', () => {
+    expect(freeRadiusDate(new Date('2026-10-26T15:04:05'))).toBe('26 Oct 2026 15:04:05');
+    expect(freeRadiusDate(new Date('2026-08-01T00:00:00'))).toBe('01 Aug 2026 00:00:00');
+    // Regresi: Des/Mei pernah tertulis 'Des'/'Mei' (Indonesia) dan FreeRADIUS
+    // gagal parse Expiration sehingga login ditolak tanpa sebab di perangkat.
+    expect(freeRadiusDate(new Date('2026-12-06T19:10:18'))).toBe('06 Dec 2026 19:10:18');
+    expect(freeRadiusDate(new Date('2026-05-01T00:00:00'))).toBe('01 May 2026 00:00:00');
   });
 });
 
