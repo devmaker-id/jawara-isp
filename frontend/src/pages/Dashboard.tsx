@@ -751,15 +751,15 @@ const Dashboard: React.FC = () => {
 
   if (loading && !data) {
     return (
-      <div className="page-container">
+      <>
         <DashboardHeader overdueCount={0} updatedAt={null} />
         <DashboardSkeleton />
-      </div>
+      </>
     );
   }
 
   return (
-    <div className="page-container">
+    <>
       <DashboardHeader overdueCount={data?.receivable.overdue_count ?? 0} updatedAt={updatedAt} />
 
       {error && (
@@ -901,7 +901,7 @@ const Dashboard: React.FC = () => {
           )}
         </div>
       )}
-    </div>
+    </>
   );
 };
 
