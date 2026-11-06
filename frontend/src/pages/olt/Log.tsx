@@ -109,7 +109,7 @@ const LogOnu: React.FC = () => {
   const [handlersOpen, setHandlersOpen] = useState(false);
   const [handlerSync, setHandlerSync] = useState(false);
   const [handlerAlert, setHandlerAlert] = useState(false);
-  const [handlerGroup, setHandlerGroup] = useState('');
+  const [handlerRoutes, setHandlerRoutes] = useState<Array<{ olt_id: number; whatsapp_group: string }>>([]);
   const [handlerEvents, setHandlerEvents] = useState<string[]>(['ONU_LINKDOWN', 'ONU_DYING_GASP']);
   const [handlerSpacing, setHandlerSpacing] = useState(300);
   const [handlerFlap, setHandlerFlap] = useState(3);
@@ -257,15 +257,15 @@ const LogOnu: React.FC = () => {
         config: {
           inventory_sync: boolean;
           whatsapp_alert: boolean;
-          whatsapp_group: string;
           alert_events: string[];
+          routes: Array<{ olt_id: number; whatsapp_group: string }>;
           spacing_seconds: number;
           flap_threshold: number;
         };
       }).config;
       setHandlerSync(config.inventory_sync);
       setHandlerAlert(config.whatsapp_alert);
-      setHandlerGroup(config.whatsapp_group ?? '');
+      setHandlerRoutes(config.routes ?? []);
       setHandlerEvents(config.alert_events ?? []);
       setHandlerSpacing(config.spacing_seconds ?? 300);
       setHandlerFlap(config.flap_threshold ?? 3);
@@ -279,6 +279,22 @@ const LogOnu: React.FC = () => {
     setHandlerEvents((prev) => (prev.includes(event) ? prev.filter((e) => e !== event) : [...prev, event]));
   };
 
+  const addRoute = () => {
+    const list = devices.data?.rows ?? [];
+    if (list.length === 0) return;
+    const used = new Set(handlerRoutes.map((route) => route.olt_id));
+    const next = list.find((device) => !used.has(device.id)) ?? list[0];
+    setHandlerRoutes((prev) => [...prev, { olt_id: next.id, whatsapp_group: '' }]);
+  };
+
+  const updateRoute = (index: number, patch: Partial<{ olt_id: number; whatsapp_group: string }>) => {
+    setHandlerRoutes((prev) => prev.map((route, i) => (i === index ? { ...route, ...patch } : route)));
+  };
+
+  const removeRoute = (index: number) => {
+    setHandlerRoutes((prev) => prev.filter((_, i) => i !== index));
+  };
+
   const saveHandlers = async () => {
     setHandlerBusy(true);
     setHandlerNote(null);
@@ -286,7 +302,7 @@ const LogOnu: React.FC = () => {
       await api.post('/api/olt/syslog/handlers', {
         inventory_sync: handlerSync,
         whatsapp_alert: handlerAlert,
-        whatsapp_group: handlerGroup,
+        routes: handlerRoutes,
         alert_events: handlerEvents,
         spacing_seconds: handlerSpacing,
         flap_threshold: handlerFlap,
@@ -638,18 +654,50 @@ const LogOnu: React.FC = () => {
 
             {handlerAlert && (
               <>
-                <label className="block text-xs text-slate-300">
-                  ID grup WhatsApp
-                  <input
-                    value={handlerGroup}
-                    onChange={(event) => setHandlerGroup(event.target.value)}
-                    placeholder="123456789@g.us"
-                    className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-900/60 px-3 py-2 font-mono text-sm text-slate-100"
-                  />
+                <div className="text-sm text-slate-200">
+                  <p className="mb-1 text-xs font-medium text-slate-300">Rute alert (OLT → grup WhatsApp):</p>
+                  <div className="space-y-2">
+                    {handlerRoutes.map((route, index) => (
+                      <div key={index} className="flex items-center gap-2">
+                        <select
+                          value={route.olt_id}
+                          onChange={(event) => updateRoute(index, { olt_id: Number(event.target.value) })}
+                          className="min-w-0 flex-1 rounded-lg border border-slate-600 bg-slate-900/60 px-2 py-2 text-xs text-slate-100"
+                        >
+                          {(devices.data?.rows ?? []).map((device) => (
+                            <option key={device.id} value={device.id}>
+                              {device.name}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          value={route.whatsapp_group}
+                          onChange={(event) => updateRoute(index, { whatsapp_group: event.target.value })}
+                          placeholder="123456789@g.us"
+                          className="min-w-0 flex-1 rounded-lg border border-slate-600 bg-slate-900/60 px-3 py-2 font-mono text-xs text-slate-100"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeRoute(index)}
+                          aria-label="Hapus rute"
+                          className="shrink-0 rounded-lg border border-slate-600 px-2 py-2 text-xs text-slate-400 hover:bg-slate-700 hover:text-slate-200"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={addRoute}
+                    className="mt-2 rounded-lg border border-slate-600 px-3 py-1.5 text-xs text-slate-300 transition hover:bg-slate-700"
+                  >
+                    + Tambah rute
+                  </button>
                   <p className="mt-1 text-[11px] text-slate-500">
-                    Ambil dari WhatsApp Gateway → Keamanan &amp; Akses (entri grup).
+                    Setiap OLT bisa diarahkan ke grup berbeda. JID grup ambil dari WhatsApp Gateway.
                   </p>
-                </label>
+                </div>
 
                 <div className="text-sm text-slate-200">
                   <p className="mb-1 text-xs font-medium text-slate-300">Beri tahu saat:</p>

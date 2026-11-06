@@ -603,8 +603,10 @@ export class OltService {
     dto: {
       inventory_sync?: boolean;
       whatsapp_alert?: boolean;
-      whatsapp_group?: string;
+      routes?: Array<{ olt_id: number; whatsapp_group: string }>;
       alert_events?: string[];
+      spacing_seconds?: number;
+      flap_threshold?: number;
     },
     actor: { userId: number; ip: string },
   ) {

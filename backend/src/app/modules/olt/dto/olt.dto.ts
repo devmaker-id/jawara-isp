@@ -12,6 +12,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 
 /**
@@ -251,6 +252,17 @@ export class SetSyslogRetentionDto {
   count?: number;
 }
 
+/** Satu rute alert: syslog dari OLT (olt_id) dikirim ke grup WhatsApp. */
+export class SyslogRouteDto {
+  @IsInt({ message: 'olt_id harus angka bulat.' })
+  @Type(() => Number)
+  olt_id!: number;
+
+  @IsString()
+  @MaxLength(64, { message: 'ID grup WhatsApp maksimal 64 karakter.' })
+  whatsapp_group!: string;
+}
+
 /** Konfigurasi handler event ONU (inventori + alert WhatsApp). */
 export class SetSyslogHandlerConfigDto {
   @IsOptional()
@@ -262,9 +274,10 @@ export class SetSyslogHandlerConfigDto {
   whatsapp_alert?: boolean;
 
   @IsOptional()
-  @IsString()
-  @MaxLength(64, { message: 'ID grup WhatsApp maksimal 64 karakter.' })
-  whatsapp_group?: string;
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SyslogRouteDto)
+  routes?: SyslogRouteDto[];
 
   @IsOptional()
   @IsArray()

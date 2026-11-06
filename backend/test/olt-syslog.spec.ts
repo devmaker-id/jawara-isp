@@ -168,11 +168,11 @@ describe('handler event ONU — normalisasi konfigurasi', () => {
     const config = normalizeHandlerConfig({
       inventory_sync: true,
       whatsapp_alert: true,
-      whatsapp_group: '123@g.us',
+      routes: [{ olt_id: 1, whatsapp_group: '123@g.us' }],
       alert_events: ['ONU_LINKDOWN', 'ONU_DYING_GASP', 'HALO'],
     });
     expect(config.inventory_sync).toBe(true);
-    expect(config.whatsapp_group).toBe('123@g.us');
+    expect(config.routes).toEqual([{ olt_id: 1, whatsapp_group: '123@g.us' }]);
     expect(config.alert_events).toEqual(['ONU_LINKDOWN', 'ONU_DYING_GASP']);
   });
 
@@ -180,7 +180,18 @@ describe('handler event ONU — normalisasi konfigurasi', () => {
     const config = normalizeHandlerConfig({});
     expect(config.inventory_sync).toBe(false);
     expect(config.whatsapp_alert).toBe(false);
-    expect(config.whatsapp_group).toBe('');
+    expect(config.routes).toEqual([]);
+  });
+
+  it('menyaring rute yang tidak valid', () => {
+    const config = normalizeHandlerConfig({
+      routes: [
+        { olt_id: 3, whatsapp_group: '456@g.us' },
+        { olt_id: 'x' as never, whatsapp_group: '789@g.us' },
+        { olt_id: 2, whatsapp_group: '' },
+      ],
+    });
+    expect(config.routes).toEqual([{ olt_id: 3, whatsapp_group: '456@g.us' }]);
   });
 
   it('membatasi spacing_seconds pada rentang 1–3600', () => {

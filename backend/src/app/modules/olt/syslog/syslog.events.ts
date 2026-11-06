@@ -18,18 +18,25 @@ import { parseOnuInfoCtc } from '../vendors/hisfocus/hisfocus.parser';
  *   - inventory_sync : perbarui `olt_onus` (online + last_event + connection_state).
  *   - whatsapp_alert : kirim alert ke group WhatsApp saat status berubah.
  *   - alert_events   : jenis event yang memicu alert (ONU_LINKDOWN, ONU_DYING_GASP, …).
- *   - whatsapp_group : id grup tujuan (dari allowlist WhatsApp Gateway).
+ *   - routes         : daftar rute (olt_id → grup WhatsApp tujuan).
  *
  * Alert dide-duplikasi lewat hasil `applySyslogOnuEvent` (hanya ditulis saat
  * status berubah), sehingga ONU yang mengirim beberapa event down beruntun hanya
  * menghasilkan satu alert, dan satu alert lagi saat kembali up.
  */
 
+/** Rute alert WhatsApp: sumber (OLT) → tujuan (grup). */
+export interface SyslogRoute {
+  olt_id: number;
+  whatsapp_group: string;
+}
+
 export interface SyslogHandlerConfig {
   inventory_sync: boolean;
   whatsapp_alert: boolean;
-  whatsapp_group: string;
   alert_events: string[];
+  /** Rute pengiriman alert per OLT: syslog dari olt_id dikirim ke whatsapp_group. */
+  routes: SyslogRoute[];
   /** Jeda minimum (detik) antar dua pesan WhatsApp untuk ONU yang sama. */
   spacing_seconds: number;
   /** Batas event beruntun untuk ONU yang sama; setelahnya dianggap flap dan pengiriman dihentikan. */
@@ -42,8 +49,8 @@ const CACHE_TTL_MS = 15_000;
 export const DEFAULT_HANDLER_CONFIG: SyslogHandlerConfig = {
   inventory_sync: false,
   whatsapp_alert: false,
-  whatsapp_group: '',
   alert_events: ['ONU_LINKDOWN', 'ONU_DYING_GASP'],
+  routes: [],
   spacing_seconds: 300,
   flap_threshold: 3,
 };
@@ -111,11 +118,22 @@ export function normalizeHandlerConfig(input: Partial<SyslogHandlerConfig>): Sys
   const threshold = Number.isFinite(rawThreshold)
     ? Math.min(Math.max(Math.round(rawThreshold), 1), 100)
     : DEFAULT_HANDLER_CONFIG.flap_threshold;
+  const routes = Array.isArray(input.routes)
+    ? input.routes
+        .filter((route) => route && typeof route.olt_id === 'number' && Number.isFinite(route.olt_id))
+        .map((route) => ({
+          olt_id: Math.trunc(route.olt_id),
+          whatsapp_group: String(route.whatsapp_group ?? '').trim().slice(0, 64),
+        }))
+        .filter((route) => route.whatsapp_group.length > 0)
+        .slice(0, 200)
+    : [];
+
   return {
     inventory_sync: input.inventory_sync === true,
     whatsapp_alert: input.whatsapp_alert === true,
-    whatsapp_group: String(input.whatsapp_group ?? '').trim().slice(0, 64),
     alert_events: alertEvents,
+    routes,
     spacing_seconds: spacing,
     flap_threshold: threshold,
   };
@@ -202,11 +220,13 @@ export class SyslogEventHandlerService {
         ).changed;
       }
 
-      if (
-        config.whatsapp_alert &&
-        config.whatsapp_group &&
-        config.alert_events.includes(parsed.eventType)
-      ) {
+      if (config.whatsapp_alert && config.alert_events.includes(parsed.eventType)) {
+        const destinations = config.routes
+          .filter((route) => route.olt_id === device.id)
+          .map((route) => route.whatsapp_group);
+
+        if (destinations.length === 0) return;
+
         // Bila inventori ikut dilacak, hanya beri tahu pada perubahan status;
         // tanpa pelacakan, beri tahu setiap event yang cocok.
         if (config.inventory_sync && !changed) return;
@@ -215,7 +235,7 @@ export class SyslogEventHandlerService {
           .findOnuAlertContext(device.id, parsed.portId, parsed.onuId, parsed.onuMac)
           .catch(() => null);
         const context = this.buildContext(parsed, row);
-        this.alertWithDedup(config, device.id, device.name, enriched, context);
+        this.alertWithDedup(config, destinations, device.id, device.name, enriched, context);
       }
     } catch (error) {
       this.logger.warn(`Handler event ONU gagal: ${error instanceof Error ? error.message : String(error)}`);
@@ -347,6 +367,7 @@ export class SyslogEventHandlerService {
    */
   private alertWithDedup(
     config: SyslogHandlerConfig,
+    destinations: string[],
     oltId: number,
     oltName: string,
     parsed: ParsedSyslogEvent,
@@ -376,7 +397,9 @@ export class SyslogEventHandlerService {
     const spacingMs = config.spacing_seconds * 1000;
     if (state.lastSentAt === 0 || now - state.lastSentAt >= spacingMs) {
       state.lastSentAt = now;
-      void this.sendAlert(config.whatsapp_group, parsed, oltName, context);
+      for (const group of destinations) {
+        void this.sendAlert(group, parsed, oltName, context);
+      }
     }
 
     if (state.count >= config.flap_threshold) {
