@@ -144,6 +144,17 @@ export class PromptShell {
     return output;
   }
 
+  /**
+   * Simpan konfigurasi ke flash memakai singkatan aman `wr` — BUKAN perintah
+   * penuh `write`, yang pada OLT HiFocus/Hioso membuat layar blank dan me-reboot
+   * perangkat. Tunggu konfirmasi "Configuration file saved ok!".
+   */
+  async writeFile(timeoutMs = 20_000): Promise<string> {
+    this.buffer = '';
+    this.send('wr');
+    return this.waitFor(/Configuration file saved ok!/i, timeoutMs, 'wr');
+  }
+
   async close(): Promise<void> {
     try {
       this.send('exit');
