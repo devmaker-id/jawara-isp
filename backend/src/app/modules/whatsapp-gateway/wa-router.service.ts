@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { WaWorkerClient } from './wa-worker.client';
+import { DatabaseService } from '../../database/database.service';
 
 const run = promisify(execFile);
 
@@ -42,7 +43,10 @@ export class WaRouterService {
   private readonly logger = new Logger(WaRouterService.name);
   private readonly commands: Map<string, CommandDefinition>;
 
-  constructor(private readonly worker: WaWorkerClient) {
+  constructor(
+    private readonly worker: WaWorkerClient,
+    private readonly db: DatabaseService,
+  ) {
     const definitions: CommandDefinition[] = [
       {
         name: 'help',
@@ -71,6 +75,13 @@ export class WaRouterService {
         adminOnly: true,
         usage: '/pelanggan <nomor>',
         handler: async (ctx) => this.lookupCustomer('/pelanggan', ctx),
+      },
+      {
+        name: 'onu_offline',
+        description: 'Daftar ONU offline (di grup sesuai OLT terkait, di DM admin semua)',
+        adminOnly: false,
+        usage: '/onu_offline',
+        handler: async (ctx) => this.onuOffline(ctx),
       },
     ];
     this.commands = new Map(definitions.map((def) => [def.name, def]));
@@ -163,6 +174,59 @@ export class WaRouterService {
     } catch (error) {
       const out = (error as { stdout?: string }).stdout?.trim();
       return { ok: false, reply: out || 'Panel billing tidak merespons. Coba lagi beberapa saat lagi.' };
+    }
+  }
+
+  /**
+   * /onu_offline — daftar ONU offline.
+   * Grup: hanya OLT yang terkait grup itu (dibalik dari routes alert syslog).
+   * DM admin: semua OLT.
+   */
+  private async onuOffline(ctx: CommandContext): Promise<CommandResult> {
+    let oltIds: number[] | null = null; // null = semua OLT (DM admin)
+    if (ctx.chatType === 'group') {
+      oltIds = await this.groupOltIds(ctx.chatId);
+      if (oltIds.length === 0) {
+        return { ok: false, reply: 'Perintah /onu_offline tidak tersedia di grup ini.' };
+      }
+    } else if (!ctx.isAdmin) {
+      return { ok: false, reply: 'Perintah /onu_offline hanya untuk administrator.' };
+    }
+
+    const argv = oltIds ? [oltIds.join(',')] : [];
+    try {
+      const { stdout } = await run('node', [`${REPO}/scripts/onu_offline.mjs`, ...argv], {
+        cwd: REPO,
+        timeout: 20_000,
+        maxBuffer: 256 * 1024,
+      });
+      return { ok: true, reply: stdout.trim() || 'Tidak ada data ONU offline.' };
+    } catch (error) {
+      const out = (error as { stdout?: string }).stdout?.trim();
+      return { ok: false, reply: out || 'Panel tidak merespons. Coba lagi beberapa saat lagi.' };
+    }
+  }
+
+  /**
+   * Balik routes alert syslog (olt_id → grup) menjadi grup → daftar olt_id.
+   * Sumber: tabel `config`, key `olt_syslog_handlers`, field `routes`.
+   */
+  private async groupOltIds(chatId: string): Promise<number[]> {
+    const row = await this.db.queryOne<{ config_value: string }>(
+      "SELECT config_value FROM config WHERE config_key = 'olt_syslog_handlers'",
+    );
+    if (!row?.config_value) return [];
+    try {
+      const cfg = JSON.parse(row.config_value) as {
+        routes?: Array<{ olt_id: number; whatsapp_group: string }>;
+      };
+      const routes = Array.isArray(cfg.routes) ? cfg.routes : [];
+      return routes
+        .filter((route) => route && String(route.whatsapp_group) === chatId)
+        .map((route) => Number(route.olt_id))
+        .filter((n) => Number.isInteger(n) && n > 0);
+    } catch {
+      return [];
     }
   }
 }
