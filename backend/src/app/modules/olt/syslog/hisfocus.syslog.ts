@@ -1,143 +1,84 @@
-import {
-  OltSyslogDriver,
-  SyslogClientState,
-  SyslogClientTarget,
-  openSyslogSession,
-} from './olt-syslog-driver';
-import { PromptShell } from '../transport/prompt-shell';
+import { OltSyslogDriver, SyslogClientState, SyslogClientTarget } from './olt-syslog-driver';
 import { OltConnection } from '../driver/olt-driver';
 
 /**
- * Driver Syslog Client HiFocus / Hioso (EPON).
+ * Driver Syslog Client HiFocus / Hioso (EPON) lewat WEB GUI (HTTP :80),
+ * BUKAN lewat CLI telnet.
  *
- * Sintaks terverifikasi:
+ * Alasan: command CLI `syslog server <ip>` memicu restart daemon syslog yang
+ * pada firmware ini menjadi REBOOT OLT. Web GUI memakai handler goform yang
+ * memperbarui target syslog secara graceful, tanpa reboot:
  *
- *   baca  : show running-config
- *   set   : configure terminal
- *           syslog server <ip>
- *   simpan: session.writeFile()
+ *   baca  : GET /logServer.asp                       → `syslogInfo = new Array("<ip>")`
+ *   set   : GET /goform/setSyslogServ?logServ_ip=<ip>
+ *   simpan: GET /goform/saveConfiguration
  *
- * Port tetap UDP/514.
- * Disable menggunakan syslog server 0.0.0.0.
- *
- * Catatan:
- * Perintah disable dapat menyebabkan sesi CLI terputus
- * karena daemon syslog mengalami restart.
+ * Autentikasi HTTP Basic — kredensial SAMA dengan telnet (username/password
+ * perangkat, sudah didekripsi dari olt_devices oleh pemanggil).
  */
 
+const WEB_PORT = 80;
 const DISABLED_IP = '0.0.0.0';
+const FETCH_TIMEOUT_MS = 20_000;
 
-/** Menghasilkan command konfigurasi (keluar dari config mode sebelum simpan). */
-export function hisfocusApplyCommands(target: SyslogClientTarget): string[] {
-  const ip = target.enabled ? target.collectorIp : DISABLED_IP;
-
-  // `exit` meninggalkan config mode ke privileged supaya `writeFile()` (wr)
-  // dikirim dari mode yang benar — mengetik simpan dari dalam config mode
-  // inilah yang membuat perangkat blank/reboot.
-  return ['configure terminal', `syslog server ${ip}`, 'exit'];
-}
-
-/** Parse konfigurasi syslog dari running-config. */
-export function parseHisfocusRunningConfig(output: string): {
-  enabled: boolean;
-  collectorIp: string | null;
-} {
-  const match = output.match(/syslog\s+server\s+([\d.]+)/i);
-
-  if (!match) {
-    return {
-      enabled: false,
-      collectorIp: null,
-    };
-  }
-
-  const ip = match[1];
-
-  return {
-    enabled: ip !== DISABLED_IP,
-    collectorIp: ip,
-  };
-}
-
-/** Menjalankan urutan command CLI. */
-async function runSequence(shell: PromptShell, commands: string[]): Promise<string> {
-  const outputs: string[] = [];
-
-  for (const command of commands) {
-    const output = await shell.run(command, 20_000);
-    outputs.push(output);
-  }
-
-  return outputs.join('\n');
+/** Ambil IP syslog dari halaman `logServer.asp` (`syslogInfo = new Array("…")`). */
+export function parseLogServerIp(html: string): string | null {
+  const match = html.match(/syslogInfo\s*=\s*new\s+Array\s*\(\s*"([^"]*)"\s*\)/i);
+  return match ? match[1] : null;
 }
 
 export class HisfocusSyslogDriver implements OltSyslogDriver {
-  private shell: PromptShell | null = null;
+  private readonly baseUrl: string;
+  private readonly auth: string;
 
-  constructor(private readonly connection: OltConnection) {}
-
-  private async getSession(): Promise<PromptShell> {
-    if (!this.shell) {
-      this.shell = await openSyslogSession(this.connection);
-    }
-
-    return this.shell;
+  constructor(connection: OltConnection) {
+    this.baseUrl = `http://${connection.host}:${WEB_PORT}`;
+    this.auth = `Basic ${Buffer.from(`${connection.username}:${connection.password}`).toString('base64')}`;
   }
 
-  /** Membaca konfigurasi syslog. */
   async read(): Promise<SyslogClientState> {
-    const shell = await this.getSession();
-
-    const raw = await shell.run('show running-config', 30_000);
-
-    const parsed = parseHisfocusRunningConfig(raw);
-
+    const html = await this.request('/logServer.asp');
+    const ip = parseLogServerIp(html);
+    const enabled = ip !== null && ip !== '' && ip !== DISABLED_IP;
     return {
-      enabled: parsed.enabled,
-      collectorIp: parsed.collectorIp,
+      enabled,
+      collectorIp: enabled ? ip : null,
       collectorPort: 514,
-      readBack: raw.slice(0, 2000),
+      readBack: html.slice(0, 2000),
     };
   }
 
-  /** Menerapkan dan menyimpan konfigurasi syslog. */
   async apply(target: SyslogClientTarget): Promise<SyslogClientState> {
-    const shell = await this.getSession();
-    const commands = hisfocusApplyCommands(target);
-
-    if (target.enabled) {
-      // Enable: konfigurasi → simpan.
-      await runSequence(shell, commands);
-      await shell.writeFile();
-    } else {
-      // Disable: konfigurasi dapat menyebabkan sesi terputus.
-      try {
-        await runSequence(shell, commands);
-      } catch {
-        // Kemungkinan sesi terputus akibat restart daemon syslog.
-      }
-
-      // Tutup sesi lama dan buat koneksi baru.
-      await shell.close().catch(() => undefined);
-      this.shell = null;
-
-      const fresh = await this.getSession();
-
-      // Simpan melalui mekanisme session, bukan command CLI.
-      await fresh.writeFile();
-    }
-
-    // Baca ulang konfigurasi untuk memastikan hasil penerapan.
+    const ip = target.enabled ? target.collectorIp : DISABLED_IP;
+    await this.request(`/goform/setSyslogServ?logServ_ip=${encodeURIComponent(ip)}`);
+    await this.request('/goform/saveConfiguration');
     return this.read();
   }
 
-  /** Menutup koneksi CLI. */
   async close(): Promise<void> {
-    const shell = this.shell;
-    this.shell = null;
+    // HTTP stateless — tidak ada sesi yang perlu ditutup.
+  }
 
-    if (shell) {
-      await shell.close().catch(() => undefined);
+  private async request(path: string): Promise<string> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const response = await fetch(`${this.baseUrl}${path}`, {
+        headers: { Authorization: this.auth },
+        signal: controller.signal,
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        throw new Error(`Web GUI OLT menjawab ${response.status}: ${text.slice(0, 160)}`);
+      }
+      return text;
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error(`Web GUI OLT tidak menjawab dalam ${FETCH_TIMEOUT_MS / 1000} detik.`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
     }
   }
 }

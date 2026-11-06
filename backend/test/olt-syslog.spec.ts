@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  hisfocusApplyCommands,
-  parseHisfocusRunningConfig,
-} from '../src/app/modules/olt/syslog/hisfocus.syslog';
+import { parseLogServerIp } from '../src/app/modules/olt/syslog/hisfocus.syslog';
 import {
   DEFAULT_VSOL_EVENT_SPECS,
   vsolApplyCommands,
@@ -14,34 +11,17 @@ import { parseSyslogEvent } from '../src/app/modules/olt/syslog/syslog.parser';
 import { normalizeRetentionPolicy } from '../src/app/modules/olt/syslog/syslog.retention';
 import { normalizeHandlerConfig } from '../src/app/modules/olt/syslog/syslog.events';
 
-describe('driver syslog — HiFocus (EPON)', () => {
-  it('enable → configure terminal + syslog server <ip> + exit', () => {
-    const cmds = hisfocusApplyCommands({ enabled: true, collectorIp: '192.168.76.254' });
-    expect(cmds).toEqual(['configure terminal', 'syslog server 192.168.76.254', 'exit']);
+describe('driver syslog — HiFocus (web GUI)', () => {
+  it('parse IP dari logServer.asp', () => {
+    expect(parseLogServerIp('var syslogInfo=new Array("10.200.10.10");')).toBe('10.200.10.10');
   });
 
-  it('disable → configure terminal + syslog server 0.0.0.0 + exit', () => {
-    const cmds = hisfocusApplyCommands({ enabled: false, collectorIp: '192.168.76.254' });
-    expect(cmds).toEqual(['configure terminal', 'syslog server 0.0.0.0', 'exit']);
+  it('parse 0.0.0.0 (disabled)', () => {
+    expect(parseLogServerIp('var syslogInfo=new Array("0.0.0.0");')).toBe('0.0.0.0');
   });
 
-  it('parse running-config mencari syslog server', () => {
-    const out = '! Syslog configuration\nsyslog server 192.168.76.254\nhostname OLT_BIBITNET';
-    expect(parseHisfocusRunningConfig(out)).toEqual({ enabled: true, collectorIp: '192.168.76.254' });
-  });
-
-  it('parse 0.0.0.0 = disabled', () => {
-    expect(parseHisfocusRunningConfig('syslog server 0.0.0.0')).toEqual({
-      enabled: false,
-      collectorIp: '0.0.0.0',
-    });
-  });
-
-  it('tanpa baris syslog = disabled/null', () => {
-    expect(parseHisfocusRunningConfig('hostname OLT_BIBITNET')).toEqual({
-      enabled: false,
-      collectorIp: null,
-    });
+  it('tanpa syslogInfo = null', () => {
+    expect(parseLogServerIp('var x = 1;')).toBeNull();
   });
 });
 
