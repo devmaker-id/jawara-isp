@@ -934,7 +934,8 @@ export class OltRepository {
     opticalReadAt: Date | null;
   } | null> {
     const base = `
-      SELECT o.onu_name, o.serial_number, o.onu_mac,
+      SELECT COALESCE(NULLIF(o.onu_name, ''), NULLIF(o.description, '')) AS onu_name,
+             o.serial_number, o.onu_mac,
              o.rx_power_olt, o.rx_power_onu, o.optical_read_at,
              c.name AS customer_name, c.internet_no AS internet_no
         FROM olt_onus o

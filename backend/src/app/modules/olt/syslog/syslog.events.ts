@@ -45,6 +45,8 @@ export interface SyslogHandlerConfig {
 
 const CONFIG_KEY = 'olt_syslog_handlers';
 const CACHE_TTL_MS = 15_000;
+/** Jeda minimum antar pembacaan redaman untuk ONU yang sama (anti-flap). */
+const OPTICAL_REFRESH_COOLDOWN_MS = 60_000;
 
 export const DEFAULT_HANDLER_CONFIG: SyslogHandlerConfig = {
   inventory_sync: false,
@@ -147,6 +149,8 @@ export class SyslogEventHandlerService {
   private readonly flaps = new Map<string, FlapState>();
   /** ONU yang sedang diprobe telnet-nya — cegah probe ganda saat flap. */
   private readonly probing = new Set<string>();
+  /** Kapan terakhir redaman ONU dibaca — cegah pembacaan beruntun saat flap. */
+  private readonly lastOpticalRefresh = new Map<string, number>();
 
   constructor(
     private readonly db: DatabaseService,
@@ -218,6 +222,12 @@ export class SyslogEventHandlerService {
             connectionState: connectionState ?? 'OFFLINE',
           })
         ).changed;
+      }
+
+      // Refresh redaman dari OLT supaya DB (dan alert yang menyusul) memuat
+      // nilai terbaru, bukan hasil sinkronisasi terakhir yang mungkin basi.
+      if (parsed.portId && parsed.onuId) {
+        await this.refreshOnuOptical(device.id, parsed).catch(() => undefined);
       }
 
       if (config.whatsapp_alert && config.alert_events.includes(parsed.eventType)) {
@@ -292,6 +302,55 @@ export class SyslogEventHandlerService {
       return null;
     } finally {
       this.probing.delete(key);
+    }
+  }
+
+  /**
+   * Baca redaman ONU dari OLT dan simpan ke `olt_onus` saat event masuk.
+   *
+   * VSOL membawa redaman pada `readOnus` (satu port, beberapa perintah); HiFocus
+   * memakai `readOptical` per ONU. Pembacaan dibatasi satu per ONU per
+   * `OPTICAL_REFRESH_COOLDOWN_MS` supaya flap tidak membanjiri perangkat. Baca-saja.
+   */
+  private async refreshOnuOptical(deviceId: number, parsed: ParsedSyslogEvent): Promise<void> {
+    if (!parsed.portId || !parsed.onuId) return;
+    const device = await this.repository.findDevice(deviceId);
+    if (!device) return;
+    const key = `${deviceId}:${parsed.portId}/${parsed.onuId}`;
+    const last = this.lastOpticalRefresh.get(key);
+    if (last && Date.now() - last < OPTICAL_REFRESH_COOLDOWN_MS) return;
+    this.lastOpticalRefresh.set(key, Date.now());
+
+    try {
+      const adapter = createAdapter(this.buildConnection(device));
+      try {
+        await adapter.open();
+        if (adapter.opticalInInventory) {
+          const onus = await adapter.readOnus(parsed.portId);
+          const target = onus.find((onu) => onu.onuId === parsed.onuId);
+          if (target && (target.rxPowerOnu != null || target.rxPowerOlt != null)) {
+            await this.repository.saveOptical(device.id, parsed.portId, parsed.onuId, {
+              rxPowerOnu: target.rxPowerOnu,
+              rxPowerOlt: target.rxPowerOlt,
+              txPower: target.txPower,
+              temperature: target.temperature,
+              voltage: target.voltage,
+              txBias: target.txBias,
+            });
+          }
+        } else if (adapter.readOptical) {
+          const optical = await adapter.readOptical(parsed.portId, parsed.onuId);
+          if (optical) {
+            await this.repository.saveOptical(device.id, parsed.portId, parsed.onuId, optical);
+          }
+        }
+      } finally {
+        await adapter.close().catch(() => undefined);
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Refresh redaman ONU gagal (${device.id} ${parsed.portId}/${parsed.onuId}): ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 

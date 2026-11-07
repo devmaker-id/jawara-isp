@@ -47,7 +47,8 @@ menu **MikroTik** dan **OLT**, yang hanya dibuka sebentar oleh operator.
 
 **OLT / ONU**
 - Dua vendor: VSOL (SSH) dan HiFocus/HiOs (telnet) — inventori ONU, redaman, status
-- Kolektor syslog (UDP/514), deteksi ONU offline + sebabnya (LOS / mati listrik / auth gagal)
+- Kolektor syslog (UDP/514), deteksi ONU offline + sebabnya (LOS / mati listrik / auth gagal),
+  dan refresh redaman + nama ONU ke DB setiap event masuk
 - Pemasangan ONU ke pelanggan lewat Nomor Internet; laporan ONU offline via WhatsApp
 
 **WhatsApp Gateway** (milik Jawara-ISP sendiri)
