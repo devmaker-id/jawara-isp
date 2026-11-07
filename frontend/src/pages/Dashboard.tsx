@@ -258,7 +258,7 @@ const DashboardHeader: React.FC<{
     <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
       <div>
         <nav aria-label="Breadcrumb" className="mb-1 flex items-center gap-1.5 text-[11px] text-slate-500">
-          <Link to="/" className="hover:text-slate-300">
+          <Link to="/dashboard" className="hover:text-slate-300">
             Dasbor
           </Link>
           <span aria-hidden="true">/</span>

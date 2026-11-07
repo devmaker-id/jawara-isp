@@ -19,7 +19,7 @@ export interface MenuItemConfig {
 // fitur baru hanya cukup mengubah daftar ini (dan menambahkan route sedemikian
 // rupa saat item ini siap dipakai).
 export const menuItems: MenuItemConfig[] = [
-  { path: '/', label: 'Dashboard', icon: 'M3 12l9-9 9 9M5 10v10h14V10', available: true, roles: ['admin', 'operator'] },
+  { path: '/dashboard', label: 'Dashboard', icon: 'M3 12l9-9 9 9M5 10v10h14V10', available: true, roles: ['admin', 'operator'] },
   { path: '/invoices', label: 'Tagihan', icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z', available: true, roles: ['admin', 'operator', 'resseler'] },
   { path: '/pembayaran', label: 'Pembayaran', icon: 'M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293a1 1 0 001.414 1.414L11 13H19m-3 0H5m3 0h2m-2 4h2m-2 4h2', available: true, roles: ['admin', 'operator'] },
   {

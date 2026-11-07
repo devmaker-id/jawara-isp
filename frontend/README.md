@@ -25,6 +25,12 @@ src/
   utils/              voucher-print, format, dll.
 ```
 
+## Rute
+
+- `/` — halaman referensi/landing publik (tombol "Masuk" terpisah, tanpa harga & tanpa daftar).
+- `/login` — form masuk.
+- `/dashboard` — beranda panel setelah masuk; menu lain di balik guard role (`PrivateRoute`/`RoleRoute`).
+
 ## Prasyarat
 
 - Node.js 20+ (produksi: Node 22)

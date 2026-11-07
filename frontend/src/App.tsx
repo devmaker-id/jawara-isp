@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { BrandingProvider } from './contexts/BrandingContext';
 import Layout from './components/Layout';
 import Login from './pages/Login';
+import Landing from './pages/Landing';
 import Dashboard from './pages/Dashboard';
 import Customers from './pages/Customers';
 import Invoices from './pages/Invoices';
@@ -64,7 +65,7 @@ const RoleRoute: React.FC<{ roles: string[]; children: React.ReactNode }> = ({
   }
   if (!user) return <Navigate to="/login" replace />;
   if (!roles.includes(user.role)) {
-    return <Navigate to={user.role === 'resseler' ? '/layanan/hotspot' : '/'} replace />;
+    return <Navigate to={user.role === 'resseler' ? '/layanan/hotspot' : '/dashboard'} replace />;
   }
   return <>{children}</>;
 };
@@ -94,10 +95,11 @@ const AppContent: React.FC = () => {
   return (
     <BrowserRouter>
       <Routes>
+        <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />
         <Route element={<Layout />}>
           <Route
-            path="/"
+            path="/dashboard"
             element={
               <PrivateRoute>
                 <HomeRoute />

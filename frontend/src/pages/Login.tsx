@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Navigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useBranding } from '../contexts/BrandingContext';
 
@@ -45,9 +45,12 @@ const Login: React.FC = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
+  const { user, login } = useAuth();
   const brand = useBranding();
   const navigate = useNavigate();
+
+  // Sudah masuk → langsung ke panel, bukan melihat form login lagi.
+  if (user) return <Navigate to="/dashboard" replace />;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,7 +59,7 @@ const Login: React.FC = () => {
     const success = await login(email, password);
     setLoading(false);
     if (success) {
-      navigate('/');
+      navigate('/dashboard');
     } else {
       setError('Email atau password salah');
     }

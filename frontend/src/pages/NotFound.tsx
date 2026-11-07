@@ -15,7 +15,7 @@ const NotFound: React.FC = () => {
           URL yang Anda buka tidak tersedia atau sudah dipindahkan.
         </p>
         <Link
-          to="/"
+          to="/dashboard"
           className="inline-block px-4 py-2 rounded-lg text-sm font-medium text-white bg-cyan-500 hover:bg-cyan-400 transition"
         >
           Kembali ke Dashboard

@@ -45,7 +45,7 @@ const BrandMark: React.FC<{ onClick?: () => void; compact?: boolean }> = ({
 
   return (
     <Link
-      to="/"
+      to="/dashboard"
       onClick={onClick}
       className="flex items-center gap-2.5 rounded-lg transition hover:opacity-90"
       aria-label={`${brand.name} — ke dashboard`}
