@@ -2,19 +2,43 @@ import React from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useBranding } from '../contexts/BrandingContext';
+import { useTheme } from '../hooks/useTheme';
 
 /**
  * Halaman referensi (bukan beranda komersial) yang tampil sebelum login.
  *
  * Tidak memuat harga, tidak memuat tombol pendaftaran. Tujuannya menjelaskan
  * kenapa proyek dibangun dan teknologi yang dipakai, dengan satu tombol
- * "Masuk" terpisah menuju /login.
+ * "Masuk" terpisah menuju /login. Sepenuhnya mengikuti tema siang/malam
+ * (kelas slate dibalik lewat CSS variable, sama seperti panel).
  */
 
 const FullScreenSpinner: React.FC = () => (
-  <div className="flex h-screen items-center justify-center bg-[#05080c]">
+  <div className="flex h-screen items-center justify-center bg-slate-900">
     <div className="h-12 w-12 animate-spin rounded-full border-b-2 border-cyan-400" />
   </div>
+);
+
+const SunIcon: React.FC = () => (
+  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="4" strokeWidth={2} />
+    <path
+      strokeLinecap="round"
+      strokeWidth={2}
+      d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"
+    />
+  </svg>
+);
+
+const MoonIcon: React.FC = () => (
+  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"
+    />
+  </svg>
 );
 
 interface Tech {
@@ -60,69 +84,59 @@ const REASONS: Reason[] = [
 const Landing: React.FC = () => {
   const { user, loading } = useAuth();
   const brand = useBranding();
+  const { isDark, toggle } = useTheme();
 
   if (loading) return <FullScreenSpinner />;
   if (user) return <Navigate to="/dashboard" replace />;
 
   return (
-    <div className="relative min-h-screen w-full overflow-hidden bg-[#05080c] text-slate-100">
-      {/* ===== Latar belakang (senada halaman login) ===== */}
-      <div aria-hidden className="pointer-events-none absolute inset-0">
-        <div
-          className="absolute inset-0"
-          style={{
-            background:
-              'radial-gradient(ellipse at top left, rgba(34,211,238,0.14), transparent 55%), radial-gradient(ellipse at bottom right, rgba(16,185,129,0.10), transparent 60%)',
-          }}
-        />
-        <div
-          className="absolute inset-0"
-          style={{
-            backgroundImage:
-              'linear-gradient(rgba(148,163,184,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,0.06) 1px, transparent 1px)',
-            backgroundSize: '48px 48px',
-          }}
-        />
-        <div className="absolute -left-24 -top-24 h-96 w-96 rounded-full bg-cyan-500/15 blur-3xl" />
-        <div className="absolute -bottom-28 -right-16 h-96 w-96 rounded-full bg-emerald-500/10 blur-3xl" />
-      </div>
-
-      <div className="relative z-10 mx-auto w-full max-w-5xl px-5 py-8 sm:px-8">
-        {/* ===== Nav ===== */}
-        <header className="flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <img
-              src={brand.logo_url}
-              alt=""
-              className="h-10 w-10 rounded-xl object-contain ring-1 ring-white/15"
-              onError={(e) => {
-                (e.currentTarget as HTMLImageElement).style.display = 'none';
-              }}
-            />
-            <div className="leading-tight">
-              <p className="text-base font-bold text-white">{brand.name}</p>
-              {brand.tagline && <p className="text-xs text-slate-400">{brand.tagline}</p>}
-            </div>
+    <div className="min-h-screen bg-slate-900 text-slate-100">
+      {/* ===== Nav ===== */}
+      <header className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-5 sm:px-8">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <img
+            src={brand.logo_url}
+            alt=""
+            className="h-10 w-10 shrink-0 rounded-xl object-contain ring-1 ring-slate-700/60"
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).style.display = 'none';
+            }}
+          />
+          <div className="min-w-0 leading-tight">
+            <p className="truncate text-base font-bold text-white">{brand.name}</p>
+            {brand.tagline && <p className="truncate text-xs text-slate-400">{brand.tagline}</p>}
           </div>
-          {/* Tombol login terpisah — satu-satunya aksi akun di halaman ini. */}
+        </div>
+
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={toggle}
+            title={isDark ? 'Mode siang' : 'Mode malam'}
+            aria-label={isDark ? 'Aktifkan mode siang' : 'Aktifkan mode malam'}
+            className="rounded-lg border border-slate-700/60 p-2 text-slate-300 transition hover:border-slate-600 hover:bg-slate-700/40 hover:text-white"
+          >
+            {isDark ? <SunIcon /> : <MoonIcon />}
+          </button>
           <Link
             to="/login"
-            className="rounded-lg bg-cyan-500 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-cyan-500/25 transition hover:bg-cyan-400"
+            className="rounded-lg bg-cyan-500 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 transition hover:bg-cyan-400"
           >
             Masuk
           </Link>
-        </header>
+        </div>
+      </header>
 
+      <main className="mx-auto max-w-5xl px-4 pb-16 sm:px-8">
         {/* ===== Hero ===== */}
-        <section className="pt-16 pb-14 text-center sm:pt-24">
-          <span className="inline-flex items-center gap-2 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-300">
+        <section className="pt-12 pb-14 text-center sm:pt-20">
+          <span className="inline-flex items-center gap-2 rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1 text-xs font-medium text-cyan-300">
             Referensi projek · bukan produk berbayar
           </span>
-          <h1 className="mx-auto mt-6 max-w-3xl text-4xl font-bold leading-tight text-white sm:text-5xl">
-            Panel billing ISP berbasis{' '}
-            <span className="text-cyan-300">FreeRADIUS</span>
+          <h1 className="mx-auto mt-6 max-w-3xl text-3xl font-bold leading-tight text-white sm:text-4xl lg:text-5xl">
+            Panel billing ISP berbasis <span className="text-cyan-300">FreeRADIUS</span>
           </h1>
-          <p className="mx-auto mt-5 max-w-2xl text-base leading-relaxed text-slate-300">
+          <p className="mx-auto mt-5 max-w-2xl text-base leading-relaxed text-slate-400">
             Antarmuka operasional untuk pelanggan PPPoE &amp; hotspot, voucher, penagihan,
             pemantauan MikroTik/OLT, dan notifikasi WhatsApp. Halaman ini dibuat sebagai
             referensi teknis — bukan untuk menjual layanan, tanpa harga dan tanpa pendaftaran.
@@ -130,13 +144,13 @@ const Landing: React.FC = () => {
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
             <Link
               to="/login"
-              className="rounded-lg bg-cyan-500 px-6 py-3 font-semibold text-white shadow-lg shadow-cyan-500/25 transition hover:bg-cyan-400"
+              className="rounded-lg bg-cyan-500 px-6 py-3 font-semibold text-white shadow-lg shadow-cyan-500/20 transition hover:bg-cyan-400"
             >
               Masuk ke Panel
             </Link>
             <a
               href="#teknologi"
-              className="rounded-lg border border-slate-600/60 px-6 py-3 font-semibold text-slate-300 transition hover:border-slate-500 hover:bg-slate-800/60 hover:text-white"
+              className="rounded-lg border border-slate-700/60 px-6 py-3 font-semibold text-slate-300 transition hover:border-slate-600 hover:bg-slate-800 hover:text-white"
             >
               Lihat teknologi
             </a>
@@ -144,7 +158,7 @@ const Landing: React.FC = () => {
         </section>
 
         {/* ===== Mengapa dibangun ===== */}
-        <section id="mengapa" className="pt-8">
+        <section id="mengapa">
           <h2 className="text-2xl font-bold text-white">Kenapa proyek ini dibangun</h2>
           <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-400">
             Menjalankan ISP butuh satu sumber data yang tepercaya dan proses yang otomatis,
@@ -154,7 +168,7 @@ const Landing: React.FC = () => {
             {REASONS.map((reason) => (
               <div
                 key={reason.title}
-                className="rounded-xl border border-slate-700/60 bg-slate-900/50 p-5 backdrop-blur-sm"
+                className="rounded-xl border border-slate-700/60 bg-slate-800 p-5"
               >
                 <div className="mb-2 h-1 w-10 rounded bg-gradient-to-r from-cyan-500 to-emerald-400" />
                 <h3 className="text-base font-semibold text-white">{reason.title}</h3>
@@ -165,7 +179,7 @@ const Landing: React.FC = () => {
         </section>
 
         {/* ===== Teknologi ===== */}
-        <section id="teknologi" className="pt-16">
+        <section id="teknologi" className="pt-14 sm:pt-16">
           <h2 className="text-2xl font-bold text-white">Teknologi yang digunakan</h2>
           <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-400">
             Tiap lapisan memakai alat yang spesifik satu tugas — tanpa lapisan yang mubazir.
@@ -174,7 +188,7 @@ const Landing: React.FC = () => {
             {TECHNOLOGIES.map((tech) => (
               <div
                 key={tech.name}
-                className="rounded-lg border border-slate-700/60 bg-slate-900/40 p-4 transition hover:border-cyan-400/30 hover:bg-slate-900/70"
+                className="rounded-lg border border-slate-700/60 bg-slate-800 p-4 transition hover:border-cyan-500/40"
               >
                 <p className="font-semibold text-cyan-300">{tech.name}</p>
                 <p className="mt-1 text-sm leading-relaxed text-slate-400">{tech.detail}</p>
@@ -184,27 +198,37 @@ const Landing: React.FC = () => {
         </section>
 
         {/* ===== Footer ===== */}
-        <footer className="mt-16 border-t border-slate-700/50 py-8 text-center text-sm text-slate-500">
-          <p className="font-semibold text-slate-300">{brand.name}</p>
+        <footer className="mt-14 border-t border-slate-700/50 pt-8 text-center text-sm text-slate-400 sm:mt-16">
+          <p className="font-semibold text-white">{brand.name}</p>
           {brand.tagline && <p className="mt-0.5 text-xs text-slate-500">{brand.tagline}</p>}
-          <div className="mt-4 flex items-center justify-center gap-2 text-xs">
-            <Link to="/login" className="font-medium text-slate-300 transition hover:text-cyan-300">
-              Masuk
-            </Link>
-            <span className="text-slate-600">·</span>
+          <p className="mt-4 text-xs text-slate-500">
+            Dibuat oleh{' '}
+            <a
+              href="https://github.com/devmaker-id"
+              target="_blank"
+              rel="noreferrer"
+              className="font-medium text-slate-400 transition hover:text-cyan-300"
+            >
+              devmaker
+            </a>
+            {' · '}
             <a
               href="https://github.com/devmaker-id/jawara-isp"
               target="_blank"
               rel="noreferrer"
-              className="transition hover:text-cyan-300"
+              className="font-medium text-slate-400 transition hover:text-cyan-300"
             >
               Sumber kode
             </a>
-            <span className="text-slate-600">·</span>
-            <span>{new Date().getFullYear()}</span>
-          </div>
+            {' · '}
+            <Link to="/login" className="transition hover:text-cyan-300">
+              Masuk
+            </Link>
+            {' · '}
+            {new Date().getFullYear()}
+          </p>
         </footer>
-      </div>
+      </main>
     </div>
   );
 };

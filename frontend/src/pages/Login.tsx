@@ -66,7 +66,7 @@ const Login: React.FC = () => {
   };
 
   return (
-    <div className="relative min-h-screen w-full overflow-hidden bg-[#05080c] flex items-center justify-center px-4 py-12 sm:px-6">
+    <div className="relative min-h-screen w-full overflow-hidden bg-slate-900 flex items-center justify-center px-4 py-12 sm:px-6">
       {/* ===== Latar belakang (linux networking, gelap penuh) ===== */}
       <div aria-hidden className="pointer-events-none absolute inset-0">
         {/* glow radial (cyan + hijau terminal) */}
@@ -99,7 +99,7 @@ const Login: React.FC = () => {
       <div className="relative z-10 w-full max-w-md">
         {/* pendar cahaya di belakang kartu supaya terpisah dari latar */}
         <div aria-hidden className="absolute -inset-3 rounded-3xl bg-cyan-500/10 blur-2xl" />
-        <div className="relative overflow-hidden rounded-2xl border border-slate-600/60 bg-slate-900/70 shadow-2xl shadow-black/60 backdrop-blur-2xl">
+        <div className="relative overflow-hidden rounded-2xl border border-slate-600/60 bg-slate-800 shadow-2xl shadow-black/60 backdrop-blur-2xl">
           {/* aksen atas: gradasi cyan → emerald, senada terminal */}
           <div className="h-1 w-full bg-gradient-to-r from-cyan-500 via-cyan-400/50 to-emerald-400" />
           <div className="p-6 sm:p-8">
