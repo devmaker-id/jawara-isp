@@ -83,6 +83,6 @@ describe('WaRouterService', () => {
 
   it('daftar perintah tercatat untuk halaman Command Router', () => {
     const names = router.list().map((row) => row.name);
-    expect(names).toEqual(['help', 'status', 'inet', 'pelanggan']);
+    expect(names).toEqual(['help', 'status', 'inet', 'pelanggan', 'onu_offline']);
   });
 });

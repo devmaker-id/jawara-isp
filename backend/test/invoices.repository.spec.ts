@@ -170,7 +170,7 @@ describe('InvoicesRepository', () => {
       const { db, log } = scriptedDb((sql) => {
         if (sql.startsWith('INSERT INTO invoices')) return [{ insertId: 9, affectedRows: 1 }];
         if (sql.includes('FROM customers')) return [{ name: 'Pelanggan Uji' }];
-        if (sql.includes('invoice_number LIKE')) return [{ invoice_number: 'INV-2026-0004' }];
+        if (sql.includes('invoice_number REGEXP')) return [{ invoice_number: 'INV-2026-0004' }];
         if (sql.includes('FROM invoices WHERE id = ?')) return [created];
         return [];
       });
@@ -210,7 +210,7 @@ describe('InvoicesRepository', () => {
       const { db, conn, log } = scriptedDb((sql) => {
         if (sql.startsWith('INSERT INTO invoices')) return [{ insertId: 9, affectedRows: 1 }];
         if (sql.includes('FROM customers')) return [{ name: 'Pelanggan Uji' }];
-        if (sql.includes('invoice_number LIKE')) return [];
+        if (sql.includes('invoice_number REGEXP')) return [];
         if (sql.includes('FROM invoices WHERE id = ?')) return [created];
         return [];
       });
@@ -248,7 +248,7 @@ describe('InvoicesRepository', () => {
       const { db, conn } = scriptedDb((sql) => {
         if (sql.startsWith('INSERT INTO invoices')) return [{ insertId: 9, affectedRows: 1 }];
         if (sql.includes('FROM customers')) return [{ name: 'Pelanggan Uji' }];
-        if (sql.includes('invoice_number LIKE')) return [];
+        if (sql.includes('invoice_number REGEXP')) return [];
         if (sql.includes('FROM invoices WHERE id = ?')) return [row({ id: 9 })];
         if (sql.startsWith('INSERT INTO finance_events')) {
           throw Object.assign(new Error('Unknown table finance_events'), { code: 'ER_NO_SUCH_TABLE' });
