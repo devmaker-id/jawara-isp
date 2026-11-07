@@ -81,5 +81,4 @@ export interface AuditLog {
 export interface Config {
   db_host: string;
   freeradius_host: string;
-  mikrotik_host: string;
 }

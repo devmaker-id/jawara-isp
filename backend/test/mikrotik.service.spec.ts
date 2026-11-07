@@ -6,43 +6,42 @@ import { RouterOsClient, RouterOsError } from '../src/app/modules/mikrotik/route
 // Tes pemetaan service: client RouterOS di-spy, database dan konfigurasi
 // diganti objek palsu. Tidak ada koneksi ke router sungguhan.
 const config = {
-  getMikrotikConfig: async () => ({
-    host: '192.168.100.254',
-    port: 1998,
-    user: 'hermes',
-    password: 'rahasia',
-  }),
-  database: { name: 'isp_billing_test' },
-  freeradius: { host: '127.0.0.1', port: 1812, secret: 'x' },
-  mikrotik: { host: '192.168.100.254', port: 1998, user: 'hermes', password: 'rahasia' },
   secretKey: 'kunci-tes-jangan-dipakai',
-};
+} as never;
 
-// Tabel mikrotik_devices belum ada di tes unit: service harus jatuh ke
-// konfigurasi tunggal lama (perilaku yang diuji di sini).
-const makeDevices = (overrides: Partial<Record<string, unknown>> = {}) => ({
-  hasTable: async () => false,
-  list: async () => [],
-  find: async () => null,
-  findByName: async () => null,
-  firstActive: async () => null,
+// Satu perangkat aktif agar `target()` punya host/user (jalur normal).
+const makeDeviceRow = (overrides: Record<string, unknown> = {}) => ({
+  id: 1,
+  name: 'BIBIT::NANGGELA',
+  host: '192.168.100.254',
+  api_port: 1998,
+  api_user: 'hermes',
+  api_password: 'rahasia', // plaintext; decryptSecret meneruskannya apa adanya
+  gui_url: '',
+  write_enabled: 1,
+  is_active: 1,
+  ...overrides,
+});
+
+const makeDevices = (row: Record<string, unknown> | null = makeDeviceRow()) => ({
+  hasTable: async () => row !== null,
+  list: async () => (row ? [row] : []),
+  find: async () => row,
+  findByName: async () => row,
+  firstActive: async () => row,
   create: async () => 1,
   update: async () => undefined,
   remove: async () => undefined,
   touchStatus: async () => undefined,
   forgetSchemaCache: () => undefined,
-  ...overrides,
 });
 
-const makeDb = (options: { writeEnabled?: boolean; guiUrl?: string } = {}) => {
+const makeDb = () => {
   const executed: Array<{ sql: string; params: unknown[] }> = [];
   return {
     executed,
     db: {
-      query: async () => [
-        { config_key: 'mikrotik_write_enabled', config_value: options.writeEnabled ? '1' : '0' },
-        { config_key: 'mikrotik_gui_url', config_value: options.guiUrl ?? '' },
-      ],
+      query: async () => [],
       execute: async (sql: string, params: unknown[]) => {
         executed.push({ sql, params });
         return { affectedRows: 1 };
@@ -51,9 +50,10 @@ const makeDb = (options: { writeEnabled?: boolean; guiUrl?: string } = {}) => {
   };
 };
 
-const makeService = (options: { writeEnabled?: boolean; guiUrl?: string } = {}) => {
-  const { db, executed } = makeDb(options);
-  const service = new MikrotikService(config as never, db as never, makeDevices() as never);
+const makeService = (options: { device?: Record<string, unknown> | null } = {}) => {
+  const { db, executed } = makeDb();
+  const row = options.device === undefined ? makeDeviceRow() : options.device;
+  const service = new MikrotikService(config, db as never, makeDevices(row) as never);
   return { service, executed };
 };
 
@@ -129,7 +129,7 @@ describe('MikrotikService', () => {
 
   it('menolak tulis bila mode tulis belum diaktifkan', async () => {
     const spy = vi.spyOn(RouterOsClient.prototype, 'executeEach');
-    const { service } = makeService({ writeEnabled: false });
+    const { service } = makeService({ device: makeDeviceRow({ write_enabled: 0 }) });
 
     await expect(
       service.createHotspotUser(
@@ -144,7 +144,7 @@ describe('MikrotikService', () => {
     const spy = vi
       .spyOn(RouterOsClient.prototype, 'executeEach')
       .mockResolvedValue([records({ ret: '*3' })]);
-    const { service, executed } = makeService({ writeEnabled: true });
+    const { service, executed } = makeService();
 
     await service.createHotspotUser(
       { name: 'uji', password: 'rahasia', profile: 'default' },
@@ -161,7 +161,7 @@ describe('MikrotikService', () => {
   });
 
   it('provisioning menulis timeout 3s dan mengaktifkan radius di layanan', async () => {
-    const { service } = makeService({ writeEnabled: true });
+    const { service } = makeService();
     const calls: string[][] = [];
     let radiusReads = 0;
     vi.spyOn(RouterOsClient.prototype, 'execute').mockImplementation(async (commands) => {
@@ -232,12 +232,8 @@ describe('MikrotikService', () => {
     expect(status.message).toMatch(/Timeout/);
   });
 
-  it('status mengembalikan configured=false bila host belum diisi', async () => {
-    const service = new MikrotikService(
-      { ...config, getMikrotikConfig: async () => ({ host: '', port: 1998, user: '', password: '' }) } as never,
-      makeDb().db as never,
-      makeDevices() as never,
-    );
+  it('status mengembalikan configured=false bila tidak ada perangkat', async () => {
+    const { service } = makeService({ device: null });
 
     const status = await service.status();
 

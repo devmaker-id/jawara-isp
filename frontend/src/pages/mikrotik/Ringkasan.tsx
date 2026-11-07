@@ -150,7 +150,8 @@ const Ringkasan: React.FC = () => {
                     )}
                   </p>
                   <p className="mt-2 text-xs text-slate-400">
-                    Saklar <code className="text-slate-300">mikrotik_write_enabled</code> diatur di Pengaturan → Integrasi.
+                    Mode tulis diatur per perangkat (kolom <code className="text-slate-300">write_enabled</code>) di
+                    MikroTik → Perangkat &amp; Koneksi.
                   </p>
                 </Card>
               </div>

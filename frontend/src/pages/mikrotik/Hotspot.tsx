@@ -452,8 +452,8 @@ const Hotspot: React.FC = () => {
               </label>
 
               <InfoNote>
-                Perubahan dikirim langsung ke MikroTik dan hanya berhasil bila mode tulis aktif
-                (<code className="text-slate-200">mikrotik_write_enabled</code>).
+                Perubahan dikirim langsung ke MikroTik dan hanya berhasil bila mode tulis perangkat aktif
+                (<code className="text-slate-200">write_enabled</code>).
               </InfoNote>
             </div>
 

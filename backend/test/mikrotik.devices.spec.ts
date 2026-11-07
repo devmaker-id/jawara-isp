@@ -91,7 +91,7 @@ const makeDb = () => {
 const makeService = (fake: ReturnType<typeof makeFakeRepo>) => {
   const { db, executed } = makeDb();
   const service = new MikrotikService(
-    { secretKey: SECRET_KEY, getMikrotikConfig: async () => ({ host: '', port: 1998, user: '', password: '' }) } as never,
+    { secretKey: SECRET_KEY } as never,
     db as never,
     fake.repo as never,
   );

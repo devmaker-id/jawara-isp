@@ -30,13 +30,7 @@ export const SETTING_KEYS = [
   // Penomoran: angka awal Nomor Internet. Kosong = nomor tidak diterbitkan
   // otomatis (pelanggan baru tetap bisa dibuat tanpa nomor).
   'internet_no_start',
-  // Integrasi perangkat jaringan
-  'mikrotik_host',
-  'mikrotik_port',
-  'mikrotik_user',
-  'mikrotik_password',
-  'mikrotik_gui_url',
-  'mikrotik_write_enabled',
+  // Integrasi jaringan (RADIUS)
   'freeradius_host',
   'freeradius_port',
   'freeradius_secret',
@@ -71,12 +65,6 @@ export const SETTING_DEFAULTS: Record<SettingKey, string> = {
   // Kosong = Nomor Internet tidak diterbitkan otomatis. Isi angka awal
   // (mis. 1312013) hanya setelah pemilik menetapkan seri penomoran.
   internet_no_start: '',
-  mikrotik_host: '',
-  mikrotik_port: '1998',
-  mikrotik_user: '',
-  mikrotik_password: '',
-  mikrotik_gui_url: '',
-  mikrotik_write_enabled: '0',
   freeradius_host: '127.0.0.1',
   freeradius_port: '1812',
   freeradius_secret: '',
@@ -88,8 +76,7 @@ export const SETTING_DEFAULTS: Record<SettingKey, string> = {
 export const SECRET_KEYS: ReadonlySet<SettingKey> = new Set<SettingKey>([
   'payment_gateway_server_key',
   'telegram_bot_token',
-  // Password API router dan secret RADIUS tidak pernah dikirim balik ke browser.
-  'mikrotik_password',
+  // Secret RADIUS tidak pernah dikirim balik ke browser.
   'freeradius_secret',
 ]);
 
@@ -114,12 +101,6 @@ export const SETTING_GROUPS: Record<string, SettingKey[]> = {
   ],
   telegram: ['telegram_enabled', 'telegram_bot_token', 'telegram_chat_id'],
   integrasi: [
-    'mikrotik_host',
-    'mikrotik_port',
-    'mikrotik_user',
-    'mikrotik_password',
-    'mikrotik_gui_url',
-    'mikrotik_write_enabled',
     'freeradius_host',
     'freeradius_port',
     'freeradius_secret',

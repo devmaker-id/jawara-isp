@@ -149,7 +149,7 @@ export const menuItems: MenuItemConfig[] = [
     ],
   },
   { path: '/pengguna', label: 'Pengguna', icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z', available: true, roles: ['admin'] },
-  // Pengaturan memuat kredensial integrasi (MikroTik, Telegram, WhatsApp).
+  // Pengaturan memuat kredensial integrasi (FreeRADIUS, Telegram, gateway).
   // Operator hanya membaca (menyimpan tetap admin), reseller tidak perlu.
   { path: '/settings', label: 'Pengaturan', roles: ['admin', 'operator'], icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0M15.02 10.919c.387-1.636 2.401-1.636 2.788 0M16.182 18.05c-.457 1.14-2.67 1.14-3.127 0M9.437 3.058c.426-1.756 2.924-1.756 3.35 0M15.02 10.919c.387-1.636 2.401-1.636 2.788 0M16.182 18.05c-.457 1.14-2.67 1.14-3.127 0', available: true,
     children: [

@@ -204,8 +204,9 @@ systemctl --user restart jawara-wa   # bila unit level user
 
 ## Variabel lingkungan (backend)
 
-Nilai sensitif tidak pernah masuk repo. Kredensial MikroTik/FreeRADIUS juga bisa disimpan di
-tabel pengaturan panel (menu **Pengaturan → Integrasi**).
+Nilai sensitif tidak pernah masuk repo. Kredensial FreeRADIUS, Telegram, dan WhatsApp disimpan
+di tabel pengaturan panel (menu **Pengaturan → Integrasi**). Kredensial API MikroTik disimpan
+per perangkat (menu **MikroTik → Perangkat & Koneksi**), terenkripsi AES-256-GCM.
 
 | Variabel | Wajib | Keterangan |
 | --- | --- | --- |

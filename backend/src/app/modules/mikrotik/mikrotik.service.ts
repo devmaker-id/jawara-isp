@@ -75,7 +75,7 @@ export const uptimeSeconds = (value: string | undefined): number => {
 export interface MikrotikTarget {
   device_id: number | null;
   device_name: string | null;
-  source: 'device' | 'config';
+  source: 'device' | 'none';
   host: string;
   port: number;
   user: string;
@@ -149,9 +149,8 @@ export class MikrotikService {
     };
   }
 
-  // Host/port/user/password dibaca dari tabel mikrotik_devices. Bila daftar
-  // perangkat belum ada (migrasi 005 belum dijalankan) atau kosong, dipakai
-  // konfigurasi tunggal lama di tabel `config` sebagai fallback.
+  // Host/port/user/password dibaca dari tabel `mikrotik_devices`. Bila tidak ada
+  // perangkat aktif, target dikembalikan sebagai "belum dikonfigurasi" (host kosong).
   async target(deviceId?: number): Promise<MikrotikTarget & { password: string }> {
     const explicit = deviceId ?? this.als.getStore()?.deviceId;
     const cacheKey = explicit === undefined ? 'auto' : `d${explicit}`;
@@ -179,36 +178,22 @@ export class MikrotikService {
     }
 
     if (!value) {
-      value = await this.legacyTarget();
+      value = {
+        device_id: null,
+        device_name: null,
+        source: 'none',
+        host: '',
+        port: 1998,
+        user: '',
+        password: '',
+        configured: false,
+        gui_url: '',
+        write_enabled: false,
+      };
     }
 
     this.targetCache.set(cacheKey, { at: Date.now(), value });
     return value;
-  }
-
-  private async legacyTarget(): Promise<MikrotikTarget & { password: string }> {
-    const base = await this.config.getMikrotikConfig();
-    const rows = await this.db
-      .query<{ config_key: string; config_value: string | null }>(
-        `SELECT config_key, config_value FROM config
-          WHERE config_key IN ('mikrotik_gui_url','mikrotik_write_enabled')`,
-      )
-      .catch(() => []);
-    const map = new Map(rows.map((row) => [row.config_key, row.config_value ?? '']));
-
-    const host = (base.host || '').trim();
-    return {
-      device_id: null,
-      device_name: null,
-      source: 'config',
-      host,
-      port: base.port || 1998,
-      user: (base.user || '').trim(),
-      password: base.password || '',
-      configured: Boolean(host && base.user),
-      gui_url: (map.get('mikrotik_gui_url') || '').trim() || (host ? `http://${host}` : ''),
-      write_enabled: /^(1|true|yes)$/i.test((map.get('mikrotik_write_enabled') || '').trim()),
-    };
   }
 
   forgetTargetCache(): void {
@@ -446,7 +431,7 @@ export class MikrotikService {
     const target = await this.target();
     if (!target.write_enabled) {
       throw new ForbiddenException(
-        'Tulis ke perangkat MikroTik dinonaktifkan. Aktifkan "mikrotik_write_enabled" di Pengaturan → Integrasi setelah Anda yakin.',
+        'Tulis ke perangkat MikroTik dinonaktifkan. Aktifkan mode tulis (write_enabled) untuk perangkat ini di MikroTik → Perangkat & Koneksi.',
       );
     }
     const client = await this.client();

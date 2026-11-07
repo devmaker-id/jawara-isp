@@ -68,7 +68,7 @@ describe('SettingsService', () => {
     const { service } = makeService();
     const brand = await service.branding();
 
-    expect(brand.logo_url).toBe('/branding/logo-default.png');
+    expect(brand.logo_url).toBe('/branding/jawara-isp.png');
     expect(brand.name).toBe('JAWARA-ISP');
     expect(brand.primary_color).toBe('#06b6d4');
   });
@@ -93,26 +93,22 @@ describe('SettingsService', () => {
     expect(raw.upsert).not.toHaveBeenCalled();
   });
 
-  // Password API router dan secret RADIUS kini boleh diisi dari Pengaturan,
-  // tetapi harus tetap disamarkan seperti token lain.
-  it('menyamarkan password MikroTik dan secret FreeRADIUS', async () => {
+  // Secret RADIUS boleh diisi dari Pengaturan, tetapi harus tetap disamarkan
+  // seperti token lain.
+  it('menyamarkan secret FreeRADIUS', async () => {
     const { service } = makeService({
-      findValues: vi
-        .fn()
-        .mockResolvedValue({ mikrotik_password: 'rahasia-router', freeradius_secret: 'rahasia-radius' }),
+      findValues: vi.fn().mockResolvedValue({ freeradius_secret: 'rahasia-radius' }),
     });
     const view = await service.get();
 
-    expect(view.values.mikrotik_password).toBe(SECRET_MASK);
     expect(view.values.freeradius_secret).toBe(SECRET_MASK);
-    expect(view.secrets_set.mikrotik_password).toBe(true);
     expect(view.secrets_set.freeradius_secret).toBe(true);
-    expect(JSON.stringify(view)).not.toContain('rahasia-router');
+    expect(JSON.stringify(view)).not.toContain('rahasia-radius');
   });
 
   it('menerima kunci integrasi yang sah', async () => {
     const { service, raw } = makeService();
-    await service.update({ mikrotik_host: '192.168.100.254', mikrotik_write_enabled: '0' });
+    await service.update({ freeradius_host: '127.0.0.1', freeradius_secret: 'rahasia-radius' });
     expect(raw.upsert).toHaveBeenCalledOnce();
   });
 
