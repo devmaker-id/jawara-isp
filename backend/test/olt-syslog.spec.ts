@@ -127,12 +127,12 @@ describe('parser syslog → event kanonik', () => {
     expect(event.connectionState).toBe('ONU_POWER_OFF');
   });
 
-  it('VSOL ONU Port Los → LINKDOWN + fiber putus', () => {
+  it('VSOL ONU Port Los → LINKDOWN + listrik padam', () => {
     const raw =
       '<27>Nov  5 17:50:53 gpon-olt auditd[0]: ONU Port Los  PON 0/1 ONU 8 sn ZTEGcc5c3bd5  LAN2 LINK DOWN.';
     const event = parseSyslogEvent(raw);
     expect(event.eventType).toBe('ONU_LINKDOWN');
-    expect(event.connectionState).toBe('FIBER_LOS');
+    expect(event.connectionState).toBe('ONU_POWER_OFF');
   });
 
   it('HiFocus linkdown → OFFLINE (sebab dari ctcStatus, bukan syslog)', () => {

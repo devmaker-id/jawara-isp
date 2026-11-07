@@ -86,7 +86,10 @@ function mapVsolEvent(
   if (n.includes('register')) return { eventType: 'ONU_REGISTER', connectionState: 'ONLINE' };
   if (n.includes('online')) return { eventType: 'ONU_LINKUP', connectionState: 'ONLINE' };
   if (n.includes('offline')) return { eventType: 'ONU_LINKDOWN', connectionState: 'OFFLINE' };
-  if (n.includes('los')) return { eventType: 'ONU_LINKDOWN', connectionState: 'FIBER_LOS' };
+  // VSOL melaporkan "ONU Port Los ... LANx LINK DOWN": LAN ONU ikut putus
+  // karena perangkat/sumber listrik pelanggan mati, BUKAN fiber putus. Fiber
+  // putus tampil sebagai "ONU Offline" (generic), tanpa LAN LINK DOWN.
+  if (n.includes('los')) return { eventType: 'ONU_LINKDOWN', connectionState: 'ONU_POWER_OFF' };
   return { eventType: 'UNKNOWN', connectionState: null };
 }
 
