@@ -55,7 +55,7 @@ mysql -u root -p -e "CREATE DATABASE isp_billing CHARACTER SET utf8mb4 COLLATE u
 for f in migrations/*.sql; do mysql -u root -p isp_billing < "$f"; done
 
 # 2. Environment
-# buat .env di folder backend, isi DB_* , JWT_SECRET, SECRET_KEY (lihat tabel di bawah)
+cp .env.example .env   # salin contoh, lalu isi nilai sebenarnya (DB_* , JWT_SECRET, SECRET_KEY)
 
 # 3. Install & build
 npm install

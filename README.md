@@ -125,25 +125,14 @@ Skema ini **ditolak** bila tabel `rad*` sudah ada sebagian — jangan dijalankan
 
 ```bash
 cd backend
+cp .env.example .env   # salin contoh, lalu isi DB_PASSWORD, JWT_SECRET, SECRET_KEY
 npm install
 npm run build && npm run start:prod     # atau: npm run start:dev (watch)
 ```
 
-Buat `backend/.env` (jangan di-commit) sebelum start. Contoh minimal:
-
-```env
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_USER=isp_billing
-DB_PASSWORD=<isi-sendiri>
-DB_NAME=isp_billing
-JWT_SECRET=<acak-panjang>
-SECRET_KEY=<acak-panjang>
-PORT=7930
-```
-
-Backend **menolak start** bila `JWT_SECRET` atau `SECRET_KEY` kosong. Berjalan di
-`http://0.0.0.0:7930/api` (prefix global `api`).
+Nilai yang wajib diisi saat menyalin: `DB_*`, `JWT_SECRET`, `SECRET_KEY` — daftar lengkap
+beserta keterangannya ada di `backend/.env.example`. Backend **menolak start** bila `JWT_SECRET`
+atau `SECRET_KEY` kosong. Berjalan di `http://0.0.0.0:7930/api` (prefix global `api`).
 
 ### 3. Frontend
 

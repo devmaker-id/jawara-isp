@@ -35,6 +35,9 @@ src/
 npm install
 ```
 
+Tidak butuh variabel lingkungan — cukup proxy `/api` (lihat bawah). File `.env.example` di sini
+hanya dokumentasi; jangan set `VITE_API_BASE_URL`.
+
 ## Menjalankan
 
 ```bash
